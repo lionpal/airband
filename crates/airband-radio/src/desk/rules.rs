@@ -1,12 +1,6 @@
 //! Small answers the app asks of the core, so it follows the same rules as his computer: what a team he names
 //! would be called, whether a link pairs, and the words on the buttons that answer a request for leave.
 
-/// The word on the button that allows a request for leave, or on the one that refuses it.
-#[uniffi::export]
-pub fn leave_word(allow: bool) -> String {
-    if allow { airband_core::radio::ALLOW } else { airband_core::radio::DENY }.to_string()
-}
-
 /// What a team he names this way would be called: the computer names it by the same rule
 /// (`TeamName::new`). Empty when the words make no name it would take.
 #[uniffi::export]

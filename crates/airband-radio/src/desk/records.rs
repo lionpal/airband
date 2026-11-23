@@ -22,6 +22,8 @@ pub struct DeskRoom {
     pub colour: Option<u8>,
     /// How many things its agents have said that he has not had in front of him.
     pub unread: u32,
+    /// Some agent in it is working, whatever the team's own state says.
+    pub working: bool,
 }
 /// One agent, as a row in a list of them.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -47,6 +49,8 @@ pub struct DeskMember {
     pub terminal: bool,
     /// He can end it from here: the computer runs it, or its tool can put a session away.
     pub ends: bool,
+    /// He can stop what it is doing now: it is at work, and run by its computer.
+    pub can_stop: bool,
     /// How many things it has said that he has not had in front of him.
     pub unread: u32,
     /// What it is waiting on him for: the short form of its newest question still open. Empty when it is
@@ -97,6 +101,11 @@ pub struct DeskView {
     /// How many things agents have said that he has not had in front of him, over all of them. While the chat
     /// is on screen none of these are in what he is looking at.
     pub unread: u32,
+    /// He has more than one computer: the screens say which one a thing is on, and ask which when it matters.
+    pub several_computers: bool,
+    /// How many of those are outside the team he is in (the one he picked, or the team of the agent he is
+    /// looking at): shown on the way back to all of them.
+    pub unread_elsewhere: u32,
     /// Someone here has stopped without finishing: a poke would do something.
     pub can_poke: bool,
     /// The quick messages to offer.

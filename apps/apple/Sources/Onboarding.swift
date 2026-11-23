@@ -43,12 +43,10 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if step == 0 {
                         headline(Headline.tools)
-                        Text("Choose the one you use most. You can add more later.").font(.system(size: 16)).foregroundStyle(Palette.soft)
                         ToolsPicker(single: true)
                     } else if step <= jobs.count {
                         let job = jobs[step - 1]
                         headline(job.headline)
-                        if let aside = job.aside { Text(aside).font(.system(size: 16)).foregroundStyle(Palette.soft) }
                         label(job.label)
                         ChoicePicker(job: job, mode: .onboarding).id(step)
                     } else {
@@ -114,7 +112,7 @@ struct OnboardingView: View {
     private var computer: some View {
         VStack(alignment: .leading, spacing: 18) {
             headline("Last, your computer.")
-            Text("airband runs on the computer where your agents work. Open a terminal there and paste this.").font(.system(size: 16)).foregroundStyle(Palette.soft)
+            Text("Paste this in a terminal on the computer where your agents work.").font(.system(size: 16)).foregroundStyle(Palette.soft)
             VStack(alignment: .leading, spacing: 14) {
                 Text(command).font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(Palette.signal).textSelection(.enabled)
                 HStack(spacing: 10) {

@@ -83,8 +83,9 @@ extension RadioModel {
 
     /// Try again a message that was not sent.
     func sendAgain(_ o: DeskOutgoing) { desk.sendAgain(id: o.id) }
-    /// Let go of a message that was not sent.
-    func discardUnsent(_ o: DeskOutgoing) { _ = desk.discardUnsent(id: o.id) }
+    /// Let go of a message that was not sent. Its words come back, for a screen that puts them back where he
+    /// types; Delete drops them.
+    @discardableResult func discardUnsent(_ o: DeskOutgoing) -> String? { desk.discardUnsent(id: o.id) }
     /// How each computer was last reached, as this phone saw it.
     func reach() -> [DeskReach] { desk.reach() }
     /// The record of failed requests, for him to copy. Made here and sent nowhere.
@@ -147,13 +148,17 @@ extension RadioModel {
     /// What was said between him and this agent just before a message.
     func thread(before m: ChatMessage) -> [ChatMessage] { desk.thread(messageId: m.id) }
 
-    /// Fetch what the agent actually wrote, once.
+    /// Fetch what the agent actually wrote, once it arrives. Until then the opening is shown; a fetch that
+    /// failed is tried again the next time it is on screen.
     func loadFull(_ m: ChatMessage) {
-        guard m.long, full[m.id] == nil else { return }
-        full[m.id] = m.text // shown until the real text arrives, and stops a second request
+        guard m.long, full[m.id] == nil, !fetching.contains(m.id) else { return }
+        fetching.insert(m.id)
         fetch.async {
-            guard let text = try? self.desk.full(messageId: m.id) else { return }
-            DispatchQueue.main.async { self.full[m.id] = text }
+            let text = try? self.desk.full(messageId: m.id)
+            DispatchQueue.main.async {
+                self.fetching.remove(m.id)
+                if let text { self.full[m.id] = text }
+            }
         }
     }
 
@@ -262,7 +267,8 @@ extension RadioModel {
         // `message`: he is looking at something of one agent's (a picture, say) and this is about that
         let target = message ?? replyingTo
         replyingTo = nil
-        desk.talk(re: target?.id, room: only == nil ? room : nil, agent: target == nil ? only : nil)
+        // who it is for is worked out by the core, as for anything he types
+        desk.talk(re: target?.id, room: room, agent: only)
     }
 
     /// He took back what he was saying: the microphone closes and nothing is sent. Returns what had been heard,

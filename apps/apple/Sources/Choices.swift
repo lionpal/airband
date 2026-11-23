@@ -15,8 +15,6 @@ struct ChoiceCard<Extra: View>: View {
     let subtitle: String
     let chosen: Bool
     var open = false
-    /// It costs nothing to use: a small tag says so.
-    var free = false
     /// A small picture after the tick, by its name among the app's images: a coding tool's mark.
     var mark: String?
     let tap: () -> Void
@@ -36,10 +34,6 @@ struct ChoiceCard<Extra: View>: View {
                         if !subtitle.isEmpty { Text(subtitle).font(.system(size: 14)).foregroundStyle(Palette.soft) }
                     }
                     Spacer(minLength: 0)
-                    if free {
-                        Text("Free").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
-                            .padding(.horizontal, 8).frame(minHeight: 22).background(Palette.raised, in: Capsule())
-                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -54,7 +48,7 @@ struct ChoiceCard<Extra: View>: View {
 
 extension ChoiceCard where Extra == EmptyView {
     init(title: String, subtitle: String, chosen: Bool, mark: String? = nil, tap: @escaping () -> Void) {
-        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, free: false, mark: mark, tap: tap) { EmptyView() }
+        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, mark: mark, tap: tap) { EmptyView() }
     }
 }
 
@@ -204,8 +198,6 @@ extension ChoiceJob {
         case .voice: return "Your agents talk back."
         }
     }
-    /// A line under the headline on the first run, where one helps.
-    var aside: String? { self == .voice ? "Hear your agents with the screen off." : nil }
     /// What the list is a list of.
     var label: String {
         switch self {
@@ -246,7 +238,7 @@ struct ChoicePicker: View {
     var body: some View {
         VStack(spacing: 10) {
             ForEach(all.filter { more || !$0.more || $0.chosen }, id: \.id) { c in
-                ChoiceCard(title: c.title, subtitle: c.line, chosen: c.chosen, open: open == c.id || c.isWorking, free: c.free) {
+                ChoiceCard(title: c.title, subtitle: c.line, chosen: c.chosen, open: open == c.id || c.isWorking) {
                     tapped(c)
                 } extra: {
                     extra(c)
@@ -417,7 +409,8 @@ struct ToolsPicker: View {
                     if single {
                         model.tools = [tool.id]
                     } else if on {
-                        if model.tools.count > 1 { model.tools.removeAll { $0 == tool.id } }
+                        // the core keeps the last one: he always uses some coding tool
+                        model.tools.removeAll { $0 == tool.id }
                     } else {
                         model.tools.append(tool.id)
                     }

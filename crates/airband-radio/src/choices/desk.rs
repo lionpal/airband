@@ -223,7 +223,7 @@ impl Desk {
     }
 
     /// He uses these coding tools, the one he uses most first. What can write his summaries follows from them.
-    /// Ids the catalogue does not have are left out; with none left, nothing changes.
+    /// Ids the catalogue does not have are left out; with none left, nothing changes, so one always stays.
     pub fn set_tools(&self, tools: Vec<String>) {
         let known: Vec<String> = tools.into_iter().filter(|t| airband_core::catalog::current().tools.iter().any(|k| k.id == *t)).collect();
         if !known.is_empty() {

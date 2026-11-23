@@ -36,7 +36,7 @@ extension RadioModel {
         case .failed: note(text: RadioModel.keysUnread); return
         }
         all[name] = value
-        if !Stored.keep("airband.keys", all, in: .appOnly) { note(text: RadioModel.keysUnread) }
+        if !Stored.keep("airband.keys", all, in: .appOnly) { note(text: RadioModel.keyNotKept) }
     }
 
     func device() -> HostDevice {
@@ -48,8 +48,8 @@ extension RadioModel {
         engines[engine]?(folder, job, input)
     }
 
-    /// Fermion's listening model on the Neural Engine: a recording (16 kHz, 16-bit, mono) turned into words.
-    func phononCoreML(folder: String, job: ChoiceJob, input pcm: Data) -> Data? {
+    /// The listening model this app runs on the Neural Engine: a recording (16 kHz, 16-bit, mono) turned into words.
+    func neuralEngineListening(folder: String, job: ChoiceJob, input pcm: Data) -> Data? {
         guard job == .ears else { return nil }
         hearLock.lock()
         defer { hearLock.unlock() }

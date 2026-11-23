@@ -44,7 +44,7 @@ struct FeedView: View {
         .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
         // several computers and no default one chosen: he is asked once, before anything can be sent. Each is
         // named as the core names it to him.
-        .confirmationDialog("Default computer", isPresented: Binding(get: { model.view.chooseMain && model.computers.count > 1 && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
+        .confirmationDialog("Default computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
             ForEach(model.computers, id: \.id) { c in Button(c.name) { model.setMainComputer(c.id) } }
         } message: {
             Text(RadioModel.mainComputerNote)

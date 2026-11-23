@@ -43,7 +43,7 @@ struct SetupView: View {
                 }
                 if !model.computers.isEmpty {
                     Section {
-                        if model.computers.count > 1 {
+                        if model.view.severalComputers {
                             Picker("Default computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
                                 if model.view.mainComputer == nil { Text("Not chosen").tag("") }
                                 ForEach(model.computers, id: \.id) { c in Text(c.name).tag(c.id) }
@@ -59,7 +59,7 @@ struct SetupView: View {
                     } header: {
                         Text("Computers")
                     } footer: {
-                        if model.computers.count > 1 { Text(RadioModel.mainComputerNote) }
+                        if model.view.severalComputers { Text(RadioModel.mainComputerNote) }
                     }
                 }
                 if model.paired {

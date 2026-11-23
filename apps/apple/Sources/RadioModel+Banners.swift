@@ -12,10 +12,10 @@ extension RadioModel {
             Task { await banner.end(nil, dismissalPolicy: .immediate) }
         }
         guard !waiting.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        // the ones already shown say how many wait now, quietly
+        // the ones already shown say how many wait now and what each asks now, quietly
         for agent in waiting {
-            guard let banner = banners[agent.id], banner.content.state.waiting != waiting.count else { continue }
             let state = NeedsYouAttributes.ContentState(waiting: waiting.count, question: agent.question)
+            guard let banner = banners[agent.id], banner.content.state != state else { continue }
             Task { await banner.update(.init(state: state, staleDate: nil)) }
         }
         for agent in waiting where banners[agent.id] == nil {

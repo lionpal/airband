@@ -22,7 +22,8 @@ enum Keychain {
     /// The app's own group: only the app has it (the extension's Info.plist does not name one).
     static let privateGroup = Bundle.main.object(forInfoDictionaryKey: "AirbandKeychainPrivate") as? String
 
-    /// Which group an item lives in.
+    /// Which group an item lives in. A build that does not name the group has no place for it: nothing is
+    /// read from or written to another group in its stead.
     enum Place { case shared, appOnly }
     private static func named(_ place: Place) -> String? {
         let name = place == .shared ? group : privateGroup
@@ -33,8 +34,8 @@ enum Keychain {
     /// Returns whether it was kept.
     @discardableResult
     static func write(_ key: String, _ value: String, in place: Place) -> Bool {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
+        guard let name = named(place) else { return false }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecAttrAccessGroup as String: name]
         let fields: [String: Any] = [
             kSecValueData as String: Data(value.utf8),
             // readable with the screen locked, while driving; on this phone only
@@ -46,8 +47,8 @@ enum Keychain {
         return SecItemAdd(query.merging(fields) { $1 } as CFDictionary, nil) == errSecSuccess
     }
     static func read(_ key: String, in place: Place) -> KeychainRead<String> {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
-        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
+        guard let name = named(place) else { return .failed(errSecMissingEntitlement) }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true, kSecAttrAccessGroup as String: name]
         var out: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &out)
         if status == errSecItemNotFound { return .none }

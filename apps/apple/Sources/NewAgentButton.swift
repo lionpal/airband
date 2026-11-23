@@ -9,7 +9,7 @@ struct NewAgentButton: View {
     var body: some View {
         let tools = model.usedTools
         Group {
-            if tools.count > 1 {
+            if model.onlyTool == nil {
                 Menu {
                     ForEach(tools, id: \.id) { tool in
                         Button(tool.name) { model.newAgent(in: room.id, tool: tool) }
