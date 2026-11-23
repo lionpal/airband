@@ -227,7 +227,7 @@ pub(crate) fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsew
 /// would only ask again), and his answer goes back in its place.
 pub(crate) fn decision(allow: bool, reason: &str, answered: bool) -> String {
     let decision = if answered {
-        json!({ "behavior": "deny", "message": format!("He answered this from his phone, through Airband. His answer: {reason}\nTake that as his answer to the question and carry on. Do not ask it again.") })
+        json!({ "behavior": "deny", "message": format!("He answered this from his phone. His answer: {reason}\nTake that as his answer to the question and carry on. Do not ask it again.") })
     } else if allow {
         json!({ "behavior": "allow" })
     } else {

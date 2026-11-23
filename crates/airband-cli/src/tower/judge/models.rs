@@ -157,8 +157,11 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
     // `{brief}` in an argument is the file that tells a coding tool it is only rewriting a message here
     let folder = brief_folder(by).map_err(program_failed)?;
     // and `{model}`, or any other setting the row asks for, is what he set or the row's usual
-    let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
-    let mut argv: Vec<String> = argv.into_iter().map(|a| asked.iter().fold(a.replace("{brief}", &folder.join("brief.md").display().to_string()), |a, (name, value)| a.replace(name, value))).collect();
+    // all in one pass: a value with braces in it is never read again as a place
+    let brief = folder.join("brief.md").display().to_string();
+    let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (a.field.clone(), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
+    let values: Vec<(&str, &str)> = std::iter::once(("brief", brief.as_str())).chain(asked.iter().map(|(n, v)| (n.as_str(), v.as_str()))).collect();
+    let mut argv: Vec<String> = argv.iter().map(|a| airband_core::template::filled(a, &values)).collect();
     // `{with_shape}` stands where the row's `with_shape` arguments go when the answer must take a shape: one
     // of them holds `{shape}`, a file with that shape. A call that wants no shape has none of them.
     if let Some(at) = argv.iter().position(|a| a == "{with_shape}") {

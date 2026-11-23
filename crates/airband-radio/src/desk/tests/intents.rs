@@ -269,29 +269,56 @@ fn a_computer_paired_after_the_others_took_the_summary_choice_is_sent_it_and_an_
     assert_eq!(after, before);
 }
 
+/// A computer the desk has reached, put on it by hand with no rounds of its own: nothing asks it anything but
+/// what the test does. Its id and connection.
+fn reached_without_rounds(desk: &Desk, link: &str) -> (StationId, u64) {
+    let radio = desk.connect(link, None).unwrap();
+    let mut state = desk.shared.state.lock().unwrap();
+    state.epochs += 1;
+    let epoch = state.epochs;
+    let computer = Computer {
+        messages: Vec::new(),
+        radio,
+        epoch,
+        name: "studio".into(),
+        online: true,
+        refused: None,
+        tried: true,
+        answered_at: Some(std::time::Instant::now()),
+        fails: 0,
+        failing_since: None,
+        reads: String::new(),
+        reads_failed: String::new(),
+        agents: Vec::new(),
+        open: HashSet::new(),
+        was_waiting: Vec::new(),
+        landing: Vec::new(),
+        quick: Vec::new(),
+        link: link.to_string(),
+    };
+    let id = computer.id();
+    state.computers.push(computer);
+    (id, epoch)
+}
+
 #[test]
 fn the_main_computer_owed_the_choice_is_asked_once_what_it_reads_with() {
     let dir = temp("once");
     let studio = tower("studio", true);
     studio.refuses::<at::Reads>(503, &Refusal::NotNow { reason: "Busy.".into() });
     let desk = desk_with(&dir, vec![(link(1), studio.clone())]);
-    desk.set_links(vec![link(1)]);
-    assert!(all_answered(&desk, 1));
+    // no rounds of the desk's own: every question it is asked is one this test makes it ask
+    let (studio_id, epoch) = reached_without_rounds(&desk, &link(1));
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
     let _ = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
-    // what the desk asked when it first reached it is done with
-    assert!(until(|| studio.asked_on::<at::ReadsOffered>() >= 1));
-    thread::sleep(Duration::from_millis(200));
-    let studio_id = desk.shared.state.lock().unwrap().computers[0].id();
-    let epoch = desk.shared.state.lock().unwrap().computers[0].epoch;
+    // it was busy: the choice is still owed it
+    assert!(desk.shared.chooser.reads_intent().is_some_and(|i| i.owed(&studio_id)));
     let (offered, sent) = (studio.asked_on::<at::ReadsOffered>(), studio.asked_on::<at::Reads>());
     // owed the choice, and the main one: one question about what it reads with serves both
     crate::choices::tell_reads(&desk.shared, &studio_id, epoch, true);
     let asked = (studio.asked_on::<at::ReadsOffered>() - offered, studio.asked_on::<at::Reads>() - sent);
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
-    // the desk's own rounds may tell it too, meanwhile: each, like this one, asks once per choice it sends;
-    // one round that began before the choice changed asks and, finding it changed, sends nothing
-    assert!(asked.1 >= 1 && (asked.1..=asked.1 + 1).contains(&asked.0), "{asked:?}");
+    assert_eq!(asked, (1, 1));
 }
 

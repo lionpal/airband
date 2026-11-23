@@ -9,36 +9,19 @@ pub(super) async fn pump_loop(app: Arc<App>) {
 }
 
 pub(super) async fn pump(app: &Arc<App>) {
-    let todo: Vec<Item> = {
-        let mut inner = app.change();
+    let todo: Vec<String> = {
+        let inner = app.read();
         if inner.free_radio().is_none() {
             return;
         }
-        // what waits to be read out and has no short version yet, unless one is being made already
-        let todo: Vec<Item> = inner.unheard().filter(|e| e.short.is_none() && !inner.judging.contains(&e.id)).take(6).map(|e| inner.item(e)).collect();
-        todo.iter().for_each(|item| {
-            inner.judging.insert(item.id.clone());
-        });
-        todo
+        // what waits to be read out and has no short version yet; one being made already is left to that
+        inner.unheard().filter(|e| e.short.is_none() && !inner.judging.contains(&e.id)).take(6).map(|e| e.id.clone()).collect()
     };
-    // all of them, so a blocking question further back can jump the queue
-    let mut tasks = tokio::task::JoinSet::new();
-    for item in todo {
-        let app = app.clone();
-        tasks.spawn(async move {
-            let j = prepare(&app.settings, &item).await;
-            (item.id, j)
-        });
-    }
-    let done = tasks.join_all().await;
-
+    // all of them, so a blocking question further back can jump the queue; what is not worth his ears leaves the
+    // queue as it is judged, and stays in the chat, dimmed; a radio on a call hears it, and another that is
+    // neither on a call nor showing the chat is woken
+    judge_marked(app, todo, usize::MAX).await;
     let mut inner = app.change();
-    for (id, j) in done {
-        // what is not worth his ears leaves the queue here, and stays in the chat, dimmed
-        inner.fill(&id, &j);
-        // a radio on a call hears it; another that is neither on a call nor showing the chat is woken
-        push::consider(app, &mut inner, &id);
-    }
     // what was just read is written down when this is let go, whatever follows
     // read out under what its agent is called now, or was called when it said it, if it has gone
     let ready: Vec<Entry> = inner.log.iter().filter(|e| e.aloud == Aloud::Waiting && e.short.is_some()).cloned().collect();

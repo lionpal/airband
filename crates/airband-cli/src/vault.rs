@@ -335,15 +335,26 @@ pub(crate) fn carry() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     if keychain() && !file::has() {
         let kept = mac::get()?;
-        file::put(&kept)?;
-        if file::get()? != kept {
-            file::forget().ok();
-            return Err("the sealed file did not give the keys back; they are still in the keychain".into());
-        }
+        sealed_and_checked(&kept, file::get)?;
         mac::forget();
         return Ok(true);
     }
     Ok(false)
+}
+
+/// Seal `kept` in the file and read it back (`read`). However that fails, a written file is taken away again,
+/// and one that cannot be is said: left there, it would be read in place of the keychain.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "carrying the keys out of a keychain is for a Mac"))]
+fn sealed_and_checked(kept: &Map<String, Value>, read: impl FnOnce() -> Result<Map<String, Value>, String>) -> Result<(), String> {
+    let why = match file::put(kept).and_then(|()| read()) {
+        Ok(back) if back == *kept => return Ok(()),
+        Ok(_) => "the sealed file did not give the keys back".to_string(),
+        Err(why) => why,
+    };
+    match file::forget() {
+        Ok(()) => Err(format!("{why}; they are still in the keychain")),
+        Err(left) => Err(format!("{why}, and {left}; remove it, or it is read in place of the keychain")),
+    }
 }
 
 /// Keys sealed in the file by a run that could not use the keychain are moved into it by one that can: the
@@ -382,6 +393,24 @@ mod tests {
         std::fs::write(dir.join("keys.sealed"), &on_disk).unwrap();
         std::fs::write(dir.join("keys.salt"), [7u8; 32]).unwrap();
         assert!(file::get().is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn keys_carried_to_a_file_that_cannot_be_read_back_leave_no_file_to_shadow_the_keychain() {
+        let dir = std::env::temp_dir().join(format!("airband-vault-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        file::tests_folder::set(dir.clone());
+        let kept: Map<String, Value> = serde_json::from_value(json!({"pairing:phone": "NEW"})).unwrap();
+        // the read back fails: no file is left
+        assert!(sealed_and_checked(&kept, || Err("it could not be opened".into())).is_err());
+        assert!(!file::has());
+        // it reads back other keys: no file is left
+        assert!(sealed_and_checked(&kept, || Ok(Map::new())).is_err());
+        assert!(!file::has());
+        // it reads back the same keys: the file stays, to be settled into the next keychain
+        assert!(sealed_and_checked(&kept, file::get).is_ok());
+        assert!(file::has());
         let _ = std::fs::remove_dir_all(dir);
     }
 

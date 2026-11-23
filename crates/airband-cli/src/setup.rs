@@ -138,8 +138,9 @@ pub(crate) fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     config::change(|now| {
         now.name = cfg.name.clone();
         now.summarizer = cfg.summarizer.clone();
-        for (name, key) in cfg.keys.iter().filter(|(name, key)| before.keys.get(*name) != Some(*key)) {
-            now.keys.insert(name.clone(), key.clone());
+        // a key he gave is the provider's one key: it takes the place of the one before, under any name
+        for key in cfg.keys.iter().filter(|(name, key)| before.keys.get(*name) != Some(*key)).map(|(_, key)| key) {
+            now.keep_key(&key.provider, key.secret.clone());
         }
         Ok(())
     })?;

@@ -125,7 +125,8 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
         // the file is named where it is first whole: what is read back is this name, never whatever the folder lists first
         airband_io::files::write_atomic(&dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
-        log(format!("he attached {} ({} KB)", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), next / 1024));
+        // its name is his: the log has its size only
+        log(format!("he attached a file of {} KB", next / 1024));
         if what(&path) == What::Video {
             frames(&path);
         } else {

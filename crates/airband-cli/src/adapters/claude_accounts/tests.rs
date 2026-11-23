@@ -357,3 +357,10 @@ fn a_login_the_tool_refreshes_while_switching_is_the_one_kept() {
     let live: Value = serde_json::from_str(&b.here.vault.read("live", "me").unwrap().unwrap()).unwrap();
     assert_eq!(live["claudeAiOauth"]["accessToken"], "b-access");
 }
+
+#[test]
+fn a_login_with_no_access_token_is_said_and_never_sent_as_an_empty_one() {
+    assert!(access_token(&json!({ "accessToken": "" })).is_err());
+    assert!(access_token(&json!({})).is_err());
+    assert_eq!(access_token(&json!({ "accessToken": "at-1" })), Ok("at-1"));
+}

@@ -91,8 +91,8 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
     let message_id = Some(said.id.as_str()).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.read().log.iter().any(|e| e.id == *id)).map(str::to_string).unwrap_or_else(|| config::random_hex(8));
-    let (sent, failed, queued) = send(app, &to, wordless, said.re.as_deref(), &message_id, &said.id).await;
-    kept(app, radio, &to, message_id, sent, failed, queued, shown, shown_files)
+    let reached = send(app, &to, wordless, said.re.as_deref(), &message_id, &said.id).await;
+    kept(app, radio, &to, message_id, reached, shown, shown_files)
 }
 
 /// An answer to a request for permission goes back to the harness that asked, not to the agent as a message. The
@@ -221,7 +221,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         match route(app, radio, &rest, said.re.as_deref(), said.scope.as_deref(), &said.others, projects).await {
             Routed::Sure(t) => t,
             Routed::Elsewhere(other) => {
-                log(format!("← radio: \"{text}\" → {}, on another computer", other.callsign));
+                log(format!("← radio: {} characters → {}, on another computer", text.chars().count(), other.callsign));
                 return Err(Reply { elsewhere: Some(other.id), ..Reply::default() });
             }
             Routed::New(mut idea) => {
@@ -234,7 +234,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 let question = airband_core::ids::QuestionId::new(config::random_hex(8));
                 app.change().call(radio).ask(Asked { question: question.clone(), words: rest.clone(), files: files.clone() });
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
-                log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
+                log(format!("← radio: {} characters → unsure; asking between {}", text.chars().count(), names.join(", ")));
                 return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.clone()), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
@@ -291,11 +291,11 @@ async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addresse
 
 /// His words to each agent they are for: as his own turn to one the tower runs or one reached through its own
 /// tool, and from outside with one line in front for the rest. What reached each, what did not, and which waited.
-async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, message_id: &str, uid: &str) -> (Vec<Session>, Vec<String>, Vec<String>) {
+async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, message_id: &str, uid: &str) -> Reached {
     let files = &to.files;
     let many = if to.targets.len() > 1 { format!(" Sent to {} agents.", to.targets.len()) } else { String::new() };
     let rest = if wordless { WORDLESS } else { to.rest.as_str() };
-    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg().name);
+    let content = format!("From {name}, on his phone.{many}\n\n{rest}{files}", name = app.cfg().name);
     let answering = answering(app, re);
     let (mut sent, mut failed, mut queued) = (Vec::new(), Vec::new(), Vec::new());
     for t in &to.targets {
@@ -340,7 +340,15 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
             }
         }
     }
-    (sent, failed, queued)
+    Reached { sent, failed, queued }
+}
+
+/// What came of sending his words: the agents they reached, the callsigns of those they did not, and the ids
+/// of the ones that took them to wait until they stop (among `sent`).
+struct Reached {
+    sent: Vec<Session>,
+    failed: Vec<String>,
+    queued: Vec<String>,
 }
 
 /// An answer to a question the agent has since spoken past (or he has since said other things to it) would reach
@@ -360,8 +368,7 @@ fn answering(app: &App, re: Option<&str>) -> impl Fn(&str) -> String {
 
 /// What reached its agents is kept in the chat as his, they are no longer waiting on him, and he is told who it
 /// reached.
-#[allow(clippy::too_many_arguments)]
-fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, sent: Vec<Session>, failed: Vec<String>, queued: Vec<String>, shown: Option<String>, shown_files: Vec<airband_core::radio::Picture>) -> Reply {
+fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, Reached { sent, failed, queued }: Reached, shown: Option<String>, shown_files: Vec<airband_core::radio::Picture>) -> Reply {
     let mut inner = app.change();
     for t in &sent {
         let id = t.agent.id.clone();
@@ -397,7 +404,7 @@ mod tests {
 
     #[test]
     fn say_more_with_several_agents_named_asks_which_and_never_takes_the_first() {
-        let one = |id: &str| Session::new(airband_core::agent::Agent { id: id.into(), ..crate::adapters::agent_with("", "t") }, airband_core::routing::Callsign { project: "shop".into(), number: id.into(), named: false }, TeamId::new(""));
+        let one = |id: &str| Session::new(airband_core::agent::Agent { id: id.into(), ..crate::adapters::agent_with("", "t") }, airband_core::routing::Callsign { project: "shop".into(), number: id.into(), named: false }, TeamId::new("/shop"));
         assert!(one_named(&[]).is_err());
         assert_eq!(one_named(&[one("a")]).map(|s| s.agent.id.clone()), Ok("a".into()));
         assert!(one_named(&[one("a"), one("b")]).is_err());
@@ -436,20 +443,38 @@ mod tests {
         assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn his_words_are_never_written_in_the_log() {
-        let app = crate::tower::http::tests::app("words-unlogged");
+    /// What the tower logged while he said `words` to it, with these agents checked in.
+    async fn logged_saying(app: &Arc<App>, agents: &[&str], words: &str, others: Vec<airband_core::radio::Other>) -> Vec<String> {
         {
             let mut inner = app.change();
-            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
-            inner.check_in(&a).unwrap();
+            for id in agents {
+                let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(*id, "test") };
+                inner.check_in(&a).unwrap();
+            }
         }
         crate::tower::logged::take();
+        let _ = on_utterance(app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), others, ..Default::default() }).await;
+        crate::tower::logged::take()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_words_are_never_written_in_the_log() {
         let words = "please ship the secret plan";
-        let _ = on_utterance(&app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), ..Default::default() }).await;
-        let lines = crate::tower::logged::take();
-        assert!(!lines.is_empty(), "the utterance is logged, by its length");
-        assert!(lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
+        let unlogged = |lines: &[String]| !lines.is_empty() && lines.iter().all(|l| !l.contains("secret plan"));
+        // for the one agent there is
+        let lines = logged_saying(&crate::tower::http::tests::app("words-unlogged"), &["a"], words, Vec::new()).await;
+        assert!(unlogged(&lines), "{lines:?}");
+        // unsure, with two agents and no model: he is asked which
+        let lines = logged_saying(&crate::tower::http::tests::app("words-unlogged-ask"), &["a", "b"], words, Vec::new()).await;
+        assert!(lines.iter().any(|l| l.contains("unsure")) && unlogged(&lines), "{lines:?}");
+        // for an agent on another computer, as a reader of his own says
+        #[cfg(unix)]
+        {
+            let reader = serde_json::json!({ "summarizer": { "kind": "command", "offer": "own", "argv": ["sh", "-c", "cat >/dev/null; echo '{\"to\":[2],\"all\":false,\"sure\":true,\"new\":null}'"] } });
+            let other = airband_core::radio::Other { id: "far".into(), callsign: "far one".into(), group: "far".into(), team: None, badge: String::new(), said: String::new(), ago: 0 };
+            let lines = logged_saying(&crate::tower::http::tests::app_with("words-unlogged-far", reader), &["a"], words, vec![other]).await;
+            assert!(lines.iter().any(|l| l.contains("on another computer")) && unlogged(&lines), "{lines:?}");
+        }
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

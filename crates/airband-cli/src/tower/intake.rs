@@ -182,7 +182,8 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.doing = None;
             s.subagents = 0;
             if let Some(why) = why.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
-                log(format!("{callsign}: its turn failed: {}", airband_core::prose::clip(&why, 200)));
+                // the tool's words can quote his: the log has their length only
+                log(format!("{callsign}: its turn failed ({} characters said why)", why.chars().count()));
                 enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
@@ -265,5 +266,17 @@ mod taken_tests {
         ev.schema = airband_core::agent::SCHEMA.into();
         super::take(&app, ev).unwrap();
         assert!(app.read().find("a").is_some(), "the same report, sent again, is taken in");
+    }
+
+    #[test]
+    fn a_failed_turns_words_are_never_written_in_the_log() {
+        let app = crate::tower::http::tests::app("turn-failed-unlogged");
+        let agent = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
+        let ev = |id: &str, event: serde_json::Value| -> airband_core::agent::AgentEvent { serde_json::from_value(serde_json::json!({ "schema": airband_core::agent::SCHEMA, "id": id, "agent": agent, "event": event })).unwrap() };
+        super::take(&app, ev("e1", serde_json::json!({ "type": "checkin" }))).unwrap();
+        crate::tower::logged::take();
+        super::take(&app, ev("e2", serde_json::json!({ "type": "stopped", "why": "could not do the secret plan" }))).unwrap();
+        let lines = crate::tower::logged::take();
+        assert!(lines.iter().any(|l| l.contains("turn failed")) && lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
     }
 }

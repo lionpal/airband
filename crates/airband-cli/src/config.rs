@@ -114,6 +114,13 @@ pub(crate) struct StoredKey {
 }
 
 impl Config {
+    /// Whether the keys were read with these settings: the one refusal, for whatever needs them.
+    pub(crate) fn keys_read(&self) -> Result<(), String> {
+        match &self.keyless {
+            Some(why) => Err(format!("airband's keys are in the keychain and could not be read here ({why})")),
+            None => Ok(()),
+        }
+    }
     /// The launcher for a new agent, or to carry one on. With no tool asked for, the one he set as usual, and
     /// nothing when he has set none. For a tool: the usual one when that is the tool it starts; otherwise the
     /// one that tool's own row lists first; and for a tool airband has no row for, the one launcher of his own
@@ -141,9 +148,10 @@ impl Config {
         self.keys.retain(|_, k| k.provider != provider);
         self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
-    /// The harnesses a new agent can be started with, the usual one first.
+    /// The harnesses a new agent can be started with, each once, in the launchers' order. Which is usual is
+    /// `held::launcher_for`'s alone to say.
     pub(crate) fn tools(&self) -> Vec<String> {
-        let mut out: Vec<String> = self.launchers.get(&self.launcher).map(|l| l.harness.clone()).into_iter().collect();
+        let mut out: Vec<String> = Vec::new();
         self.launchers.values().for_each(|l| if !out.contains(&l.harness) { out.push(l.harness.clone()) });
         out.retain(|h| !h.is_empty());
         out
@@ -356,22 +364,29 @@ fn parse(text: &str, path: &Path) -> Result<Config, String> {
     Ok(cfg)
 }
 
-/// The file's text for these settings. The keys are never in it: they are kept encrypted (`vault`) and the
-/// text has a mark in each of their places, from the first time the file is written.
-fn render(cfg: &Config, path: &Path) -> Result<String, String> {
-    if let Some(why) = &cfg.keyless {
-        return Err(format!("the settings cannot be changed from here: {why}"));
-    }
+/// The file's text for these settings, and the keys to keep once it is written. The keys are never in it: they
+/// are kept encrypted (`vault`) and the text has a mark in each of their places, from the first time the file
+/// is written. Until the file is written the keys it has now are kept too, beside the new ones: a write that
+/// fails leaves no mark in it pointing at a key that is gone.
+fn render(cfg: &Config, path: &Path) -> Result<(String, Option<serde_json::Map<String, serde_json::Value>>), String> {
+    cfg.keys_read().map_err(|why| format!("the settings cannot be changed from here: {why}"))?;
     // a file that is there and cannot be read is never taken as one without keys: that would write over it
     let existing = airband_io::files::read_text(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
     name_keys(&mut doc);
     let before = if crate::vault::sealed(&existing) { kept(path)? } else { Default::default() };
     let now = crate::vault::seal(&mut doc, &before);
-    if now != before {
-        crate::vault::put(&now)?;
+    let mut both = before.clone();
+    both.extend(now.clone());
+    if both != before {
+        crate::vault::put(&both)?;
     }
-    Ok(format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()))
+    Ok((format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()), (now != both).then_some(now)))
+}
+
+/// Once the file is written: only the keys it marks are kept.
+fn keep_only(keys: Option<serde_json::Map<String, serde_json::Value>>) -> Result<(), String> {
+    keys.map_or(Ok(()), |keys| crate::vault::put(&keys))
 }
 
 /// Write the settings. The keys never go in the file: they are kept encrypted (`vault`), from the first save.
@@ -397,9 +412,7 @@ fn change_at<R>(path: &Path, f: impl FnOnce(&mut Config) -> Result<R, String>) -
         Some((_, cfg)) => cfg,
         None => parse("{}", path)?,
     };
-    if let Some(why) = &cfg.keyless {
-        return Err(format!("the settings cannot be changed from here: {why}"));
-    }
+    cfg.keys_read().map_err(|why| format!("the settings cannot be changed from here: {why}"))?;
     let made = f(&mut cfg)?;
     save_at(&cfg, path, &held)?;
     Ok(made)
@@ -408,8 +421,9 @@ fn change_at<R>(path: &Path, f: impl FnOnce(&mut Config) -> Result<R, String>) -
 /// Write the settings, for one that already holds the file.
 /// Write the settings to the file at `path`, which the caller holds.
 pub(crate) fn save_at(cfg: &Config, path: &Path, _: &crate::lock::Held) -> Result<(), String> {
-    let text = render(cfg, path)?;
-    write_private(path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    let (text, keys) = render(cfg, path)?;
+    write_private(path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    keep_only(keys)
 }
 
 /// What is in the settings file: `None` when there is no file yet. A file that is there and cannot be read or
@@ -441,8 +455,8 @@ pub(crate) fn load() -> Config {
         }
     };
     // without the keys nothing is rewritten: the file is left exactly as it is
-    let text = match render(&cfg, &path) {
-        Ok(text) => text,
+    let (text, keys) = match render(&cfg, &path) {
+        Ok(rendered) => rendered,
         Err(_) if cfg.keyless.is_some() => return cfg,
         Err(e) => {
             eprintln!("airband: {e}");
@@ -451,6 +465,8 @@ pub(crate) fn load() -> Config {
     };
     if existing.as_deref() != Some(text.as_str()) {
         write_private(&path, &text).expect("cannot write ~/.airband/config.json");
+        // the keys it no longer marks are let go; one that cannot be is harmless, and kept until the next save
+        keep_only(keys).ok();
     }
     cfg
 }
@@ -534,6 +550,35 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"token\": \"\xff\"}", "and the file is left as it was");
         std::fs::write(&path, "{ not json").unwrap();
         assert!(existing(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_save_whose_file_cannot_be_written_leaves_every_key_its_file_marks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-cfg-keys-{}", random_hex(4)));
+        std::fs::create_dir_all(dir.join("vault")).unwrap();
+        crate::vault::tests_folder::set(dir.join("vault"));
+        let path = dir.join("config.json");
+        let key = |provider: &str| StoredKey { provider: provider.into(), secret: format!("sk-{provider}-0123456789") };
+        let mut cfg = parse("{}", &path).unwrap();
+        cfg.keys.insert("one".into(), key("one"));
+        cfg.keys.insert("two".into(), key("two"));
+        save_at(&cfg, &path, &hold_at(&path).unwrap()).unwrap();
+        let first = crate::vault::get().unwrap().len();
+        // "two" is dropped, and the file cannot be written: the file still marks it, so it is still kept
+        cfg.keys.remove("two");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = save_at(&cfg, &path, &hold_at(&path).unwrap());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(failed.is_err());
+        let kept = parse(&std::fs::read_to_string(&path).unwrap(), &path).expect("every key its file marks is there");
+        assert_eq!(kept.keys.len(), 2);
+        assert_eq!(crate::vault::get().unwrap().len(), first);
+        // written: only what it marks is kept
+        save_at(&cfg, &path, &hold_at(&path).unwrap()).unwrap();
+        assert_eq!(crate::vault::get().unwrap().len(), first - 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 

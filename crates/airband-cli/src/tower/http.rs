@@ -130,7 +130,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     }
     let mut req = req;
     // A radio must say which one it is. A caller with the tower's own token (the hooks, `airband status`) is no
-    // radio: it may ask what any radio may ask that is not kept per radio (accounts, the feed), naming none.
+    // radio: it may ask, naming none, what is not kept per radio (accounts); the feed is per radio, and needs one.
     let named = req.headers().get(RADIO_HEADER).is_some();
     if req.uri().path().starts_with(airband_core::radio::PATH) && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
@@ -204,10 +204,17 @@ pub(super) mod tests {
 
     /// A tower with nothing in it, its state in a folder of its own.
     pub(in crate::tower) fn app(name: &str) -> Arc<App> {
+        app_with(name, serde_json::json!({}))
+    }
+
+    /// A tower with nothing in it, with these settings beside its tokens.
+    pub(in crate::tower) fn app_with(name: &str, mut settings: serde_json::Value) -> Arc<App> {
+        settings["token"] = "own".into();
+        settings["radio_token"] = "radio".into();
         let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let store = Arc::new(Store::open(&path).unwrap());
-        let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
+        let cfg: Config = serde_json::from_value(settings).unwrap();
         let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
         Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() })

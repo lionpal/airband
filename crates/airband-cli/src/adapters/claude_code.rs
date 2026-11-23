@@ -14,8 +14,9 @@ use sessions::*;
 use transcript::*;
 
 /// What Claude Code set the variable its row names under `what` to, for this hook.
+/// The value of the variable the row names for `what`; nothing when the row names none.
 fn row_env(what: &str) -> Option<String> {
-    env(&super::row_says(HARNESS, what))
+    Some(super::row_says(HARNESS, what)).filter(|name| !name.is_empty()).and_then(|name| env(&name))
 }
 
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
@@ -41,7 +42,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         title: if env("AIRBAND_HELD").is_some() { None } else { session_name(hook) },
         pid: row_env("pid_env").and_then(|p| p.parse().ok()),
         // one the tower started and holds is reached through the input it holds, and no other way
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { row_env("inbox_env").map(|s| Deliver::Socket { path: s.trim_start_matches(super::row_says(HARNESS, "inbox_scheme").as_str()).to_string(), token: row_env("inbox_token_env") }) },
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { row_env("inbox_env").and_then(|s| s.strip_prefix(super::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })) },
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })

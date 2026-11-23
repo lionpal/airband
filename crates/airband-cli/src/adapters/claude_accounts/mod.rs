@@ -38,9 +38,9 @@ const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts a
 fn row(what: &str) -> String {
     super::row_says(HARNESS, what)
 }
-/// The arguments that start a sign-in, as the row lists them.
-pub(super) fn sign_in_args() -> Vec<String> {
-    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default()
+/// The arguments that start a sign-in, as the row lists them; nothing when it lists none, never the tool run bare.
+pub(super) fn sign_in_args() -> Option<Vec<String>> {
+    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
 }
 
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
@@ -128,20 +128,23 @@ fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> Res<T> {
 /// or by the refresh token a saved copy shares. Its record is the saved one, or the server's when there is none.
 fn keep_outgoing(here: &Here, email: &str, blob: &serde_json::Map<String, Value>) -> Res<()> {
     let oauth = blob.get(&login_key()).ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
-    let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
     let acct = match saved::entry(here, email).ok().and_then(|e| e.get("oauthAccount").filter(|a| a["accountUuid"].is_string()).cloned()) {
         Some(acct) => acct,
-        None => service::profile(here, token).filter(|(e, _)| e == email).map(|(_, a)| a).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?,
+        None => service::profile(here, access_token(oauth)?).filter(|(e, _)| e == email).map(|(_, a)| a).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?,
     };
     saved::keep(here, email, oauth, &acct)
+}
+
+/// A login's access token. A login with none is said, never sent as an empty one.
+fn access_token(oauth: &Value) -> Res<&str> {
+    oauth.get("accessToken").and_then(|t| t.as_str()).filter(|t| !t.is_empty()).ok_or_else(|| format!("{} is signed in without an access token. Sign in to it again.", tool()))
 }
 
 fn save_live(here: &Here) -> Res<String> {
     let blob = live::blob(here)?.ok_or_else(|| format!("{} is not signed in on this computer.", tool()))?;
     let oauth = blob.get(&login_key()).cloned().ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
-    let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
     // whose login it is, from the server and never from the file a switch itself rewrites
-    let (email, acct) = service::profile(here, token).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?;
+    let (email, acct) = service::profile(here, access_token(&oauth)?).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?;
     saved::keep(here, &email, &oauth, &acct)?;
     Ok(email)
 }
@@ -355,7 +358,7 @@ pub(crate) fn add() -> Res<String> {
     airband_io::files::write_atomic(&tmp.join(row("account_file")), row("account_seed")).map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
-    let status = Command::new(&program).args(sign_in_args()).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
+    let status = Command::new(&program).args(sign_in_args().ok_or_else(|| format!("airband does not know how {} is signed in to.", tool()))?).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
     let result = (|| -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());

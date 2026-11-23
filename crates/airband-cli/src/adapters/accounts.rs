@@ -145,7 +145,7 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
     let show = |a: &Accounts| {
         for acct in &a.accounts {
             let limits: Vec<String> = acct.limits.iter().map(|l| format!("{} {:.0}%", l.name, l.used * 100.0)).collect();
-            println!("{} {:<34} {}", if acct.live { "▶" } else { " " }, acct.label, acct.problem.clone().unwrap_or_else(|| limits.join(", ")));
+            println!("{:<7}{:<34} {}", if acct.live { "in use" } else { "" }, acct.label, acct.problem.clone().unwrap_or_else(|| limits.join(", ")));
         }
         if let Some(note) = &a.note {
             println!("{note}");

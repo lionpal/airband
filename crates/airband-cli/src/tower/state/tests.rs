@@ -163,7 +163,7 @@ fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
     let theirs = Callsign { project: "garden".into(), number: "one".into(), named: false };
     assert!(inner.taken_elsewhere(&[theirs]));
     let b = inner.find("b").unwrap();
-    assert_eq!((b.team.as_str(), b.callsign.project.as_str()), (garden.as_str(), "laptop garden"));
+    assert_eq!((b.team.as_ref().map(|t| t.as_str()), b.callsign.project.as_str()), (Some(garden.as_str()), "laptop garden"));
     assert_eq!(inner.roster_entries()[0].team, Some(garden));
 }
 
@@ -191,7 +191,14 @@ fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
 #[test]
 fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
     // as kept before teams went by folder: one name, two folders
-    let session = |id: &str, cwd: &str, number: &str| Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::new(""));
+    // kept with no team at all: read back, it is in none until the teams are settled
+    let session = |id: &str, cwd: &str, number: &str| {
+        let mut kept = serde_json::to_value(Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::new("/unused"))).unwrap();
+        kept.as_object_mut().unwrap().remove("team");
+        let read: Session = serde_json::from_value(kept).unwrap();
+        assert!(read.team.is_none());
+        read
+    };
     let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
     let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
     // a line kept under a team's name, and one he said to several teams
@@ -199,7 +206,7 @@ fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams()
     inner.log.push(Entry { id: "l2".into(), ..Entry::default() });
     inner.settle_teams(old, ["garden".to_string()].into());
     assert_eq!(names(&inner), ["shop one", "work shop one"]);
-    assert_eq!(inner.sessions.iter().map(|s| s.team.as_str()).collect::<Vec<_>>(), ["/a/work/shop", "/b/work/shop"]);
+    assert_eq!(inner.sessions.iter().map(|s| s.team.as_ref().map(|t| t.as_str()).unwrap()).collect::<Vec<_>>(), ["/a/work/shop", "/b/work/shop"]);
     assert_eq!(inner.log.iter().map(|e| e.team.as_ref().map(|t| t.as_str())).collect::<Vec<_>>(), [Some("/g"), None]);
     assert!(inner.teams[&TeamId::new("/g")].named && !inner.teams[&TeamId::new("/a/work/shop")].named);
     // once is enough: doing it again changes nothing
@@ -601,7 +608,8 @@ fn a_radio_that_only_reads_and_types_keeps_who_it_was_talking_to() {
 }
 
 fn kept_session(id: &str, cwd: Option<&str>, project: &str) -> Session {
-    Session::new(Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, Callsign { project: project.into(), number: "one".into(), named: false }, TeamId::new(""))
+    // kept in a team that is no longer there
+    Session::new(Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, Callsign { project: project.into(), number: "one".into(), named: false }, TeamId::new(format!("/gone/{project}")))
 }
 
 #[test]
@@ -619,7 +627,7 @@ fn a_kept_agent_whose_team_is_gone_goes_to_its_folders_team_or_is_let_go() {
     inner.settle_teams(BTreeMap::new(), BTreeSet::new());
     // no team is made from a name nothing has, and nobody is left in no team
     assert_eq!(inner.teams.values().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["shop"]);
-    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_str())).collect::<Vec<_>>(), [("a", "/x/shop")]);
+    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_ref().map(|t| t.as_str()).unwrap())).collect::<Vec<_>>(), [("a", "/x/shop")]);
 }
 
 #[test]
@@ -699,10 +707,10 @@ fn a_renamed_teams_agents_never_take_a_callsign_another_agent_has() {
     let shop = inner.folder_team("/x/shop").unwrap();
     let garden = inner.folder_team("/x/garden").unwrap();
     let mut a = kept_session("a", Some("/x/shop"), "shop");
-    a.team = shop.clone();
+    a.team = Some(shop.clone());
     // one in another team still called by a name the renamed team now takes
     let mut b = kept_session("b", Some("/x/garden"), "orchard");
-    b.team = garden;
+    b.team = Some(garden);
     inner.sessions = vec![a, b];
     inner.rename_team(&shop, "orchard").unwrap();
     assert_eq!(names(&inner), ["orchard two", "orchard one"]);

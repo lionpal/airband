@@ -155,12 +155,18 @@ fn lines(held: &Held, line: &str, stop: Option<&str>) -> Result<(), String> {
         }
     }
 }
+/// The row's line for his words, his words and the receipt each put in once, as JSON strings: words of his that
+/// read like a place (`{receipt}`) stay his words.
+fn said_line(line: &str, text: &str, receipt: &str) -> String {
+    airband_core::template::filled(line, &[("text", &Value::String(text.to_string()).to_string()), ("receipt", &Value::String(receipt.to_string()).to_string())])
+}
+
 fn told(held: &Held, tell: Tell, line: &str, stop: Option<&str>) {
     match tell {
-        Tell::Say(text, receipt) => held.write(&line.replace("{text}", &Value::String(text).to_string()).replace("{receipt}", &Value::String(receipt).to_string())),
+        Tell::Say(text, receipt) => held.write(&said_line(line, &text, &receipt)),
         Tell::Stop => {
             if let Some(stop) = stop {
-                held.write(&stop.replace("{id}", &crate::config::random_hex(8)));
+                held.write(&airband_core::template::filled(stop, &[("id", &crate::config::random_hex(8))]));
             }
         }
         Tell::End => held.close_input(),
@@ -375,5 +381,13 @@ mod by_tests {
         let lines = airband_core::tools::Held::Lines { fresh: Vec::new(), resume: Vec::new(), line: "{text}".into(), stop: None };
         assert_eq!(By::read(By::of(&lines).word()), Some(By::Lines));
         assert_eq!(By::read("lines "), None);
+    }
+}
+
+#[cfg(test)]
+mod said_line_tests {
+    #[test]
+    fn his_words_go_into_the_line_once_and_are_never_read_again_as_a_place() {
+        assert_eq!(super::said_line(r#"{"say":{text},"r":{receipt}}"#, "keep {receipt} as is", "r1"), r#"{"say":"keep {receipt} as is","r":"r1"}"#);
     }
 }

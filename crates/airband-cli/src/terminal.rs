@@ -41,7 +41,7 @@ impl RadioHost for Terminal {
         println!("{text}");
     }
     fn speak(&self, text: String) {
-        println!("🔊 {text}");
+        println!("Said: {text}");
     }
     fn listen(&self) -> Option<String> {
         self.listening.store(true, Ordering::SeqCst);
@@ -60,8 +60,8 @@ impl RadioHost for Terminal {
     }
     fn status(&self, status: RadioStatus) {
         match status {
-            RadioStatus::Offline => println!("· airband is not answering"),
-            RadioStatus::Listening => println!("🎙  (type a reply, or Enter for none)"),
+            RadioStatus::Offline => println!("airband is not answering."),
+            RadioStatus::Listening => println!("Type a reply, or press Enter for none."),
             _ => {}
         }
     }
@@ -75,7 +75,11 @@ pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
         Pairing::Direct { url, .. } => format!("directly to {url}"),
     };
-    let window = flag("--window").and_then(|s| s.parse().ok()).unwrap_or(20);
+    // a window he typed that is not a number is said, never taken as the usual one
+    let window = match flag("--window") {
+        Some(s) => s.parse().map_err(|_| format!("--window takes a number of lines, not {s}"))?,
+        None => 20,
+    };
     let (tx, rx) = channel();
     let listening = Arc::new(AtomicBool::new(false));
     let host = Arc::new(Terminal {
@@ -126,8 +130,10 @@ impl RadioHost for Silent {
 }
 
 fn link_from(cfg: &Config, args: &[String]) -> String {
-    if let Some(why) = cfg.keyless.clone().filter(|_| !args.iter().any(|a| a == "--link")) {
-        eprintln!("airband: this needs airband's keys, which are in the keychain and could not be read here: {why}");
+    // a link he gives needs none of the kept keys
+    let linked = args.iter().any(|a| a == "--link");
+    if let (false, Err(why)) = (linked, cfg.keys_read()) {
+        eprintln!("airband: {why}");
         std::process::exit(2);
     }
     link_or_here(cfg, args)
@@ -197,9 +203,9 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
             println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
         }
         for m in &f.messages {
-            let to = if m.to.is_empty() { String::new() } else { format!(" → {}", m.to.join(", ")) };
-            let mark = if m.needs_you { "‼" } else if m.fyi { "·" } else { " " };
-            println!("{mark} [{}{to}] {}{}", m.from, m.text, if m.long { "  (+more)" } else { "" });
+            let to = if m.to.is_empty() { String::new() } else { format!(" to {}", m.to.join(", ")) };
+            let mark = if m.needs_you { "Needs you. " } else { "" };
+            println!("[{}{to}] {mark}{}{}", m.from, m.text, if m.long { " (more to read)" } else { "" });
             if !m.pictures.is_empty() {
                 println!("    {} picture{}", m.pictures.len(), if m.pictures.len() == 1 { "" } else { "s" });
             }

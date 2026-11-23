@@ -5,7 +5,7 @@ pub(crate) fn triage(cfg: Config) -> Result<(), String> {
     let mut full = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
     let rt = runtime()?;
-    let item = Item { id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
+    let item = Item { notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
     let j = rt.block_on(prepare(&Settings::held(cfg), &item));
     println!("{}\t{}\t{}", super::store::word(&j.kind).unwrap_or_default(), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
     Ok(())

@@ -75,7 +75,10 @@ impl Asking {
         self.busy.remove(owner);
         match came {
             Some(Answer::Nobody) | None => {
-                self.again.insert(owner.to_string(), std::time::Instant::now() + Self::AGAIN);
+                // what is past its time is no longer waited out: kept, the set would grow for the tower's life
+                let now = std::time::Instant::now();
+                self.again.retain(|_, until| *until > now);
+                self.again.insert(owner.to_string(), now + Self::AGAIN);
             }
             Some(_) => {
                 self.again.remove(owner);
@@ -176,7 +179,7 @@ enum Sent {
 /// (500 waiting) or one that cannot be written keeps nothing.
 fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
     let Ok(()) = airband_io::files::make_folder(dir) else { return Posted::Lost };
-    let Ok(waiting) = airband_io::files::entries(dir).map(|d| d.len()) else { return Posted::Lost };
+    let Ok(waiting) = airband_io::files::entries(dir).map(|d| d.iter().filter(|p| spooled(p)).count()) else { return Posted::Lost };
     if waiting >= 500 {
         return Posted::Lost;
     }
@@ -208,8 +211,14 @@ fn send(event: &AgentEvent) -> Sent {
 pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> Result<(), String>) {
     drain(&config::dir().join("spool"), take)
 }
+/// An event kept whole, by the name `spool` gives it. A file still being written is hidden beside it under
+/// another name (`airband_io::files`), and is neither counted nor taken: its writer gives it its name when whole.
+fn spooled(path: &std::path::Path) -> bool {
+    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| !n.starts_with('.') && n.ends_with(".json"))
+}
+
 fn drain(dir: &std::path::Path, take: impl Fn(AgentEvent) -> Result<(), String>) {
-    let Ok(mut kept) = airband_io::files::entries(dir) else { return };
+    let Ok(mut kept) = airband_io::files::entries(dir).map(|d| d.into_iter().filter(|p| spooled(p)).collect::<Vec<_>>()) else { return };
     kept.sort();
     for path in kept {
         let old = airband_io::files::age(&path).is_some_and(|age| age > Duration::from_secs(600));
@@ -248,6 +257,14 @@ mod tests {
     }
 
     #[test]
+    fn one_whose_wait_is_over_is_not_kept_for_ever() {
+        let mut asking = Asking::default();
+        asking.again.insert("gone".into(), std::time::Instant::now());
+        asking.over("r2", "r2", None);
+        assert!(!asking.again.contains_key("gone") && asking.again.contains_key("r2"));
+    }
+
+    #[test]
     fn a_kept_report_the_tower_refuses_never_holds_up_the_ones_after_it() {
         let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
         let event = |id: &str| AgentEvent::new(crate::adapters::agent_with(id, "test"), airband_core::agent::Event::Checkin);
@@ -257,6 +274,21 @@ mod tests {
         drain(&dir, |ev| if ev.agent.id == "refused" { Err("no team".into()) } else { took.lock().unwrap().push(ev.agent.id); Ok(()) });
         assert_eq!(*took.lock().unwrap(), ["taken"]);
         assert_eq!(airband_io::files::entries(&dir).unwrap().len(), 0);
+        airband_io::files::remove_folder(&dir).ok();
+    }
+
+    #[test]
+    fn a_kept_report_still_being_written_is_neither_taken_nor_counted() {
+        let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
+        let event = AgentEvent::new(crate::adapters::agent_with("a", "test"), airband_core::agent::Event::Checkin);
+        assert_eq!(spool(&dir, &event), Posted::Kept);
+        // one being written beside it, under the hidden name its writer renames it from
+        let part = dir.join(".00000000000000000001-abcd.json.part-1234");
+        std::fs::write(&part, serde_json::to_vec(&event).unwrap()).unwrap();
+        let took = std::sync::Mutex::new(0);
+        drain(&dir, |_| { *took.lock().unwrap() += 1; Ok(()) });
+        assert_eq!(*took.lock().unwrap(), 1);
+        assert!(part.exists(), "left to its writer");
         airband_io::files::remove_folder(&dir).ok();
     }
 

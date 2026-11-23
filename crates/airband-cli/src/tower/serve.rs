@@ -72,10 +72,10 @@ fn settle_keys() {
 /// What has been handed to the database's writer is written first, as far as it can be in a moment: a receipt
 /// already answered must not lose its chat line.
 fn stop_whole_on_failure() {
-    let usual = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        usual(info);
-        log(format!("the tower stopped itself after an internal failure: {info}"));
+        // where, never what: a panic's message can hold anything it was formatting, his words among them
+        let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_else(|| "an unknown place".into());
+        log(format!("the tower stopped itself after an internal failure at {at}"));
         if let Some(saver) = SAVER.get() {
             saver.flush_within(Duration::from_secs(3));
         }

@@ -71,7 +71,7 @@ impl Store {
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // columns added since the table was first made: what a request for leave asked and where it stands,
         // and what airband says around the tool's words
-        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer"), ("more", "integer")] {
+        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer"), ("more", "integer"), ("background", "integer")] {
             if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
                 db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
                 // Kept from before whether a line is his had its own column: his lines were the ones written
@@ -139,7 +139,7 @@ impl Store {
     /// The newest `keep` messages, oldest first. A row this build cannot read, or a column of one that does not
     /// read as what it should be, is said in the log with the message's number, never passed over in silence.
     fn messages(db: &Connection, keep: usize) -> Vec<Entry> {
-        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more from messages order by seq desc limit ?1")) else { return Vec::new() };
+        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more, background from messages order by seq desc limit ?1")) else { return Vec::new() };
         let rows = q.query_map(params![keep as i64], |r| {
             let seq = r.get::<_, i64>(0)? as u64;
             let column = |n: usize| r.get::<_, Option<String>>(n);
@@ -151,7 +151,11 @@ impl Store {
                 team: Some(r.get::<_, String>(4)?).filter(|t| !t.is_empty()).map(TeamId::new),
                 to: read_json(seq, "recipients", column(5)?).unwrap_or_default(),
                 kind: read_word(seq, "kind", column(6)?),
-                short: r.get(7)?,
+                // a short version kept before whether it was cut was: not known to be whole, so made again
+                short: {
+                    let known = r.get::<_, Option<bool>>(26)?.is_some() || r.get::<_, Option<bool>>(25)? == Some(true);
+                    r.get::<_, Option<String>>(7)?.filter(|_| known)
+                },
                 full: r.get(8)?,
                 detail: r.get(9)?,
                 options: read_json(seq, "options", column(10)?).unwrap_or_default(),
@@ -164,7 +168,7 @@ impl Store {
                 rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                 read: r.get(16)?,
                 own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
-                background: false,
+                background: r.get::<_, Option<bool>>(27)?.unwrap_or(false),
                 held: read_word(seq, "waiting", column(17)?),
                 seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
                 permit: None,
@@ -203,7 +207,10 @@ impl Store {
             tx.execute(KEEP_UNDER, params![key, text])?;
         }
         for e in &batch.messages {
-            Self::put_one(&tx, e)?;
+            // one under another line's id is left out and said, never let stop every later write
+            if Self::put_one(&tx, e)? == 0 {
+                log(format!("database: message {} has the id of another and is not written", e.seq));
+            }
         }
         for (id, reply) in &batch.receipts {
             let reply = serde_json::to_string(reply).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -231,9 +238,10 @@ impl Store {
     fn put_one(db: &Connection, e: &Entry) -> rusqlite::Result<usize> {
         let kind = e.kind.as_ref().and_then(word);
         db.execute(
-            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
-             on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more",
-            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more],
+            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more, background) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+             on conflict (seq) do update set background = excluded.background, grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more
+             on conflict do nothing",
+            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more, e.background],
         )
     }
 
@@ -374,6 +382,35 @@ mod tests {
         let path = std::env::temp_dir().join(format!("airband-store-{name}-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         (Store::open(&path).unwrap(), path)
+    }
+
+    #[test]
+    fn a_line_kept_while_its_agent_waits_on_its_own_work_says_so_after_a_restart() {
+        let (s, path) = store("background");
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), short: Some("Waiting on the build.".into()), background: true, ..Entry::default() }]);
+        assert!(s.load(10).unwrap().1[0].background);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_short_version_kept_before_whether_it_was_cut_was_is_made_again() {
+        let (s, path) = store("more-unknown");
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), short: Some("Done.".into()), full: "Done, and more.".into(), more: true, ..Entry::default() }, Entry { seq: 2, id: "b".into(), short: Some("Done.".into()), ..Entry::default() }, Entry { seq: 3, id: "c".into(), his: true, short: Some("fix it".into()), ..Entry::default() }]);
+        // as a row from before the column was there
+        s.db.lock().unwrap().execute("update messages set more = null", []).unwrap();
+        let kept = s.load(10).unwrap().1;
+        assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.short.is_some())).collect::<Vec<_>>(), [("a", false), ("b", false), ("c", true)]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_line_under_another_lines_id_never_stops_the_writes_after_it() {
+        let (s, path) = store("same-id");
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), ..Entry::default() }]);
+        // the same id under another number, with a line after it in the same batch
+        s.write(&Batch { messages: vec![Entry { seq: 2, id: "a".into(), ..Entry::default() }, Entry { seq: 3, id: "b".into(), ..Entry::default() }], ..Batch::default() }).expect("written, the copy left out");
+        assert_eq!(s.load(10).unwrap().1.iter().map(|e| e.seq).collect::<Vec<_>>(), [1, 3]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

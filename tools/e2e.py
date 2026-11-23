@@ -42,8 +42,10 @@ if "--local" in sys.argv:
     if os.environ.get("AIRBAND_LOCAL_CACHE"):
         os.makedirs(os.path.join(home, ".airband", "local"))
         os.symlink(os.environ["AIRBAND_LOCAL_CACHE"], os.path.join(home, ".airband", "local", "models"))
+# his name, as his settings give it: the line in front of his words to an agent says it
+NAME = "Charles"
 json.dump({
-    "port": PORT, "token": OWN, "radio_token": RADIO, "relay": None, "name": "Charles", "station": "e2e", "permission_wait": 25,
+    "port": PORT, "token": OWN, "radio_token": RADIO, "relay": None, "name": NAME, "station": "e2e", "permission_wait": 25,
     "summarizer": MODEL,
     "launchers": {"test": {"argv": ["sh", "-c", 'printf "%s\\n" "$@" > "{cwd}/launched.txt"', "sh", "{options}", "{task}"], "models": {"fable": "fable-id", "opus": "opus-id"},
                            "efforts": ["low", "medium", "high"], "with_model": ["--model", "{model}"], "with_effort": ["--effort", "{effort}"]}}, "launcher": "test",
@@ -400,7 +402,7 @@ try:
     check("words about another team's work reach that team (model)", say("send the payout email on Fridays") == "Sent to payouts schedule.")
     check("an agent named by the two letters his phone shows for it gets it (model)", say("C I, run the import again with the new supplier file") == "Sent to catalog import.")
     check("a team named alone narrows it to that team, and the work decides which of its agents (model)", say("to catalog. how is the supplier import going, did all the parts come in") == "Sent to catalog import.")
-    check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and "From Charles, on his phone through Airband." in received("page"), received("page")[-300:])
+    check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and f"From {NAME}, on his phone." in received("page"), received("page")[-300:])
     # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
     there = [{"id": "w1", "callsign": "warehouse stock", "badge": "WS", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
     told = said("recount bay 4 and tell me which units are missing", others=there)

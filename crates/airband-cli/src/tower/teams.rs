@@ -169,7 +169,7 @@ impl Inner {
         }
         t.name = to.clone();
         // each keeps its number or the name he gave it under the new name when nobody else has that, else the next free
-        let ids: Vec<String> = self.sessions.iter().filter(|s| &s.team == team).map(|s| s.agent.id.clone()).collect();
+        let ids: Vec<String> = self.sessions.iter().filter(|s| s.team.as_ref() == Some(team)).map(|s| s.agent.id.clone()).collect();
         for id in ids {
             let Some(was) = self.find(&id).map(|s| s.callsign.clone()) else { continue };
             let same = Callsign { project: to.to_string(), ..was };
@@ -247,12 +247,12 @@ impl Inner {
         }
         // an agent kept with no team id goes in the team of its name (old state only); else its folder's; with
         // neither it is let go, and said
-        let unteamed: Vec<(String, String, Option<String>)> = self.sessions.iter().filter(|s| !self.teams.contains_key(&s.team)).map(|s| (s.agent.id.clone(), s.callsign.project.clone(), s.agent.cwd.clone())).collect();
+        let unteamed: Vec<(String, String, Option<String>)> = self.sessions.iter().filter(|s| s.team.as_ref().is_none_or(|t| !self.teams.contains_key(t))).map(|s| (s.agent.id.clone(), s.callsign.project.clone(), s.agent.cwd.clone())).collect();
         for (id, name, cwd) in unteamed {
             match by_names.then(|| self.team_called(&name)).flatten().or_else(|| cwd.and_then(|cwd| self.folder_team(&cwd))) {
                 Some(team) => {
                     if let Some(s) = self.session(&id) {
-                        s.team = team;
+                        s.team = Some(team);
                     }
                 }
                 None => {
@@ -304,7 +304,7 @@ impl Inner {
             .iter()
             .filter(|(id, t)| {
                 t.live_folder().is_none()
-                    && !self.sessions.iter().any(|s| &s.team == *id)
+                    && !self.sessions.iter().any(|s| s.team.as_ref() == Some(*id))
                     && !self.placed.values().any(|p| p.team == **id)
                     && !self.log.iter().any(|e| e.team.as_ref() == Some(*id))
             })
