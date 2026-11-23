@@ -102,3 +102,32 @@ pub(crate) fn tool_name(id: &str) -> Option<String> {
 pub(crate) fn service_of(kind: &str, offer: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {
     airband_core::providers::Use { kind: kind.into(), offer: offer.into(), key: key.trim().into(), set: settings.into_iter().filter(|(_, v)| !v.trim().is_empty()).map(|(k, v)| (k, serde_json::Value::String(v.trim().to_string()))).collect() }
 }
+
+/// What he is told when a row does not say how its service takes a key.
+const UNTOLD: &str = "This version of airband was not told how that service takes its key.";
+
+/// The header his key goes in, and its value there, as the service's row says: the one way a request of the
+/// phone's carries his key. Nothing for no key. Err in words for him when the row does not say how.
+pub(crate) fn key_header(by: &airband_core::providers::By, key: &str) -> Result<Option<(String, String)>, String> {
+    by.key_header(key.trim()).map_err(|_| UNTOLD.to_string())
+}
+
+/// `ask`, with his key on it as the row says ([`key_header`]).
+pub(crate) fn keyed(ask: crate::net::Ask, by: &airband_core::providers::By, key: &str) -> Result<crate::net::Ask, String> {
+    Ok(match key_header(by, key)? {
+        Some((header, value)) => ask.header(header, value),
+        None => ask,
+    })
+}
+
+#[cfg(test)]
+mod key_tests {
+    #[test]
+    fn a_key_goes_where_the_row_says_and_only_there() {
+        let untold: airband_core::providers::By = serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap();
+        assert_eq!(super::key_header(&untold, ""), Ok(None), "no key needs nothing said");
+        assert_eq!(super::key_header(&untold, "sk-1"), Err(super::UNTOLD.to_string()));
+        let told: airband_core::providers::By = serde_json::from_value(serde_json::json!({ "interface": "x", "with": { "auth": { "header": "x-key", "prefix": "" } } })).unwrap();
+        assert_eq!(super::key_header(&told, " sk-1 ").map(|h| h.map(|(name, _)| name)), Ok(Some("x-key".to_string())));
+    }
+}

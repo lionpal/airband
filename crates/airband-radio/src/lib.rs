@@ -41,6 +41,7 @@ mod hears;
 mod keys;
 mod kept;
 mod link;
+mod catalog;
 mod models;
 mod mouth;
 mod outbox;

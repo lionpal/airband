@@ -64,10 +64,7 @@ fn unreadable(service: &Answering) -> String {
     format!("{} sent something this version of airband cannot read.", service.name)
 }
 
-/// How a voice service takes this key, by its row. One sent no key needs nothing said.
-fn key_header(by: &By, key: &str) -> Result<Option<(String, String)>, String> {
-    by.key_header(key).map_err(|_| "This version of airband was not told how that voice service takes its key.".to_string())
-}
+use crate::services::key_header;
 
 /// Hand a service's sound on as it arrives, a tenth of a second at a time.
 fn pump(mut sound: impl std::io::Read, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {

@@ -59,8 +59,7 @@ pub(super) fn pass_whole(by: &By, service: &Provider, set: &BTreeMap<String, Str
 /// service as its row does.
 pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<crate::net::Response, String> {
     let url = airband_core::providers::fill(by.text(crate::models::field::PASS), &|field| set.get(field).cloned().unwrap_or_default())?;
-    let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
-    let req = crate::net::Ask::post(&url).header(auth.header.as_str(), auth.value(key.trim()));
+    let req = crate::services::keyed(crate::net::Ask::post(&url), by, key)?;
     let req = match body {
         Some(body) => req.json(&body),
         None => req.header("Content-Length", "0"),

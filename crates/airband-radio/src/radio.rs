@@ -2,32 +2,12 @@
 use super::*;
 use airband_core::radio::wire::{self, Nothing, at};
 mod asks;
+mod upload;
+mod wake;
+pub(crate) use upload::UploadEnd;
+pub(crate) use wake::Wake;
 
-/// What the radio's waiting threads sleep on: they are woken when there is something to do (a message to send,
-/// a call starting, stopping), and do not wake up several times a second to look.
-#[derive(Default)]
-pub(crate) struct Wake {
-    turn: Mutex<u64>,
-    rung: std::sync::Condvar,
-}
 
-impl Wake {
-    pub(crate) fn ring(&self) {
-        *self.turn.lock().unwrap() += 1;
-        self.rung.notify_all();
-    }
-    /// How many times it has been rung: taken before looking at what there is to do, so a ring that comes
-    /// after the look and before the sleep still wakes it (`wait_since`).
-    pub(crate) fn turn(&self) -> u64 {
-        *self.turn.lock().unwrap()
-    }
-    /// Sleep until rung since `was` (from [`Self::turn`]), or for `at_most`. Returns at once if it was rung
-    /// meanwhile.
-    pub(crate) fn wait_since(&self, was: u64, at_most: Duration) {
-        let turn = self.turn.lock().unwrap();
-        self.rung.wait_timeout_while(turn, at_most, |now| *now == was).ok();
-    }
-}
 
 /// What is kept for him on one computer's behalf and outlasts the radio talking to it: what he sends next takes
 /// (the files he attached, the question it answers), and what is saved on the device (his unsent messages, the
@@ -102,14 +82,6 @@ pub(crate) enum Carry {
     Nothing,
 }
 
-/// How sending a file ended when nothing went wrong.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UploadEnd {
-    /// All of it is on his computer.
-    Arrived,
-    /// He took it off before it was all there.
-    TakenOff,
-}
 
 /// What became of an answer given from a notification, with the words he is told when it did not go now.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -223,13 +195,19 @@ impl Radio {
             out.answers = out.answers.or_else(|| self.session.take_question());
         }
         let id = out.id.clone();
+        self.enqueue(out);
+        id
+    }
+
+    /// Put it at the end of what is waiting to go, wake the sender, and show him what waits: the one way into
+    /// the outbox.
+    fn enqueue(&self, out: Outgoing) {
         let waiting = self.store.change(|s| {
             s.outbox.push(out);
             s.outbox.clone()
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
-        id
     }
 
     /// Try again something that was given up on: it goes to the end of what is waiting, as if just said.
@@ -470,95 +448,17 @@ impl Radio {
             match self.link.utterance_once(&u).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(Sent::Left { away: true }) => return AnswerOutcome::KeptForLater { why: AWAY.into() },
+                // the relay keeps it behind earlier words of his: it will get there, and has not yet
+                Ok(Sent::Left { away: false }) => return AnswerOutcome::KeptForLater { why: LinkError::Behind.said() },
                 // his computer has it: that is the answer given
-                Ok(_) => return AnswerOutcome::Sent,
+                Ok(Sent::Taken | Sent::Answered(_)) => return AnswerOutcome::Sent,
                 // it cannot be sent however often it is tried: he is told why, and nothing is left to try again
                 Err(e) if e.retry() == Retry::Never => return AnswerOutcome::Refused { why: RadioError::from(e).said() },
                 Err(e) => failed = e,
             }
         }
-        let waiting = self.store.change(|s| {
-            s.outbox.push(out);
-            s.outbox.clone()
-        });
-        self.wake.ring();
-        self.host.outbox(waiting, None);
+        self.enqueue(out);
         AnswerOutcome::KeptForLater { why: format!("{} It is on this phone and goes when it can.", failed.said()) }
     }
 
-    /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
-    /// returns false to give up. Blocks until it is all there, the tower refuses it, or it is given up on.
-    pub(crate) fn upload(&self, id: &str, path: &str, name: &str, mut sent: impl FnMut(u64, u64) -> bool) -> Result<UploadEnd, RadioError> {
-        // 90 KB of file is 120 KB of text, which fits one sealed message through a relay
-        const PART: u64 = 90_000;
-        // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
-        // of them. The first goes alone: a file his computer will not take is refused before the rest is sent.
-        const AT_ONCE: usize = 6;
-        let unread = |_| RadioError::here("read that file");
-        let total = std::fs::metadata(path).map_err(unread)?.len();
-        let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
-            let buf = airband_io::files::read_part(std::path::Path::new(path), from, PART).map_err(unread)?;
-            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })
-        };
-        // a part lost on a bad connection is sent again, to the same place, a few times before giving up
-        let send = |part: &airband_core::radio::AttachmentPart| -> Result<u64, RadioError> {
-            let mut tries = 0;
-            loop {
-                match self.link.attachment_part(part) {
-                    Ok(answer) => return Ok(answer),
-                    // a no, or what will never go however often it is sent (more than the relay carries): at once
-                    Err(e) if e.retry() == Retry::Never => return Err(e.into()),
-                    Err(_) if tries < 6 => {
-                        tries += 1;
-                        thread::sleep(Duration::from_secs(tries.min(4)));
-                    }
-                    // a file cannot be left with the relay: it needs his computer there to take it
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        };
-        send(&part_at(0)?)?;
-        let mut arrived = PART.min(total);
-        if !sent(arrived, total) {
-            return Ok(UploadEnd::TakenOff);
-        }
-        if arrived >= total {
-            return Ok(UploadEnd::Arrived);
-        }
-        let starts: Vec<u64> = (1..total.div_ceil(PART)).map(|k| k * PART).collect();
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let failed: Mutex<Option<RadioError>> = Mutex::new(None);
-        let taken_off = std::sync::atomic::AtomicBool::new(false);
-        let (tx, rx) = channel::<u64>();
-        thread::scope(|scope| {
-            for _ in 0..AT_ONCE.min(starts.len()) {
-                let tx = tx.clone();
-                let (next, failed, starts, part_at, send, taken_off) = (&next, &failed, &starts, &part_at, &send, &taken_off);
-                scope.spawn(move || {
-                    while failed.lock().unwrap().is_none() && !taken_off.load(Ordering::SeqCst) {
-                        let Some(from) = starts.get(next.fetch_add(1, Ordering::SeqCst)).copied() else { break };
-                        match part_at(from).and_then(|part| send(&part).map(|_| part.data.len() as u64 * 3 / 4)) {
-                            Ok(bytes) => {
-                                tx.send(bytes).ok();
-                            }
-                            Err(e) => *failed.lock().unwrap() = Some(e),
-                        }
-                    }
-                });
-            }
-            drop(tx);
-            // progress, as each part lands; he can take the file off while it goes
-            for bytes in rx {
-                arrived = (arrived + bytes).min(total);
-                if !sent(arrived, total) {
-                    taken_off.store(true, Ordering::SeqCst);
-                }
-            }
-        });
-        match failed.into_inner().unwrap() {
-            Some(e) => Err(e),
-            None if taken_off.into_inner() => Ok(UploadEnd::TakenOff),
-            None => Ok(UploadEnd::Arrived),
-        }
-    }
 }
