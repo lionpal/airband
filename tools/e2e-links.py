@@ -14,7 +14,7 @@ import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
-PORT = 7396
+PORT = wire.free_port()
 work = tempfile.mkdtemp(prefix="airband-links-")
 home, shop, tools = os.path.join(work, "home"), os.path.join(work, "code", "shop"), os.path.join(work, "bin")
 for d in (os.path.join(home, ".airband"), shop, tools):

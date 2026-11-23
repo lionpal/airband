@@ -20,7 +20,7 @@ import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
-PORT = 7391
+PORT = wire.free_port()
 REAL_HOME = os.path.expanduser("~")
 work = tempfile.mkdtemp(prefix="airband-e2e-")
 home, projects, got = os.path.join(work, "home"), os.path.join(work, "code"), os.path.join(work, "got")
@@ -55,7 +55,7 @@ json.dump({
 # file of this run's own in its temporary folder (made here with a random password, deleted at the end; never
 # his login keychain), and a stand-in for the account service. No real login is read or changed.
 RUN = os.urandom(4).hex()
-LIVE_ITEM, VAULT_ITEMS, STAND_IN = f"airband-e2e-live-{RUN}", f"airband-e2e-vault-{RUN}", 7392
+LIVE_ITEM, VAULT_ITEMS, STAND_IN = f"airband-e2e-live-{RUN}", f"airband-e2e-vault-{RUN}", wire.free_port()
 KEYCHAIN = os.path.join(work, "e2e.keychain-db")
 env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_ACCOUNTS=f"http://127.0.0.1:{STAND_IN}", AIRBAND_STAND_IN_TOKENS=f"http://127.0.0.1:{STAND_IN}/token",
            AIRBAND_STAND_IN_LIVE_ITEM=LIVE_ITEM, AIRBAND_STAND_IN_VAULT_ITEM=VAULT_ITEMS, AIRBAND_STAND_IN_KEYCHAIN=KEYCHAIN)

@@ -14,7 +14,7 @@ import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
-PORT, OWN, RADIO = 7398, "scenarios-own", "scenarios-radio"
+PORT, OWN, RADIO = wire.free_port(), "scenarios-own", "scenarios-radio"
 work = tempfile.mkdtemp(prefix="airband-scenarios-")
 home, got = os.path.join(work, "home"), os.path.join(work, "got")
 shop, docs = os.path.join(work, "code", "shop"), os.path.join(work, "code", "docs")

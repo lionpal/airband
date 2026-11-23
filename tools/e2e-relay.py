@@ -12,11 +12,12 @@ A relay, a tower and a radio, all on this machine, in a throwaway folder. The ra
 a pairing link, which uses the same core as the phone.
 """
 import base64, hashlib, hmac, json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILT = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release")
 BIN, RELAY = os.path.join(BUILT, "airband"), os.path.join(BUILT, "airband-relay")
-RELAY_PORT, TOWER_PORT = 7394, 7395
+RELAY_PORT, TOWER_PORT = wire.free_port(), wire.free_port()
 # With AIRBAND_E2E_RELAY (and AIRBAND_E2E_ADMISSION if it asks for a key) the same checks run against a relay
 # that is already up, such as the live one, on a channel of their own that is closed at the end. What the relay
 # keeps cannot be looked at from outside, so those checks are skipped.
@@ -43,9 +44,15 @@ def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 def start_tower():
-    t = subprocess.Popen([BIN, "run"], env=tower_env, stdout=open(os.path.join(work, "tower.log"), "a"), stderr=subprocess.STDOUT)
+    """Start the tower and go on once this run of it says it serves the pairing: a radio's call that comes before
+    then is told at once that the computer is away. Only what this run wrote is read, never the last run's lines."""
+    log = os.path.join(work, "tower.log")
+    before = os.path.getsize(log) if os.path.exists(log) else 0
+    t = subprocess.Popen([BIN, "run"], env=tower_env, stdout=open(log, "a"), stderr=subprocess.STDOUT)
     for _ in range(100):
-        if "serving" in open(os.path.join(work, "tower.log")).read().split("listening")[-1]: break
+        with open(log) as f:
+            f.seek(before)
+            if "serving" in f.read(): break
         time.sleep(0.1)
     return t
 def send(text, timeout=120):

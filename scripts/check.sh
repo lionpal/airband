@@ -2,10 +2,10 @@
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
 #   scripts/check.sh           the linter, then the unit tests of every crate (under a minute once built)
-#   scripts/check.sh --full    those, then the end-to-end suites: the relay and its queue (26 checks), agents the
-#                              tower runs itself (84), links (10), the paths the audits keep finding faults in
-#                              (e2e-scenarios), and the whole tower with real model calls (139, a few minutes, and
-#                              it needs `claude` signed in)
+#   scripts/check.sh --full    those, then the end-to-end suites, side by side: the relay and its queue, the pull,
+#                              agents the tower runs itself, links, the paths the audits keep finding faults in
+#                              (e2e-scenarios), notifications (e2e-push), and the whole tower with real model calls
+#                              (a few minutes, and it needs `claude` signed in)
 #
 # `git push` runs the first form by itself (.githooks/pre-push, turned on once with
 # `git config core.hooksPath .githooks`). CI on GitHub runs on every push too: every system the tower is meant
@@ -24,9 +24,25 @@ CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/stand-ins"
 case "$CARGO_TARGET_DIR" in /*) ;; *) CARGO_TARGET_DIR="$PWD/$CARGO_TARGET_DIR" ;; esac
 export CARGO_TARGET_DIR
 cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/stand-ins
-python3 tools/e2e-relay.py
-python3 tools/e2e-pull.py
-python3 tools/e2e-held.py
-python3 tools/e2e-links.py
-python3 tools/e2e-scenarios.py
-python3 tools/e2e.py --claude
+# Side by side: each suite has a throwaway home, and its own relay, tower and stand-ins on ports nothing else is on
+# (tools/wire.py free_port), so none reaches another's. Each is told apart in what it prints, with how long it took.
+logs=$(mktemp -d "${TMPDIR:-/tmp}/airband-suites.XXXXXX")
+began=$(date +%s)
+for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" e2e-push; do
+  name=${suite%% *}
+  (
+    start=$(date +%s)
+    # shellcheck disable=SC2086
+    if python3 tools/$name.py ${suite#"$name"} >"$logs/$name.log" 2>&1; then echo ok >"$logs/$name.result"; else echo failed >"$logs/$name.result"; fi
+    echo $(( $(date +%s) - start )) >"$logs/$name.seconds"
+  ) &
+done
+wait
+failed=0
+for name in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios e2e e2e-push; do
+  result=$(cat "$logs/$name.result")
+  printf '%-14s %-6s %4ss  %s\n' "$name" "$result" "$(cat "$logs/$name.seconds")" "$logs/$name.log"
+  if [ "$result" != ok ]; then failed=1; tail -n 30 "$logs/$name.log"; fi
+done
+echo "all suites: $(( $(date +%s) - began ))s"
+exit $failed

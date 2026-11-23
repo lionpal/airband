@@ -12,11 +12,12 @@ held open: it serves again with no word of another computer. Last, what he says 
 relay and reaches the agent once, when it is back. Never a live relay.
 """
 import json, os, shutil, signal, subprocess, sys, tempfile, time
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILT = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release")
 BIN, RELAY = os.path.join(BUILT, "airband"), os.path.join(BUILT, "airband-relay")
-RELAY_PORT, FIRST_PORT, SECOND_PORT = 7396, 7397, 7398
+RELAY_PORT, FIRST_PORT, SECOND_PORT = wire.free_port(), wire.free_port(), wire.free_port()
 BASE = f"http://127.0.0.1:{RELAY_PORT}"
 work = tempfile.mkdtemp(prefix="airband-pull-e2e-")
 first_home, second_home, phone, data, project, got = (os.path.join(work, d) for d in ("first", "second", "phone", "relay", "shop", "got.txt"))
