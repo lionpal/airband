@@ -15,7 +15,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), stoppable: [], newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
     /// A project: show just its agents, and keep what he says among them. The desk keeps it ([`look`]).
     var room: String? { view.focus.room }
     /// An agent, by id: show just that agent.
@@ -135,6 +135,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
     static let linksUnread = "Can\u{2019}t read your pairings yet. Unlock your phone."
+    static let notALink = "That is not a pairing link. Run airband pair on your computer."
     static let keysUnread = "Can\u{2019}t read your keys yet. Unlock your phone and try again."
     static let keyNotKept = "Couldn\u{2019}t keep your key on this phone. Try again."
 
@@ -161,7 +162,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         let link = link.trimmed
         let wrong: String?
         if !isPairingLink(link: link) {
-            wrong = "That is not a pairing link. Run airband pair on your computer."
+            wrong = RadioModel.notALink
         } else if !linksRead {
             wrong = RadioModel.linksUnread
         } else {
@@ -256,7 +257,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         letGoOfSent()
         // opened long ago: fetched again if he looks again. What is in the chat now stays, so a long message
-        // on screen never falls back to its opening (audit 9, B-43)
+        // on screen never falls back to its opening
         if full.count > (showWhole ? 400 : 60) {
             let shown = Set(view.feed.map(\.id))
             full = full.filter { shown.contains($0.key) }
@@ -350,7 +351,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
-    /// Set once in `init`, before the core is opened and can ask from its own threads (audit 9, B-45).
+    /// Set once in `init`, before the core is opened and can ask from its own threads.
     private(set) var engines: [String: (String, ChoiceJob, Data) -> Data?] = [:]
 
     /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.

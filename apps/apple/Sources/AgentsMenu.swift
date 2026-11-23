@@ -38,11 +38,11 @@ struct AgentsMenu: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                row(dot: nil, title: "all agents", detail: nil, strong: true, on: model.room == nil && model.only == nil, inset: 0) {
+                row(dot: nil, title: "all agents", strong: true, on: model.room == nil && model.only == nil, inset: 0) {
                     model.look()
                 }
                 ForEach(model.view.rooms, id: \.id) { room in
-                    row(dot: room.state, title: room.name, detail: nil, strong: true, on: model.room == room.id && model.only == nil, inset: 0, colour: room.colour) {
+                    row(dot: room.state, title: room.name, strong: true, on: model.room == room.id && model.only == nil, inset: 0, colour: room.colour) {
                         // a second tap on the one he is looking at goes back to everyone
                         let was = model.room == room.id && model.only == nil
                         model.look(room: was ? nil : room.id)
@@ -54,7 +54,7 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.id) } isTargeted: { over = $0 ? room.id : (over == room.id ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: agent.callsign, detail: nil, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
+                        row(dot: agent.state, title: agent.callsign, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
                             let was = model.only == agent.id
                             model.look(agent: was ? nil : agent.id)
                         }
@@ -70,7 +70,7 @@ struct AgentsMenu: View {
                         }
                         .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.id) } isTargeted: { over = $0 ? room.id : (over == room.id ? nil : over) }
                         .contextMenu {
-                            ForEach(model.view.rooms.filter { $0.id != room.id && $0.members.contains { $0.station == agent.station } }, id: \.id) { other in
+                            ForEach(model.view.rooms.filter { agent.moveTo.contains($0.id) }, id: \.id) { other in
                                 Button("Move to \(other.name)") { model.moveAgent(agent, to: .room(room: other.id)) }
                             }
                             Button { newTeam = ""; founding = agent } label: { Label("New team", systemImage: "plus") }
@@ -137,7 +137,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, reserve: CGFloat = 0, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: [String] = [], doing: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: AgentState?, title: String, strong: Bool, on: Bool, inset: CGFloat, reserve: CGFloat = 0, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: [String] = [], doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             // (every pick goes through look(), which lets go of a message he had picked)
             pick()
@@ -167,7 +167,6 @@ struct AgentsMenu: View {
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 8)
-                if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1).truncationMode(.tail) }
                 if on { Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.signal) }
             }
             // `reserve`: room kept at the end for marks laid over the row, so the name stops short of them

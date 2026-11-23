@@ -107,7 +107,7 @@ fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_kept_for_
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(waiting, [("laptop".to_string(), DeskDelivery::Waiting)]);
     assert_eq!(laptop.asked_on::<at::Reads>(), 1);
-    // every computer has it: nothing is left waiting, and it is kept for a computer paired later (P-B4)
+    // every computer has it: nothing is left waiting, and it is kept for a computer paired later
     assert!(after.is_empty(), "{after:?}");
     assert!(kept.is_some_and(|k| k.per.values().all(|d| *d == super::super::intents::Delivery::Done)));
 }
@@ -118,7 +118,7 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
     let offers = |has_key: bool| ReadsOffered { offers: vec![ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), key: true, has_key, ..ReadsOffer::default() }], ..ReadsOffered::default() };
     // it keeps its own: none is sent from a phone that has none
     assert_eq!(wanted.body_for(None, &offers(true)).map(|b| b.key), Ok(String::new()));
-    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere (C-B1)
+    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere
     assert_eq!(wanted.body_for(Some("sk-1"), &offers(true)).map(|b| b.key), Ok(String::new()));
     // it has none and the phone has one: the phone's is sent
     assert_eq!(wanted.body_for(Some("sk-1"), &offers(false)).map(|b| b.key), Ok("sk-1".to_string()));
@@ -214,7 +214,7 @@ fn a_computer_that_could_not_say_what_it_reads_with_is_asked_again_and_never_tol
     let desk = desk_wanting(&dir, vec![(link(1), studio.clone())], wanted_haiku(serde_json::json!({})));
     desk.set_links(vec![link(1)]);
     let id = station_id(&link(1));
-    // asked on each round while it owes it, as push and tools are (audit 6, P-B3, P-B5)
+    // asked on each round while it owes it, as push and tools are
     let again = until(|| studio.asked_on::<at::ReadsOffered>() >= 2);
     let meanwhile = standing_of(&desk, &id);
     // it comes back: the choice goes, and it has it
@@ -234,13 +234,12 @@ fn a_summary_choice_every_computer_refused_says_why_and_does_not_wait_for_good()
     let dir = temp("all-no");
     let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "refused", "reason": "Enter your API key." } });
     let desk = desk_wanting(&dir, vec![(link(1), tower("studio", true))], wanted_haiku(per));
-    // what a computer did counts only while it is paired (audit 7, P-N3)
+    // what a computer did counts only while it is paired
     let unpaired = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
     desk.set_links(vec![link(1)]);
     let state = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
-    // (audit 6, C-B2)
     assert_eq!(state, Some(ChoiceState::Failed { why: "Enter your API key.".into() }));
     assert_eq!(unpaired, Some(ChoiceState::Waiting));
 }
@@ -253,11 +252,10 @@ fn a_computer_paired_after_the_others_took_the_summary_choice_is_sent_it_and_an_
     let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "done" } });
     let desk = desk_wanting(&dir, vec![(link(1), studio.clone()), (link(2), laptop.clone())], wanted_haiku(per));
     desk.set_links(vec![link(1), link(2)]);
-    // (audit 6, P-B4)
     let sent = until(|| laptop.asked_on::<at::Reads>() == 1);
     let laptop_id = station_id(&link(2));
     let took = until(|| standing_of(&desk, &laptop_id) == Some(super::super::intents::Delivery::Done));
-    // a connection that is no longer the computer's sends nothing (audit 6, C-B3)
+    // a connection that is no longer the computer's sends nothing
     let epoch = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.epoch).unwrap();
     let before = laptop.asked_on::<at::ReadsOffered>();
     crate::choices::tell_reads(&desk.shared, &laptop_id, epoch + 100, true);

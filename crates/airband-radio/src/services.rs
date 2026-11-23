@@ -76,8 +76,8 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
         .collect()
 }
 
-/// What his computer offers to read with, as a service he can choose: the one way one is made from its row
-/// in the computer's list (audit 9, A-16). It speaks no voices.
+/// What his computer offers to read with, as a service he can choose, made from its row in the computer's
+/// list. It speaks no voices.
 impl From<&airband_core::radio::ReadsOffer> for Service {
     fn from(r: &airband_core::radio::ReadsOffer) -> Service {
         Service {
@@ -105,7 +105,6 @@ pub struct CodingTool {
     /// What its agents are known by (`DeskMember::harness`), and what a service's `login` names.
     pub id: String,
     pub name: String,
-    pub maker: String,
     /// What he has to do once before its agents are heard; empty when there is nothing.
     pub first: String,
 }
@@ -113,7 +112,7 @@ pub struct CodingTool {
 /// The coding tools airband works with, in the order to show them.
 #[uniffi::export]
 pub fn coding_tools() -> Vec<CodingTool> {
-    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.clone(), name: t.name.clone(), maker: t.maker.clone(), first: t.first.clone() }).collect()
+    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.clone(), name: t.name.clone(), first: t.first.clone() }).collect()
 }
 
 /// What a coding tool is called, by its id, as the catalogue names it. Nothing for a tool the catalogue on this
@@ -129,8 +128,9 @@ pub(crate) fn service_of(kind: &str, offer: &str, key: &str, settings: HashMap<S
 /// What he is told when a row does not say how its service takes a key.
 const UNTOLD: &str = "This version of airband was not told how that service takes its key.";
 
-/// The header his key goes in, and its value there, as the service's row says: the one way a request of the
-/// phone's carries his key. Nothing for no key. Err in words for him when the row does not say how.
+/// The header his key goes in, and its value there, as the service's row says, for a request to use the
+/// service. Nothing for no key. Err in words for him when the row does not say how. Testing a key is done
+/// as the row's own check says ([`crate::keys::check`]).
 pub(crate) fn key_header(by: &airband_core::providers::By, key: &str) -> Result<Option<(String, String)>, String> {
     by.key_header(key.trim()).map_err(|_| UNTOLD.to_string())
 }

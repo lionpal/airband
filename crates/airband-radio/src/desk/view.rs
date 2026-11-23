@@ -138,6 +138,7 @@ impl Desk {
         let extra = feed.len().saturating_sub(FEED_SHOWN);
         feed.drain(..extra);
         let rooms = rooms(&state, &agents, &all, &unread_from, &unread_in);
+        let stoppable = rooms.iter().filter(|r| room.as_ref().is_none_or(|x| r.id == *x)).flat_map(|r| r.members.iter()).filter(|m| m.can_stop && agent.as_ref().is_none_or(|a| m.id == *a)).cloned().collect();
         // the same quick messages from every computer, each once
         let mut quick: Vec<QuickMessage> = Vec::new();
         for q in state.computers.iter().flat_map(|s| s.quick.iter()) {
@@ -150,6 +151,7 @@ impl Desk {
         let away: Vec<String> = if state.computers.len() > 1 { state.computers.iter().filter(|s| s.tried && !s.online).map(|s| state.computer_name(&s.id())).collect() } else { Vec::new() };
         DeskView {
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
+            stoppable,
             new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },
             tools: used,
             cannot_reach: cannot_reach(&state),
@@ -203,7 +205,7 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     // what an agent is waiting on him for: its newest question still open
     let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
     for a in agents {
-        let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, can_stop: a.held && a.state == AgentState::Working, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
+        let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, can_stop: a.held && a.state == AgentState::Working, move_to: Vec::new(), terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
         // what the team is doing is said in the name of whoever is doing it, without the team's own name
         let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
             Some(who) => format!("{who}: {d}"),
@@ -225,6 +227,14 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     }
     rooms.sort_by(|a, b| a.name.cmp(&b.name));
     rooms.iter_mut().for_each(|r| r.members.sort_by(|a, b| a.callsign.cmp(&b.callsign)));
+    // an agent moves only to another team on its own computer
+    let on: Vec<(String, Vec<String>)> = rooms.iter().map(|r| (r.id.clone(), r.members.iter().map(|m| m.station.clone()).collect())).collect();
+    for r in rooms.iter_mut() {
+        let id = r.id.clone();
+        for m in r.members.iter_mut() {
+            m.move_to = on.iter().filter(|(other, stations)| *other != id && stations.contains(&m.station)).map(|(other, _)| other.clone()).collect();
+        }
+    }
     rooms
 }
 

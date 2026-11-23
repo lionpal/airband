@@ -55,14 +55,6 @@ enum Keychain {
         guard status == errSecSuccess, let data = out as? Data, let text = String(data: data, encoding: .utf8) else { return .failed(status) }
         return .found(text)
     }
-    /// Removes what is kept under `key`. True once it is not there.
-    @discardableResult
-    static func remove(_ key: String, in place: Place) -> Bool {
-        guard let name = named(place) else { return false }
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecAttrAccessGroup as String: name]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
-    }
     /// Every computer's pairing link.
     static func links() -> KeychainRead<[String]> { Stored.load("airband.links", in: .shared) }
     @discardableResult
@@ -80,25 +72,9 @@ enum Together {
     }()
     /// Each team's colour as the phone chose it, for the extension to show the same.
     static func teamColours() -> [String: UInt8] {
-        guard let folder else { return [:] }
-        // colours an older version kept in the Keychain come here first, once
-        _ = folder.moveColours(old: KeychainColours())
-        return folder.colours()
+        folder?.colours() ?? [:]
     }
     static func keepTeamColours(_ colours: [String: UInt8]) { _ = folder?.keepColours(colours: colours) }
-}
-
-/// Where an older version kept the team colours: a Keychain item, read and removed for the core's one move.
-final class KeychainColours: OldColours, @unchecked Sendable {
-    private static let key = "airband.teamColours"
-    func read() -> OldRead {
-        switch Keychain.read(Self.key, in: .shared) {
-        case .found(let text): return .found(text: text)
-        case .none: return .nothing
-        case .failed: return .failed
-        }
-    }
-    func forget() -> Bool { Keychain.remove(Self.key, in: .shared) }
 }
 
 /// Something kept as JSON text, in the Keychain or in the app's own settings. The one way either is read and

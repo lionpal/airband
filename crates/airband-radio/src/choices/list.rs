@@ -13,7 +13,6 @@ pub(super) struct Facts<'a> {
     /// Why what is chosen for this job did not work the last time, if it did not.
     pub(super) failed: Option<String>,
     pub(super) work: Option<(String, String, Option<f64>)>,
-    pub(super) note: String,
     /// The computers paired now, by id.
     pub(super) paired: &'a [StationId],
 }
@@ -58,8 +57,6 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         asks: s.asks,
         voices: s.voices,
         voice,
-        credit: String::new(),
-        note: String::new(),
     };
     if job == ChoiceJob::Reads {
         // his computer's own list once it has said; until then, what this build knows a computer can use
@@ -131,8 +128,6 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, the voice the row names as its usual one
             voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
-            credit: m.credit.clone(),
-            note: if chosen { facts.note.clone() } else { String::new() },
         });
     }
     for s in crate::services::services(job.job()) {

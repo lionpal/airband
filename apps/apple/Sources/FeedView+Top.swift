@@ -38,7 +38,7 @@ extension FeedView {
                 .buttonStyle(.plain).disabled(!model.view.canPoke).opacity(model.view.canPoke ? 1 : 0.3)
                 .accessibilityHint("Tells every agent that has stopped without finishing to keep going") }
                 // stop what an agent is doing, when one he can stop is at work in what he is looking at
-                let stoppable = model.stoppable
+                let stoppable = model.view.stoppable
                 if stoppable.count == 1 {
                     Button { model.stop(stoppable[0]) } label: { stopLabel }.buttonStyle(.plain).accessibilityLabel("Stop \(stoppable[0].callsign)")
                 } else if stoppable.count > 1 {

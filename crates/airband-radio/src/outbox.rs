@@ -53,7 +53,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
                 continue;
             }
             // His computer took it and, asked again and again, still says only that it has it: it ends, and holds
-            // up nothing behind it (audit 9, B-7). Sent again, it goes under the same id, so his computer
+            // up nothing behind it. Sent again, it goes under the same id, so his computer
             // never acts on it twice.
             Stage::Taken if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS => {
                 gave_up(NEVER_SETTLED.into());
@@ -224,7 +224,6 @@ mod tests {
 
     #[test]
     fn a_message_his_computer_took_and_then_refuses_for_good_ends_and_holds_up_nothing() {
-        // (audit 8, M6)
         assert_eq!(after_failure(Retry::Never, Stage::Taken), AfterFailure::GiveUp);
         assert_eq!(after_failure(Retry::Never, Stage::Left), AfterFailure::GiveUp);
         assert_eq!(after_failure(Retry::Never, Stage::Trying), AfterFailure::GiveUp);
@@ -235,7 +234,6 @@ mod tests {
 
     #[test]
     fn a_quick_message_is_quoted_by_the_words_he_saw() {
-        // (audit 7, P-N4)
         let mut o = Outgoing::new("a".into(), "Keep going with what you planned, and say when it is done.".into(), None, None, Some("Keep going".into()), Vec::new(), Vec::new());
         assert_eq!(o.shown(), "Keep going");
         o.label = None;
@@ -359,7 +357,7 @@ mod tests {
         // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
         settle(&store, &host, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();
-        assert_eq!(kept[0].failed.as_deref(), Some("Your computer got it more than a week after you said it, and did nothing with it."));
+        assert_eq!(kept[0].failed, Some(LinkError::Rejected(Rejected::TooOld).said()));
         assert!(last().1.unwrap().starts_with("Not sent: “words of e”. Your computer got it more than a week"));
         // an outcome told twice, or for something this radio never typed, is nothing to do
         let before = host.0.lock().unwrap().len();

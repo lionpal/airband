@@ -37,9 +37,8 @@ impl Synth for Timed {
             if line.trim().is_empty() {
                 continue;
             }
-            // A line that says it is an error, or that does not read, is told, never taken for silence (audit 7,
-            // P-N10). One that reads and carries neither sound, timings nor an error (a closing marker) says
-            // nothing about the clip and is passed over (audit 9, B-33).
+            // A line that says it is an error, or that does not read, is told, never taken for silence. One that reads and carries neither sound, timings nor an error (a closing marker) says
+            // nothing about the clip and is passed over.
             let part = serde_json::from_str::<Part>(&line).ok().filter(|p| p.error().is_none()).ok_or_else(|| super::unreadable(&self.reach.service))?;
             if !part.is_part() {
                 continue;
@@ -105,7 +104,7 @@ mod tests {
         assert_eq!(read(r#"{"detail":{"status":"quota_exceeded","message":"out of credits"}}"#), None);
         assert_eq!(read(r#"{"error":"busy"}"#), None);
         assert_eq!(read("not json"), None);
-        // a closing marker with nothing in it is passed over, not taken for an error after the sound (B-33)
+        // a closing marker with nothing in it is passed over, not taken for an error after the sound
         assert_eq!(read("{}"), Some(false));
         assert_eq!(read(r#"{"isFinal":true}"#), Some(false));
         assert_eq!(read(r#"{"audio_base64":"AAAA"}"#), Some(true));

@@ -409,7 +409,7 @@ mod tests {
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None, refused: None };
-        // the stretch it had not finished, as it last said it, is kept with the rest (audit 6, C-B4)
+        // the stretch it had not finished, as it last said it, is kept with the rest
         stream.tell("and test");
         assert!(stream.salvage());
         assert_eq!(stream.kept, ["ship it", "and test"]);
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn the_words_he_saw_are_kept_when_the_service_never_says_its_last() {
-        // (audit 8, M7) the end went, and the service did not finish its turn before it stopped answering
+        // the end went, and the service did not finish its turn before it stopped answering
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None, refused: None };
@@ -446,7 +446,7 @@ mod tests {
         let tape = Tape::of(&[0u8; 32000], true);
         let refused = live(&NOWHERE, Arc::new(|| Err("Scribe: that key is not valid.".to_string())), &tape, 16000, Vec::new(), true);
         assert_eq!(refused, Err(Failed { why: Some("Scribe: that key is not valid.".into()) }));
-        // the next listening, whose pass was had and whose line failed, is not told the last one's reason (P-N9)
+        // the next listening, whose pass was had and whose line failed, is not told the last one's reason
         let grant = Pass { dialect: String::new(), token: String::new(), set: Default::default(), phrases: Vec::new(), by: serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap(), until: None };
         let tape = Tape::of(&[0u8; 32000], true);
         let failed = live(&NOWHERE, Arc::new(move || Ok(grant.clone())), &tape, 16000, Vec::new(), true);
@@ -459,7 +459,7 @@ mod tests {
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let (h, a, b) = (vec![0u8], vec![1u8], vec![2u8]);
         let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None, refused: None };
-        // the header and the first piece went before the connection failed (C-B4)
+        // the header and the first piece went before the connection failed
         stream.waiting.pop_front();
         stream.header_unsent = 0;
         stream.waiting.pop_front();

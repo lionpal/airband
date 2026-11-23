@@ -96,7 +96,7 @@ impl Store {
             let out = f(&mut saved);
             (out, crate::kept::told(self.keeper.save(&*saved), "What you send and the chat are lost if the app closes."))
         };
-        // told once the file is let go: whoever is told may well look at it again (audit 9, B-40)
+        // told once the file is let go: whoever is told may well look at it again
         if let (Some(told), Some(host)) = (told, &self.host) {
             host.told(told);
         }
@@ -111,7 +111,6 @@ mod tests {
 
     #[test]
     fn what_he_said_while_the_file_could_not_be_read_still_goes_once_it_reads() {
-        // (audit 8, M4)
         let said = |id: &str| Outgoing::new(id.into(), id.into(), None, None, None, Vec::new(), Vec::new());
         let line = |id: &str, seq: u64, text: &str| -> airband_core::radio::Message { serde_json::from_value(serde_json::json!({ "seq": seq, "id": id, "at": seq, "from": "a", "group": "g", "text": text })).unwrap() };
         let mut found = Saved { outbox: vec![said("before")], history: vec![line("m1", 1, "old"), line("m2", 2, "kept")], after: 2, rev: 4, radio: "radio-kept".into(), computer: "studio".into(), relay_knew: false };

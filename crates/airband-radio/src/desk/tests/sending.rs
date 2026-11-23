@@ -15,7 +15,7 @@ fn radio_of(desk: &Desk, link: &str) -> Arc<Radio> {
     desk.shared.state.lock().unwrap().computers.iter().find(|s| s.link == link).map(|s| s.radio.clone()).unwrap()
 }
 
-// N27: only his own next words take the files he attached and the question he was asked; a button, a command
+// Only his own next words take the files he attached and the question he was asked; a button, a command
 // or words sent on to another agent go as they are and leave both for him.
 #[test]
 fn only_his_own_next_words_take_his_files_and_his_question() {
@@ -33,7 +33,7 @@ fn only_his_own_next_words_take_his_files_and_his_question() {
     assert_eq!((second.attachments, second.answers), (vec!["f1".to_string()], Some("q1".to_string())));
 }
 
-// N31, D-6: an answer from a notification goes to the computer the notification came from, by its id, and
+// An answer from a notification goes to the computer the notification came from, by its id, and
 // nowhere else; one whose computer is gone is told as that, and the question stays waiting on him.
 #[test]
 fn a_notification_answer_goes_only_to_the_computer_it_came_from() {
@@ -65,7 +65,7 @@ fn words_waiting_for_files_go_once_no_file_is_still_on_its_way() {
     assert!(state.after_files.is_none());
 }
 
-// (audit 9, B-7) A message his computer took and keeps answering "taken" for ends once it is as old as the outbox
+// A message his computer took and keeps answering "taken" for ends once it is as old as the outbox
 // keeps anything, he is told, and it no longer holds up what he says after it.
 #[test]
 fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
@@ -89,7 +89,7 @@ fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
     assert!(tower.asked_on::<at::Utterance>() >= 1, "what he said after it was held up");
 }
 
-// (audit 8, radio.rs:384) A picture whose parts stop moving forward before the last is only part of one: none
+// A picture whose parts stop moving forward before the last is only part of one: none
 // of it is kept, and he is told.
 #[test]
 fn a_picture_that_stops_coming_part_way_is_not_kept_as_the_whole() {
@@ -105,7 +105,7 @@ fn a_picture_that_stops_coming_part_way_is_not_kept_as_the_whole() {
     assert!(!radio.store.pictures().join(format!("{id}.jpg")).exists(), "part of a picture was kept as the whole");
 }
 
-// (audit 9, B-39) A file that did not get there says why, for the tray to show.
+// A file that did not get there says why, for the tray to show.
 #[test]
 fn a_file_that_did_not_get_there_keeps_why() {
     let tower = Arc::new(FakeTower::default());
@@ -128,7 +128,7 @@ fn a_file_that_did_not_get_there_keeps_why() {
     assert_eq!(shown.and_then(|u| u.why).as_deref(), Some("It is more than your computer takes in one message."));
 }
 
-// (audit 9, B-36) Something said aloud that the tower took and then refuses for good ends with the refusal at
+// Something said aloud that the tower took and then refuses for good ends with the refusal at
 // once: it is not asked about for a minute and a half and then given up on in silence.
 #[test]
 fn a_spoken_message_refused_after_it_was_taken_ends_with_the_refusal() {
@@ -144,7 +144,7 @@ fn a_spoken_message_refused_after_it_was_taken_ends_with_the_refusal() {
     assert!(began.elapsed() < Duration::from_secs(10), "it kept asking after a refusal for good");
 }
 
-// (audit 9, B-38) The trail names each request by its endpoint: the id of a picture or a message is never in it.
+// The trail names each request by its endpoint: the id of a picture or a message is never in it.
 #[test]
 fn the_trail_never_holds_the_id_a_request_names() {
     let tower = Arc::new(FakeTower::default());

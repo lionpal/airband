@@ -298,12 +298,15 @@ impl State {
     /// Every message, oldest first, each labelled with its computer when there are several.
     fn merged(&self) -> Vec<ChatMessage> {
         let several = self.computers.len() > 1;
+        let agents = self.everyone();
+        let apart = |m: &ChatMessage| m.own_session && agents.iter().any(|a| m.agent.as_ref() == Some(&a.id) && !a.held);
         let mut all: Vec<ChatMessage> = self
             .computers
             .iter()
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
+                        answer_apart: apart(m),
                         station: if several { s.id().to_string() } else { String::new() },
                         computer: if several { self.computer_name(&s.id()) } else { String::new() },
                         colour: self.colours.of(&m.room),
@@ -363,7 +366,7 @@ impl Desk {
 }
 /// The pass for the live listening service he chose is fetched before he first needs it, and again when the
 /// pass itself says it ends, so opening the microphone never waits on it: once for the device, whichever
-/// computers are paired (audit 6, C-B5). With no pass kept (nothing to fetch ahead, or none could be had) it
+/// computers are paired. With no pass kept (nothing to fetch ahead, or none could be had) it
 /// waits for him to choose again. It ends with the desk.
 fn warm_passes(shared: std::sync::Weak<Shared>) {
     thread::spawn(move || {

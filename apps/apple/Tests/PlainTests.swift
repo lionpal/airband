@@ -4,7 +4,7 @@ import XCTest
 
 final class PlainTests: XCTestCase {
     func testNothingTypedIsSpacesAndLineBreaksAlike() {
-        // a draft of line breaks is nothing to send (audit 9, B-44)
+        // a draft of line breaks is nothing to send
         XCTAssertTrue("\n\n  \n".isBlank)
         XCTAssertTrue(" \t".isBlank)
         XCTAssertFalse(" ok\n".isBlank)
@@ -19,7 +19,7 @@ final class PlainTests: XCTestCase {
     }
 
     func testTheHandlesOfATrimStayInsideAClipShorterThanASecond() {
-        // (audit 9, B-48): a half-second clip gives no negative start and no end past its length
+        // a half-second clip gives no negative start and no end past its length
         let length = 0.5
         XCTAssertEqual(TrimBounds.start(0.4, end: 0.5, length: length), 0)
         XCTAssertEqual(TrimBounds.end(0.1, start: 0, length: length), 0.5)
@@ -36,7 +36,7 @@ final class PlainTests: XCTestCase {
     }
 
     @MainActor func testTrimmedTwiceQuicklyOnlyTheNewestClipIsSent() {
-        // (audit 9, B-3): the first trim's export ends after the second began, and is thrown away
+        // the first trim's export ends after the second began, and is thrown away
         let model = RadioModel.shared
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("trim-\(UUID().uuidString).mov")
         FileManager.default.createFile(atPath: source.path, contents: Data())
@@ -61,7 +61,7 @@ final class PlainTests: XCTestCase {
         let board = UIPasteboard.withUniqueName()
         defer { UIPasteboard.remove(withName: board.name) }
         board.string = "  not a link\n"
-        XCTAssertEqual(RadioModel.shared.pairPasted(from: board), "That is not a pairing link. Run airband pair on your computer.")
+        XCTAssertEqual(RadioModel.shared.pairPasted(from: board), RadioModel.notALink)
         board.string = nil
         XCTAssertNotNil(RadioModel.shared.pairPasted(from: board))
     }

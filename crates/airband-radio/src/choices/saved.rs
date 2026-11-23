@@ -211,7 +211,6 @@ mod tests {
 
     #[test]
     fn a_summary_key_is_asked_for_only_when_a_paired_computer_has_said_it_has_none() {
-        // (audit 5, BUG-20)
         let (main, other, gone) = (StationId::new("main"), StationId::new("other"), StationId::new("gone"));
         let mut s = Saved::default();
         s.heard_from(&main, &offered(true));
@@ -224,7 +223,6 @@ mod tests {
 
     #[test]
     fn what_he_chose_while_the_file_could_not_be_read_is_kept_over_what_it_holds() {
-        // (audit 8, M4)
         let pick = |id: &str| Pick { place: ChoicePlace::Phone, id: id.into(), offer: String::new(), set: BTreeMap::new(), voice: String::new() };
         let mut found = Saved { ears: Some(pick("kept-ears")), voice: Some(pick("kept-voice")), tools: vec!["codex".into()], ..Saved::default() };
         let before = Saved { ears: Some(pick("usual")), voice: Some(pick("usual")), ..Saved::default() };

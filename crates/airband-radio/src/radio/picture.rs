@@ -21,7 +21,7 @@ impl Radio {
                 break;
             }
             // a part that moves nothing forward and is not the last would loop for ever: what came is only
-            // part of the picture, and none of it is kept (audit 8, radio.rs:384)
+            // part of the picture, and none of it is kept
             if part.next <= from {
                 return Err(crate::choices::told("Your computer sent only part of that picture."));
             }
