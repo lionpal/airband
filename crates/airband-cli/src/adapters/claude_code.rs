@@ -256,6 +256,19 @@ mod tests {
     }
 
     #[test]
+    fn whole_lines_are_read_across_parts_and_a_line_still_being_written_is_left() {
+        let path = std::env::temp_dir().join(format!("airband-lines-{}.jsonl", crate::config::random_hex(6)));
+        let long = "x".repeat(1024 * 1024 + 300);
+        std::fs::write(&path, format!("one\n{long}\nthree\nhalf")).unwrap();
+        let mut seen = Vec::new();
+        let at = whole_lines(&path, 0, |line| seen.push(line.len())).unwrap();
+        assert_eq!(seen, [4, long.len() + 1, 6]);
+        assert_eq!(at, (4 + long.len() + 1 + 6) as u64, "the half line is left for next time");
+        assert!(whole_lines(&path.with_extension("gone"), 0, |_| {}).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn claude_code_stop_becomes_said() {
         let e = events(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "Stop", "last_assistant_message": " Done. " })).remove(0);
         assert_eq!(e.agent.id, "s1");

@@ -14,7 +14,6 @@
 //!
 //! Only where Claude Code keeps its login in the keychain; elsewhere it keeps it differently, and that is not
 //! written yet.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 mod live;
 mod saved;
 mod service;
@@ -39,6 +38,11 @@ const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts a
 fn row(what: &str) -> String {
     super::row_says(HARNESS, what)
 }
+/// The arguments that start a sign-in, as the row lists them.
+pub(super) fn sign_in_args() -> Vec<String> {
+    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default()
+}
+
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
 pub(super) fn login_key() -> String {
     row("login_key")
@@ -347,10 +351,11 @@ pub(crate) fn add() -> Res<String> {
     let tmp = here.dir.join(format!("login-{}", airband_core::clock::now_ms()));
     airband_io::files::make_folder(&tmp).map_err(|e| e.to_string())?;
     let service = login_item(Some(&tmp));
-    airband_io::files::write_atomic(&tmp.join(row("account_file")), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
+    // what the tool's own account file must hold for a sign-in to start at once, as its row has it
+    airband_io::files::write_atomic(&tmp.join(row("account_file")), row("account_seed")).map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
-    let status = Command::new(&program).args(["auth", "login"]).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
+    let status = Command::new(&program).args(sign_in_args()).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
     let result = (|| -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());
@@ -358,7 +363,7 @@ pub(crate) fn add() -> Res<String> {
         let blob: Value = serde_json::from_str(&here.vault.read(&service, here.user()?)?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
         let oauth = blob.get(login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = live::oauth_account(&tmp.join(row("account_file"))).ok_or("The sign-in saved no account record.")?;
-        let email = acct.get("emailAddress").and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
+        let email = acct.get(row("account_email")).and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
         locked(&here, || saved::keep(&here, &email, &oauth, &acct))??;
         Ok(email)
     })();
@@ -368,7 +373,9 @@ pub(crate) fn add() -> Res<String> {
     {
         eprintln!("The sign-in's copy of the login could not be taken out of the keychain ({e}). It is the item {service}.");
     }
-    std::fs::remove_dir_all(&tmp).ok();
+    if let Err(e) = airband_io::files::remove_folder(&tmp) {
+        eprintln!("The sign-in's folder could not be removed ({e}). It is {}.", tmp.display());
+    }
     result
 }
 

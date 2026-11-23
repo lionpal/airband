@@ -1,5 +1,4 @@
 //! Teams and folders: moving an agent, naming a team, walking the computer's folders, starting a team.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// He moved an agent to another team.
@@ -36,12 +35,12 @@ const FOLDER_SLOW: &str = "This folder did not open within five seconds.";
 pub(super) async fn folders(State(app): State<Arc<App>>, Sent(ask): Sent<at::Folders>) -> Answer<at::Folders> {
     let read = tokio::task::spawn_blocking(move || {
         folder_at(&ask.under).and_then(|at| {
-            let entries = std::fs::read_dir(&at).map_err(|e| match e.kind() {
+            let entries = airband_io::files::entries(&at).map_err(|e| match e.kind() {
                 std::io::ErrorKind::PermissionDenied => FOLDER_REFUSED.to_string(),
                 _ => "That folder cannot be opened from here.".to_string(),
             })?;
-            let mut inside: Vec<airband_core::radio::Folder> = entries.flatten().filter(|e| e.path().is_dir())
-                .filter_map(|e| Some(airband_core::radio::Folder { name: e.file_name().into_string().ok()?, path: e.path().display().to_string() }))
+            let mut inside: Vec<airband_core::radio::Folder> = entries.into_iter().filter(|e| e.is_dir())
+                .filter_map(|e| Some(airband_core::radio::Folder { name: e.file_name()?.to_str()?.to_string(), path: e.display().to_string() }))
                 .filter(|f| !f.name.starts_with('.')).collect();
             inside.sort_by_key(|f| f.name.to_lowercase());
             Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: edges::folders::Folders::shown(&edges::folders::Disk, &at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })

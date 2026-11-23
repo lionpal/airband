@@ -191,7 +191,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
     let r = serve::<at::Push, _, _>(r, push_target);
     let r = serve::<at::Tools, _, _>(r, uses_tools);
     // the command line's page about the tower: its type is the command line's own, not part of the wire
-    r.route("/v1/status", get(status))
+    r.route(super::STATUS_PATH, get(status))
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)
@@ -222,6 +222,22 @@ pub(super) mod tests {
             req = req.extension(r);
         }
         req.body(axum::body::Body::from(r#"{"on_call":true,"showing_chat":false}"#)).unwrap()
+    }
+
+    /// `airband status` reads the page as the type the tower writes it from, at the one path both use.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn airband_status_reads_the_towers_page_as_its_type() {
+        let app = app("status-page");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(axum::serve(listener, router(app.clone())).into_future());
+        let cfg: Config = serde_json::from_value(serde_json::json!({ "token": "own", "radio_token": "radio", "port": port })).unwrap();
+        let status = tokio::task::spawn_blocking(move || crate::adapters::TowerHere::here(&cfg, Duration::from_secs(5)).status()).await.unwrap();
+        let status = status.expect("the page reads as a Status");
+        assert!(!status.phone && status.sessions.is_empty());
+        // with the wrong token the tower does not take it, and nothing is read
+        let wrong: Config = serde_json::from_value(serde_json::json!({ "token": "not-it", "radio_token": "radio", "port": port })).unwrap();
+        assert!(tokio::task::spawn_blocking(move || crate::adapters::TowerHere::here(&wrong, Duration::from_secs(5)).status()).await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -18,10 +18,13 @@ impl TowerHere {
         TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
     }
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
-    // the agent's routes do not read it. `get` is for the tower's own status page, which is no typed route.
+    // the agent's routes do not read it.
+    /// The tower's own page about itself, read as the type the tower writes it from. Nothing when the tower is
+    /// not running, did not take the request, or answered in another shape (an older version).
     #[expect(clippy::disallowed_methods, reason = "the tower's status page, its own shape for `airband status`")]
-    pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
+    pub(crate) fn status(&self) -> Option<crate::tower::Status> {
+        let res = self.agent.get(format!("{}{}", self.base, crate::tower::STATUS_PATH)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA).call();
+        taken(res)?.body_mut().read_json::<crate::tower::Status>().ok()
     }
     /// One of the tower's typed routes: the path, method and answer all come from the endpoint.
     pub(crate) fn call<E: wire::Endpoint>(&self, id: Option<&str>, query: &E::Query, body: Option<&E::Body>) -> Result<Said<E::Answer>, airband_io::http::Error> {

@@ -354,7 +354,7 @@ fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
     let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
     // newest first by when each was last written, read as a time, never by how its path sorts as text
     let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).filter_map(|p| Some((super::written(&p)?, p))).collect();
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     let found = files.iter().take(300).filter_map(|(at, file)| {
         let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
         let line: Value = serde_json::from_str(&first).ok()?;

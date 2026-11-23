@@ -62,6 +62,11 @@ impl RelaySaid {
     }
 }
 
+/// Tell the relay a channel is finished with (`airband unpair`), so it does not keep it on record for ever.
+pub(crate) fn close_channel(relay: &str, keys: &Keys) -> Result<RelaySaid, String> {
+    airband_io::http::agent(Duration::from_secs(8)).delete(keys.to(relay, Route::Channel)).header("authorization", keys.as_tower()).call().map(|r| RelaySaid::of(r.status().as_u16())).map_err(|e| e.to_string())
+}
+
 /// Why a link's serving thread ended. One the relay keeps closed, or a pairing undone, is not started again
 /// while the same pairing is wanted: only a new pairing (a new secret, so a new channel) opens one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,7 +468,7 @@ mod tests {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
                 let mut buf = [0u8; 4096];
-                stream.read(&mut buf).ok();
+                let _read = stream.read(&mut buf);
                 counted.fetch_add(1, Ordering::SeqCst);
                 stream.write_all(b"HTTP/1.1 410 Gone\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").ok();
             }

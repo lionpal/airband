@@ -5,7 +5,7 @@
 //! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
+#![expect(clippy::disallowed_methods, reason = "writes each part where it belongs in a file still arriving: airband_io writes files whole")]
 use super::*;
 use airband_core::radio::AttachmentPart;
 use std::io::{Seek, SeekFrom, Write};
@@ -81,7 +81,9 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     let end = part.from.checked_add(bytes.len() as u64).ok_or("a part runs past the end of the file")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
     if end > MOST || part.total > MOST {
-        std::fs::remove_dir_all(&dir).ok();
+        if let Err(e) = airband_io::files::remove_folder(&dir) {
+            log(format!("a file too large to take could not be cleared away ({e}): {}", dir.display()));
+        }
         return Err("that file is too large".into());
     }
     let (next, whole) = {
@@ -148,8 +150,10 @@ fn frames(video: &Path) {
                 })
                 .ok_or(())
         });
-        if !matches!(&ran, Ok(o) if o.status.success()) {
-            std::fs::remove_dir_all(&out).ok();
+        if !matches!(&ran, Ok(o) if o.status.success())
+            && let Err(e) = airband_io::files::remove_folder(&out)
+        {
+            log(format!("the frames of a video that could not be read could not be cleared away ({e}): {}", out.display()));
         }
         // without its mark the file is never offered to an agent, so a mark that cannot be made is said
         if let Err(e) = airband_io::files::write_atomic(&dir.join(".ready"), "") {
@@ -179,9 +183,14 @@ pub(super) async fn find(id: &str) -> Option<Attached> {
     }
     let name = airband_io::files::read_text(&dir.join(".whole")).ok().flatten().filter(|n| !n.is_empty())?;
     let path = Some(dir.join(safe(&name))).filter(|p| p.is_file())?;
-    let mut frames: Vec<PathBuf> = std::fs::read_dir(dir.join("frames")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    // no folder of frames is no frames; one that cannot be read is said, and the file is offered without them
+    let mut frames: Vec<PathBuf> = airband_io::files::entries(&dir.join("frames")).unwrap_or_else(|e| {
+        log(format!("the frames beside {} could not be read: {e}", path.display()));
+        Vec::new()
+    });
     frames.sort();
-    Some(Attached { what: what(&path), bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0), path, frames })
+    let bytes = std::fs::metadata(&path).ok()?.len();
+    Some(Attached { what: what(&path), bytes, path, frames })
 }
 
 /// What an agent is told about the files that came with a message, and the pictures to show beside his words
