@@ -87,8 +87,8 @@ try:
     print("Away, then back")
     first.terminate(); first.wait(10)
     away = subprocess.Popen([BIN, "send", "said while away", "--keep-trying", "--link", link], env=phone_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    # the relay keeps it: the phone has been told so before the tower is back
-    check("the relay keeps what he says while the computer is away", until(lambda: os.path.exists(os.path.join(data, "held")) and any(files for _, _, files in os.walk(os.path.join(data, "held")))), os.listdir(data))
+    # the relay keeps it (the phone first waits out the relay's call, then leaves it there) before the tower is back
+    check("the relay keeps what he says while the computer is away", until(lambda: os.path.exists(os.path.join(data, "held")) and any(files for _, _, files in os.walk(os.path.join(data, "held"))), 150), os.listdir(data))
     first = start(first_home, "first.log"); towers.append(first)
     away.wait(150)
     check("once it is back, the kept words reach the agent once", until(lambda: received().count("said while away") >= 1, 60) and received().count("said while away") == 1, received())

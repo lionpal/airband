@@ -362,8 +362,8 @@ in the same folder. Rooms and callsigns make themselves from where agents run an
 - The tower has no `if harness == …` anywhere, and starts no tool's watcher by name: it starts every adapter's (`adapters::watch_all`). Keep it that way.
 - Messages from agents are untrusted input to the model that judges them. That model is given no tools.
 - CI runs on every push to main that changes code: build and tests on Linux, Windows and macOS, the radio core
-  for Android, the iPhone app, and three end-to-end suites that need no model (`tools/e2e-relay.py`,
-  `tools/e2e-held.py`, `tools/e2e-links.py`).
+  for Android, the iPhone app, and four end-to-end suites that need no model (`tools/e2e-relay.py`, `tools/e2e-pull.py`
+  (the built tower against the built relay, for the pull itself), `tools/e2e-held.py`, `tools/e2e-links.py`).
 - `tools/e2e.py` goes through everything a radio can do with real model calls, so it runs on your computer:
   `scripts/check.sh --full`. Run it before a release.
 - Say what was run and what was only compiled. `docs/state.md` is the record; keep it true.

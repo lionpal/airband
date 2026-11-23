@@ -45,6 +45,8 @@ jobs:
       - run: cargo build --release -p airband-cli -p airband-relay
       - name: What he says while the computer is away is kept by the relay and delivered
         run: python3 tools/e2e-relay.py
+      - name: The built tower against the built relay, for the pull itself (two towers, a restart, kept words)
+        run: python3 tools/e2e-pull.py
       - name: Agents the tower runs itself, with a stand-in for the agent
         run: python3 tools/e2e-held.py
       - name: Things an agent made, end to end

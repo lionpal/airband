@@ -279,7 +279,25 @@ impl Serve {
                 if let Some(a) = &self.app.cfg().relay_admission {
                     req = req.header(ADMISSION_HEADER, a);
                 }
-                match agent.send(req).map(|r| RelaySaid::of(r.status().as_u16())) {
+                // an opening refused as a pull is (another tower pulling, or ask again) says why in the same body
+                let answered = agent.send(req).map(|mut r| {
+                    let said = RelaySaid::of(r.status().as_u16());
+                    let why = (said == RelaySaid::Refused).then(|| r.body_mut().read_json::<PullRefused>().unwrap_or(PullRefused::Unknown));
+                    (said, why)
+                });
+                if let Ok((_, Some(why))) = answered {
+                    if why == PullRefused::AskAgain {
+                        nap(&mut 1);
+                        continue;
+                    }
+                    if !told_refused.contains(&why) {
+                        log(refused_pull(&relay, why));
+                        told_refused.push(why);
+                    }
+                    nap(&mut wait);
+                    continue;
+                }
+                match answered.map(|(said, _)| said) {
                     Ok(RelaySaid::Done | RelaySaid::Nothing) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
                         // opened again, the relay hands again whatever it had handed and is not still answered for
