@@ -78,6 +78,7 @@ mod status;
 pub(crate) use probe::{progress, triage, try_model};
 pub(crate) use serve::run;
 pub(crate) use status::Status;
+pub(crate) use relay_link::RelaySaid;
 use loops::*;
 
 use aloud::*;

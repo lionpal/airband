@@ -188,9 +188,10 @@ pub(crate) fn unpair(cfg: Config, name: Option<&str>) -> Result<(), String> {
     // tell the relay the channel is finished with, so it does not keep it on record for ever. If the relay
     // cannot be reached the radio is cut off all the same: the tower no longer answers on that channel.
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
-        match airband_io::http::agent(std::time::Duration::from_secs(8)).delete(keys.at(relay, "")).header("authorization", keys.as_tower()).call().map(|r| r.status().as_u16()) {
-            Ok(200..=299 | 404) => {}
-            Ok(status) => eprintln!("{relay} did not close its channel ({status}). The phone is cut off all the same."),
+        use crate::tower::RelaySaid;
+        match airband_io::http::agent(std::time::Duration::from_secs(8)).delete(keys.to(relay, airband_core::relay::Route::Channel)).header("authorization", keys.as_tower()).call().map(|r| RelaySaid::of(r.status().as_u16())) {
+            Ok(RelaySaid::Done | RelaySaid::Nothing | RelaySaid::Unknown) => {}
+            Ok(said) => eprintln!("{relay} did not close its channel ({said:?}). The phone is cut off all the same."),
             Err(e) => eprintln!("Could not reach {relay} to close its channel ({e}). The phone is cut off all the same."),
         }
     }
