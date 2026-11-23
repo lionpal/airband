@@ -183,7 +183,7 @@ def accounts_check():
         told = json.load(open(os.path.join(home, ".claude.json")))
         check("Claude Code is told which account it now is, in the record its profile gives, and the rest of its file is kept", told["oauthAccount"]["emailAddress"] == "a@example.com" and told["oauthAccount"].get("organizationUuid") == "org-a" and told["somethingElse"] == "kept", told)
         check("the answer shows the new state", {a["label"]: a["live"] for a in (after or {}).get("accounts", [])} == {"a@example.com": True, "b@example.com": False}, after)
-        check("the account switched away from can be switched back to, by its number in the list", "▶ b@example.com" in cli("use", "2") and live_now()["claudeAiOauth"]["accessToken"] == "t-b-1")
+        check("the account switched away from can be switched back to, by its number in the list", "in use b@example.com" in cli("use", "2") and live_now()["claudeAiOauth"]["accessToken"] == "t-b-1")
         code, refused = http("POST", "/v1/radio/accounts/use", {"harness": "claude-code", "id": "nobody@"})
         check("an account that is not saved is refused in words", code == 409 and "No saved account" in wire.reason(refused), refused)
         check("the tower's own token is not needed, and an agent's harness that has no accounts says so",
@@ -656,7 +656,9 @@ Send it as written, or do you want changes?""")
         http("POST", "/v1/radio/unheard", {"id": silent["id"], "why": "the test made no sound"}, radio="reader")
         waiting = http("GET", "/v1/status", token=OWN)[1]["pending"]
         check("a report that made no sound stays waiting to be read", any(p["callsign"] == "solo second" for p in waiting), waiting)
-        check("and the tower writes down why", "could not read solo second aloud (the test made no sound)" in open(os.path.join(work, "tower.log")).read())
+        # how long the radio's reason was, never its words: what a phone sends is not written in the log
+        check("and the tower writes down that it could not", f"could not read solo second aloud ({len('the test made no sound')} characters said why)" in open(os.path.join(work, "tower.log")).read()
+              and "the test made no sound" not in open(os.path.join(work, "tower.log")).read())
         check("its place in the queue is on record: handed over, then back to waiting", any("solo second" in l and "handed to reader → waiting" in l for l in trail()), trail())
         # another radio takes it, and the answer that carried it is lost on the way: asking again, saying what it
         # last got, gets the same one at once and not after two minutes
