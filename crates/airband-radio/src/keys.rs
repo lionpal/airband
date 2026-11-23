@@ -21,6 +21,9 @@ pub(crate) fn pretend(_: &Check, key: &str, _: &BTreeMap<String, String>) -> Key
 pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String>) -> KeyCheck {
     // an address that names a setting he has not filled in cannot be asked
     let url = match check.address(settings) {
+        // one that does not name a place to reach (a setting that made it no address) is his setting to fix,
+        // not a connection that failed (audit 8, keys.rs:35)
+        Ok(url) if airband_core::links::web(&url).is_none() => return KeyCheck::BadSetting { why: format!("“{url}” is not an address. Check the settings for this service.") },
         Ok(url) => url,
         Err(bad_setting) => return bad_setting,
     };
@@ -44,6 +47,13 @@ pub(crate) fn charged(p: &Provider) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_address_that_names_no_place_is_his_setting_to_fix_and_not_no_connection() {
+        let set = BTreeMap::new();
+        assert!(matches!(check(&row("{region}"), "good", &[("region".to_string(), "not an address".to_string())].into()), KeyCheck::BadSetting { .. }));
+        assert_eq!(check(&row("http://127.0.0.1:9/models"), "good", &set), KeyCheck::Unreachable);
+    }
     use std::io::{Read, Write};
 
     #[test]

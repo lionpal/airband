@@ -719,7 +719,7 @@ fn files_on_a_computer_he_unpaired_are_not_sent_with_words_to_the_one_now_in_its
     let mini = state.computers[0].id();
     let macbook_link = state.computers[1].link.clone();
     let desk = desk_of(state);
-    desk.shared.state.lock().unwrap().uploads.push(Upload { shown: DeskUpload { id: "f1".into(), name: "a.png".into(), sent: 1, total: 1, state: UploadState::Ready }, station: mini, dropped: Arc::default(), file_path: String::new(), name: "a.png".into() });
+    desk.shared.state.lock().unwrap().uploads.push(Upload { shown: DeskUpload { id: "f1".into(), name: "a.png".into(), sent: 1, total: 1, state: UploadState::Ready, why: None }, station: mini, dropped: Arc::default(), file_path: String::new(), name: "a.png".into() });
     // he unpairs the first computer: the second is now the only one
     desk.set_links(vec![macbook_link]);
     desk.send("hi".into(), None, None, None);
@@ -963,7 +963,7 @@ mod scenarios;
 mod sending;
 
 fn upload_on(computer: &StationId, id: &str, state: UploadState) -> Upload {
-    Upload { shown: DeskUpload { id: id.into(), name: "a.png".into(), sent: 1, total: 1, state }, station: computer.clone(), dropped: Arc::default(), file_path: String::new(), name: "a.png".into() }
+    Upload { shown: DeskUpload { id: id.into(), name: "a.png".into(), sent: 1, total: 1, state, why: None }, station: computer.clone(), dropped: Arc::default(), file_path: String::new(), name: "a.png".into() }
 }
 
 #[test]

@@ -192,6 +192,8 @@ pub struct DeskUpload {
     pub sent: u64,
     pub total: u64,
     pub state: UploadState,
+    /// Why it did not get there, in words for him, when it failed.
+    pub why: Option<String>,
 }
 /// How far a file he attached has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

@@ -40,6 +40,8 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
             if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
                 let arrived = matches!(outcome, Ok(crate::radio::UploadEnd::Arrived));
                 u.shown.state = if arrived { UploadState::Ready } else { UploadState::Failed };
+                // why it did not get there stays with it, for him to see (audit 9, B-39)
+                u.shown.why = outcome.as_ref().err().map(RadioError::said);
                 if arrived {
                     radio.arm(id.clone());
                 }
@@ -112,7 +114,7 @@ impl Desk {
             // everything attached to one message goes to one computer: the first file's
             let Some(station) = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref())) else { return id };
             let Some(radio) = state.computer(&station).map(|s| s.radio.clone()) else { return id };
-            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: UploadState::Sending }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
+            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: UploadState::Sending, why: None }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
             radio
         };
         self.shared.host.changed();

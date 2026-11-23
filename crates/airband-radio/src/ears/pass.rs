@@ -87,3 +87,16 @@ pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, Strin
     };
     airband_io::http::sent(&airband_core::providers::Answering::of(service), crate::net::Client::new(Duration::from_secs(8)).send(req))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_signed_pass_says_when_it_ends_and_anything_else_says_nothing() {
+        // (audit 9, B-32)
+        let claims = airband_core::encode::base64_url(br#"{"exp":1900000000,"region":"r"}"#);
+        assert_eq!(super::signed_until(&format!("h.{claims}.s")), Some(1_900_000_000_000));
+        assert_eq!(super::signed_until("opaque-token"), None);
+        assert_eq!(super::signed_until(&format!("h.{}.s", airband_core::encode::base64_url(b"{}"))), None);
+        assert_eq!(super::signed_until(&format!("h.{claims}.s.extra")), None);
+    }
+}

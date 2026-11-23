@@ -384,9 +384,13 @@ impl Radio {
         loop {
             let part = self.link.call::<at::Picture>(Some(&id), &wire::PartQuery { from: from as usize }, &Nothing {})?;
             bytes.extend(airband_core::encode::unbase64(&part.data).ok_or_else(|| crate::choices::told("Your computer sent a picture that could not be read."))?);
-            // a part that moves nothing forward would loop for ever
-            if part.done || part.next <= from {
+            if part.done {
                 break;
+            }
+            // a part that moves nothing forward and is not the last would loop for ever: what came is only
+            // part of the picture, and none of it is kept (audit 8, radio.rs:384)
+            if part.next <= from {
+                return Err(crate::choices::told("Your computer sent only part of that picture."));
             }
             from = part.next;
         }
