@@ -8,6 +8,8 @@
 //!   airband://pair?url=http%3A%2F%2F127.0.0.1%3A7373&token=<token>       unsealed, to a tower on this same machine
 //!
 //! Every link ends `&name=<the computer's name>`: a phone calls the computer that from the moment it is paired.
+//! A computer whose system gives its model's identifier adds it (`&model=Mac16,10`): the phone shows the
+//! computer's shape from it (`catalog::shape_of`). One whose system gives none adds nothing.
 
 /// Its debug form says where it reaches and never the secret or the token.
 #[derive(Clone, PartialEq, Eq)]
@@ -78,8 +80,15 @@ impl Pairing {
         let query = link.trim().strip_prefix("airband://pair?").ok_or(NotALink::NotOne)?;
         url::form_urlencoded::parse(query.as_bytes()).find(|(k, v)| k == "name" && !v.is_empty()).map(|(_, v)| v.into_owned()).ok_or(NotALink::NoName)
     }
-    /// The link to the computer called `computer`. A computer with no name has no link: Err.
-    pub fn link(&self, computer: &str) -> Result<String, NotALink> {
+    /// The identifier of the model of the computer a link pairs with, as its system gave it. Empty when the link
+    /// carries none.
+    pub fn model(link: &str) -> String {
+        let query = link.trim().strip_prefix("airband://pair?").unwrap_or_default();
+        url::form_urlencoded::parse(query.as_bytes()).find(|(k, _)| k == "model").map(|(_, v)| v.into_owned()).unwrap_or_default()
+    }
+    /// The link to the computer called `computer`, whose model goes by the identifier `model` (empty when its
+    /// system gives none). A computer with no name has no link: Err.
+    pub fn link(&self, computer: &str, model: &str) -> Result<String, NotALink> {
         if computer.trim().is_empty() {
             return Err(NotALink::NoName);
         }
@@ -88,7 +97,8 @@ impl Pairing {
             Pairing::Near { at, secret } => query(&[("secret", secret), ("at", &at.join(","))]),
             Pairing::Direct { url, token } => query(&[("url", url), ("token", token)]),
         };
-        Ok(format!("airband://pair?{way}&{}", query(&[("name", computer)])))
+        let model = if model.is_empty() { String::new() } else { format!("&{}", query(&[("model", model)])) };
+        Ok(format!("airband://pair?{way}{model}&{}", query(&[("name", computer)])))
     }
 }
 
@@ -99,16 +109,23 @@ mod tests {
     #[test]
     fn round_trips() {
         for p in [Pairing::Relay { relay: "https://relay.example".into(), secret: "ab".repeat(32) }, Pairing::Near { at: vec!["http://192.168.1.20:7373".into(), "http://100.64.0.7:7373".into()], secret: "cd".repeat(32) }, Pairing::Direct { url: "http://100.64.0.7:7373".into(), token: "t0k-en".into() }] {
-            let link = p.link("Studio Mac").unwrap();
+            let link = p.link("Studio Mac", "Mac16,9").unwrap();
             assert_eq!(Pairing::parse(&link).unwrap(), p);
             assert_eq!(Pairing::computer(&link).unwrap(), "Studio Mac");
+            // the model goes and comes back exactly as the system gave it
+            assert_eq!(Pairing::model(&link), "Mac16,9");
+            assert_eq!(crate::catalog::shape_of(&Pairing::model(&link)), Some(crate::catalog::Shape::Studio));
+            // a computer whose system gives no model: the link carries none, and says nothing of a shape
+            let plain = p.link("Studio Mac", "").unwrap();
+            assert!(!plain.contains("model="));
+            assert_eq!((Pairing::parse(&plain).unwrap(), Pairing::model(&plain)), (p.clone(), String::new()));
         }
         assert_eq!(Pairing::parse("airband://pair?url=http%3A%2F%2Fx%3A1%2F&token=a&name=x").unwrap(), Pairing::Direct { url: "http://x:1".into(), token: "a".into() });
     }
     #[test]
     fn a_link_always_says_what_its_computer_is_called() {
         let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: "ab".repeat(32) };
-        assert_eq!(relay.link(" "), Err(NotALink::NoName));
+        assert_eq!(relay.link(" ", "Mac16,10"), Err(NotALink::NoName));
         let nameless = format!("airband://pair?relay=https%3A%2F%2Frelay.example&secret={}", "ab".repeat(32));
         assert_eq!(Pairing::parse(&nameless), Err(NotALink::NoName));
         assert_eq!(Pairing::computer(&nameless), Err(NotALink::NoName));

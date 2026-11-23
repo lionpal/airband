@@ -10,9 +10,11 @@ struct ConnectionPage: View {
     var body: some View {
         Form {
             ForEach(reach, id: \.id) { r in
-                Section(r.computer) {
+                Section {
                     line("Through the relay", r.relay)
                     line("On this network", r.near)
+                } header: {
+                    Label(r.computer, systemImage: model.icon(of: r.id))
                 }
             }
             Section {

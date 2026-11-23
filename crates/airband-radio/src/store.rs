@@ -26,6 +26,9 @@ pub(crate) struct Saved {
     /// What the computer last said it is called: known at launch, before it is reached again.
     #[serde(default)]
     pub(crate) computer: String,
+    /// The identifier of the computer's model as it last said it: known at launch, before it is reached again.
+    #[serde(default)]
+    pub(crate) model: String,
     /// The relay has passed on a request of this phone's for this computer at least once: it knew this phone
     /// then, so its not knowing it later means the pairing was taken away ([`crate::link::LinkError::Forgotten`]).
     #[serde(default)]
@@ -60,6 +63,9 @@ impl crate::kept::Rejoin for Saved {
         }
         if !since.computer.is_empty() {
             self.computer = since.computer;
+        }
+        if !since.model.is_empty() {
+            self.model = since.model;
         }
         self.relay_knew |= since.relay_knew;
     }
@@ -113,8 +119,8 @@ mod tests {
     fn what_he_said_while_the_file_could_not_be_read_still_goes_once_it_reads() {
         let said = |id: &str| Outgoing::new(id.into(), id.into(), None, None, None, Vec::new(), Vec::new());
         let line = |id: &str, seq: u64, text: &str| -> airband_core::radio::Message { serde_json::from_value(serde_json::json!({ "seq": seq, "id": id, "at": seq, "from": "a", "group": "g", "text": text })).unwrap() };
-        let mut found = Saved { outbox: vec![said("before")], history: vec![line("m1", 1, "old"), line("m2", 2, "kept")], after: 2, rev: 4, radio: "radio-kept".into(), computer: "studio".into(), relay_knew: false };
-        let since = Saved { outbox: vec![said("meanwhile"), said("before")], history: vec![line("m1", 1, "new"), line("m3", 3, "since")], after: 3, rev: 6, radio: "radio-new".into(), computer: String::new(), relay_knew: true };
+        let mut found = Saved { outbox: vec![said("before")], history: vec![line("m1", 1, "old"), line("m2", 2, "kept")], after: 2, rev: 4, radio: "radio-kept".into(), computer: "studio".into(), model: String::new(), relay_knew: false };
+        let since = Saved { outbox: vec![said("meanwhile"), said("before")], history: vec![line("m1", 1, "new"), line("m3", 3, "since")], after: 3, rev: 6, radio: "radio-new".into(), computer: String::new(), model: String::new(), relay_knew: true };
         found.rejoin(since);
         assert_eq!(found.outbox.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["before", "meanwhile"]);
         assert_eq!(found.history.iter().map(|m| (m.id.as_str(), m.text.as_str())).collect::<Vec<_>>(), [("m1", "new"), ("m2", "kept"), ("m3", "since")]);

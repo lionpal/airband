@@ -76,18 +76,15 @@ enum Prepare {
         frames.appliesPreferredTrackTransform = true
         frames.maximumSize = CGSize(width: 400, height: 400)
         let first = CMTime(seconds: kept?.lowerBound ?? 0, preferredTimescale: 600)
-        if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
+        if let frame = try? await frames.image(at: first).image { picture = thumb(UIImage(cgImage: frame)) }
         // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
         // with no way to make it smaller it is not sent: the whole recording never goes in its place, and the tray
         // shows it failed
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return .failure(Unmade(why: Unmade.notSmaller)) }
-        export.outputURL = file
-        export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true
         if let kept { export.timeRange = CMTimeRange(start: first, end: CMTime(seconds: kept.upperBound, preferredTimescale: 600)) }
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in export.exportAsynchronously { done.resume() } }
         // one that could not be made is not sent as the whole recording: the tray shows it failed
-        guard export.status == .completed else { return .failure(Unmade(why: Unmade.notSmaller)) }
+        do { try await export.export(to: file, as: .mp4) } catch { return .failure(Unmade(why: Unmade.notSmaller)) }
         return .success((file, name, picture))
     }
 

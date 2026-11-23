@@ -331,9 +331,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// The picture he chose for each of his computers, by its id: a system symbol's name.
-    @Published var computerIcons: [String: String] = Stored.setting("airband.computers.icons.byid", or: [:])
-
 
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
     @Published var catalogRev = 0

@@ -161,8 +161,8 @@ fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes
 fn one_computer_paired_by_two_links_is_two_entries_with_names_of_their_own() {
     // made at once with one secret, through the relay and straight on its network
     let secret = "ab".repeat(32);
-    let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link("Mac").unwrap();
-    let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link("Mac").unwrap();
+    let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link("Mac", "").unwrap();
+    let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link("Mac", "").unwrap();
     assert_ne!(station_id(&relay), station_id(&near));
     // the relay link keeps the name a notification from that computer gives
     assert_eq!(station_id(&relay).to_string(), Keys::derive(&"ab".repeat(32)).unwrap().channel);
@@ -188,4 +188,38 @@ fn a_team_that_has_gone_is_let_go_of_and_one_just_made_stays_open_until_its_firs
     assert_eq!(made.room.as_deref(), Some("made-room"), "a team he has just made stays open while it waits for its first agent");
     assert_eq!(after, DeskFocus::default());
     assert_eq!(still_made.as_deref(), Some("made-room"), "looking elsewhere does not forget the team waiting for its agent");
+}
+
+#[test]
+fn each_computer_is_drawn_as_the_shape_its_model_is_and_unknown_when_no_row_lists_it() {
+    let with_model = |n: u8, model: &str| format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&model={model}&name=computer%20{n}");
+    let (mini, laptop, unlisted, none) = (with_model(1, "Mac16%2C10"), with_model(2, "MacBookPro18%2C3"), with_model(3, "Mac99%2C1"), link(4));
+    // the fourth says its model only in its feed
+    let told = Arc::new(FakeTower::default());
+    told.answers::<at::Feed>(&Feed { station: "studio".into(), model: "Mac13,1".into(), ..Feed::default() });
+    let desk = desk_with(vec![(mini.clone(), tower("mini")), (laptop.clone(), tower("laptop")), (unlisted.clone(), tower("new")), (none.clone(), Arc::new(FakeTower::default()))]);
+    desk.set_links(vec![mini.clone(), laptop.clone(), unlisted.clone(), none.clone()]);
+    let shapes = |desk: &Desk| desk.view().stations.into_iter().map(|c| c.shape).collect::<Vec<_>>();
+    assert_eq!(shapes(&desk), [MachineShape::Mini, MachineShape::Laptop, MachineShape::Unknown, MachineShape::Unknown]);
+    desk.stop();
+    // what the feed says it is, once it answers
+    let desk = desk_with(vec![(none.clone(), told)]);
+    desk.set_links(vec![none.clone()]);
+    assert!(answered(&desk, &none), "the stand-in tower was never heard");
+    assert_eq!(shapes(&desk), [MachineShape::Studio]);
+    desk.stop();
+}
+
+#[test]
+fn the_default_computer_is_asked_for_only_once_every_computer_has_a_name_and_each_has_one_from_its_link() {
+    let desk = desk_with(vec![(link(1), tower("studio")), (link(2), tower("laptop"))]);
+    desk.set_links(vec![link(1), link(2)]);
+    let view = desk.view();
+    // every computer is named from the moment it is paired: the question can be put at once
+    assert!(view.stations.iter().all(|c| !c.name.trim().is_empty()), "{:?}", view.stations);
+    assert!(view.choose_main);
+    // were one ever without a name, he would not be asked to choose between them
+    desk.shared.state.lock().unwrap().computers[1].name = String::new();
+    assert!(!desk.view().choose_main);
+    desk.stop();
 }

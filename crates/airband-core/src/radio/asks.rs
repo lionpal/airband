@@ -347,8 +347,9 @@ pub struct ReadsAsk {
     pub usual: String,
 }
 
-/// `POST tools`: the coding tools he uses, by the ids their rows give them, the one he uses most first. He
-/// chooses them on his phone. A new agent he asks for without naming a tool is started with the first.
+/// `POST tools`: the coding tools he uses, by the ids their rows give them. He chooses them on his phone. Their
+/// order decides nothing on his computer: a new agent he asks for without naming a tool is started by his usual
+/// launcher when it starts one of these, else by the only launcher that does, else he is asked which.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsesTools {
     pub tools: Vec<String>,

@@ -116,6 +116,10 @@ tower = start_tower()
 try:
     link = [w for w in subprocess.run([BIN, "pair", "test"], env=tower_env, capture_output=True, text=True).stdout.split() if w.startswith("airband:")][-1]
     keys = wire.keys_of(link)
+    # the link carries this computer's model exactly as its system gives it, and nothing where it gives none
+    model = subprocess.run(["sysctl", "-n", "hw.model"], capture_output=True, text=True).stdout.strip() if sys.platform == "darwin" else ""
+    carried = dict(urllib.parse.parse_qsl(link.split("?", 1)[1])).get("model", "")
+    check("the pairing link carries the computer's model as its system gives it", carried == model, (carried, model))
     serving = wire.serving(link)
     stranger = wire.derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
     # the tower picks a new pairing up on its next look at the settings (every ten seconds): go on once it says

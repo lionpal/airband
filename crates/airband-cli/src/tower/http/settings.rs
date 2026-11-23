@@ -17,8 +17,8 @@ pub(super) async fn push_target(State(app): State<Arc<App>>, RadioId(radio): Rad
     done()
 }
 
-/// A radio says which coding tools he uses, the one he uses most first. Only tools this computer can start
-/// are kept.
+/// A radio says which coding tools he uses. Only tools this computer can start are kept, and in no order that
+/// counts: which starts a new agent is `launch::starter`'s rule, never the first of these.
 /// The phone sends the same list to each of his computers, so a tool one of them does not have is no mistake.
 pub(super) async fn uses_tools(State(app): State<Arc<App>>, Sent(said): Sent<at::Tools>) -> Answer<at::Tools> {
     let known = app.cfg().tools();

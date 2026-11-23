@@ -279,6 +279,7 @@ fn reached_without_rounds(desk: &Desk, link: &str) -> (StationId, u64) {
         radio,
         epoch,
         name: "studio".into(),
+        model: String::new(),
         online: true,
         refused: None,
         tried: true,

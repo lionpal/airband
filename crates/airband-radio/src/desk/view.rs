@@ -174,9 +174,10 @@ impl Desk {
             quick,
             sending: sending(&state, &self.shared.senses.takes),
             takes: takes_shown(&state, &self.shared.senses.takes),
-            stations: state.computers.iter().map(|s| DeskComputer { id: s.id().to_string(), name: state.computer_name(&s.id()) }).collect(),
+            stations: state.computers.iter().map(|s| state.shown(s)).collect(),
             main_computer: state.main().map(|s| s.id().to_string()),
-            choose_main: state.computers.len() > 1 && state.main().is_none(),
+            // asked only once every computer can be named to him: each is, from its pairing link on
+            choose_main: state.computers.len() > 1 && state.main().is_none() && state.computers.iter().all(|s| !state.computer_name(&s.id()).trim().is_empty()),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             intents: self.intents_view(&state),
             asking: state.asking.as_ref().map(|asking| asked(&state, &agents, asking)),

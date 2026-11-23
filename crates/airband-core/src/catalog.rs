@@ -25,11 +25,13 @@ use std::sync::{Arc, RwLock};
 mod check;
 mod form;
 mod kept;
+mod machines;
 mod programs;
 mod rows;
 pub use check::*;
 pub use form::*;
 pub use kept::*;
+pub use machines::*;
 pub use programs::*;
 use rows::*;
 
@@ -76,6 +78,9 @@ pub struct Catalog {
     /// Who makes airband, to write to from the app (`catalog/contact/`): one row. Always the one compiled in,
     /// so no later copy can send his messages anywhere else.
     pub contact: Vec<Contact>,
+    /// What shape each computer is, by its model's identifier (`catalog/machines/`). A later copy may add
+    /// identifiers; one this build lists keeps the shape it has here.
+    pub machines: Vec<Machines>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers and coding tools that are no more, by id. One this build has compiled in and a later copy

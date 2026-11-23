@@ -46,6 +46,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         link,
         radio,
         name: name.into(),
+        model: String::new(),
         online: true,
         tried: true,
         answered_at: None,
@@ -320,7 +321,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
 #[test]
 fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     use airband_core::radio::Notice;
-    let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link("laptop").unwrap();
+    let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link("laptop", "").unwrap();
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));

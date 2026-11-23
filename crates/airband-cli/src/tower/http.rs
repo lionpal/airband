@@ -273,6 +273,32 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn the_tools_he_says_he_uses_never_make_the_first_of_them_start_a_new_agent() {
+        let app = app_with("uses-tools", serde_json::json!({ "launchers": {
+            "x": { "harness": "tool-one", "argv": ["true"] },
+            "y": { "harness": "tool-two", "argv": ["true"] },
+        } }));
+        let post = |tools: &[&str]| Request::builder().method("POST").uri("/v1/radio/tools").header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).header("content-type", "application/json").extension(RadioId("kitchen".into())).body(axum::body::Body::from(serde_json::to_string(&airband_core::radio::UsesTools { tools: tools.iter().map(|t| t.to_string()).collect() }).unwrap())).unwrap();
+        let started = || launch::starter(&app, &Idea::default(), None).map(|(name, _)| name);
+        // two of his tools, in either order: he is asked which, by name, and neither is taken for being first
+        for tools in [["tool-one", "tool-two"], ["tool-two", "tool-one"]] {
+            assert_eq!(router(app.clone()).oneshot(post(&tools)).await.unwrap().status(), 200);
+            let asked = started().unwrap_err();
+            assert!(matches!(&asked, launch::Unsettled::Which { what: None, among } if among.len() == 2), "{asked:?}");
+            assert!(asked.words().starts_with("Which should start it: "), "{}", asked.words());
+        }
+        // the tool he names: that tool's launcher, wherever it stands in his list
+        assert_eq!(launch::starter(&app, &Idea { tool: Some("tool-two".into()), ..Idea::default() }, None).map(|(n, _)| n), Ok("y".into()));
+        // his usual launcher, whichever of his tools is listed first
+        app.settings.change(|cfg| cfg.launcher = Some(airband_core::ids::LauncherId::new("y"))).unwrap();
+        assert_eq!(started(), Ok("y".into()));
+        app.settings.change(|cfg| cfg.launcher = None).unwrap();
+        // one tool of his: its only launcher
+        assert_eq!(router(app.clone()).oneshot(post(&["tool-two"])).await.unwrap().status(), 200);
+        assert_eq!(started(), Ok("y".into()));
+    }
+
+    #[tokio::test]
     async fn a_query_value_that_is_not_a_number_is_refused_not_read_as_none() {
         let app = app("query-numbers");
         let get = |uri: &str, token: &str| Request::builder().method("GET").uri(uri).header("authorization", format!("Bearer {token}")).header(SCHEMA_HEADER, airband_core::radio::SCHEMA).extension(RadioId("kitchen".into())).body(axum::body::Body::empty()).unwrap();

@@ -132,6 +132,7 @@ pub(super) fn weigh(text: &str, now: u64, have: &Catalog) -> Result<(Option<Cata
     newer.frames = built.frames.clone();
     newer.installers = built.installers.clone();
     newer.contact = built.contact.clone();
+    newer.machines = with_later(&built.machines, std::mem::take(&mut newer.machines), &mut newer.left_out);
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {

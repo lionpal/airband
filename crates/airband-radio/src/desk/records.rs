@@ -277,9 +277,37 @@ pub enum DeskTeamPick {
 pub struct DeskComputer {
     /// The same every time, from its pairing; nothing secret.
     pub id: String,
-    /// Its own name once it has said one; until then what its pairing link calls it, or "Your computer" when
-    /// it is the only one, or "New computer".
+    /// Its own name once it has said one; until then what its pairing link calls it.
     pub name: String,
+    /// What shape it is, by its model, for the host to draw.
+    pub shape: MachineShape,
+}
+
+/// The shape of a computer, by the identifier of its model (`airband_core::catalog::shape_of`). `Unknown` when
+/// it gave no identifier, or one the catalogue does not list: drawn as a plain computer, and never guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum MachineShape {
+    Laptop,
+    Mini,
+    Studio,
+    Imac,
+    Pro,
+    Unknown,
+}
+
+impl MachineShape {
+    /// The shape of the computer whose model goes by this identifier, as the catalogue in use lists it.
+    pub(crate) fn of(model: &str) -> MachineShape {
+        use airband_core::catalog::Shape;
+        match airband_core::catalog::shape_of(model) {
+            Some(Shape::Laptop) => MachineShape::Laptop,
+            Some(Shape::Mini) => MachineShape::Mini,
+            Some(Shape::Studio) => MachineShape::Studio,
+            Some(Shape::Imac) => MachineShape::Imac,
+            Some(Shape::Pro) => MachineShape::Pro,
+            None => MachineShape::Unknown,
+        }
+    }
 }
 
 /// One of his messages on its way, as a host shows it.
