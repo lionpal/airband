@@ -38,7 +38,7 @@ impl Serve {
             Ok(true) => Ok(Seen::First),
             Ok(false) => Ok(Seen::Again),
             Err(why) => {
-                log(format!("database: whether a request from \"{}\" was seen before could not be read ({why})", self.name));
+                log(format!("database: whether a request from {} was seen before could not be read ({why})", self.tag));
                 Err(self.refused(call, via, unchecked()))
             }
         }
@@ -87,7 +87,7 @@ impl Serve {
             None => None,
         };
         let Some(call) = call else {
-            log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
+            log(format!("dropped a request on {}'s channel that its key does not open", self.tag));
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
             return !kept || self.send_back(&request_id, kept, None).await;
@@ -106,7 +106,7 @@ impl Serve {
                 Ok(Seen::First) => self.dispatch(&call, "the relay", true).await,
                 // its first copy is being answered; an answer to this one would reach the radio in its place
                 Ok(Seen::Again) => {
-                    log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
+                    log(format!("dropped a replayed request on {}'s channel", self.tag));
                     return true;
                 }
                 Err(refused) => refused,
@@ -122,7 +122,7 @@ impl Serve {
         // something he said, read as what it is: its id, as the tower takes it
         let said: Option<String> = (call.method == airband_core::radio::wire::Method::Post && call.path == <airband_core::radio::wire::at::Utterance as airband_core::radio::wire::Endpoint>::PATH).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
         if said.is_some() && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
-            log(format!("\"{}\" said this while the tower was away", self.name));
+            log(format!("{} said this while the tower was away", self.tag));
             return self.dispatch(call, via, false).await;
         }
         // Nobody is waiting on this answer. Something he said that came too late is told to his radio, in its
@@ -157,13 +157,13 @@ impl Serve {
         match sent {
             Ok(Ok(RelaySaid::Nothing | RelaySaid::Done)) => {
                 if self.replies_failing.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    log(format!("answers for \"{}\" reach {relay} again", self.name));
+                    log(format!("answers for {} reach {relay} again", self.tag));
                 }
                 true
             }
             // the radio gave up waiting before the answer was ready: it asks again, and nothing is lost
             Ok(Ok(RelaySaid::Closed)) => {
-                log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name));
+                log(format!("an answer for {} came after its radio stopped waiting (request {request_id})", self.tag));
                 true
             }
             failed => {
@@ -171,9 +171,9 @@ impl Serve {
                 // handed over again and again
                 if !self.replies_failing.swap(true, std::sync::atomic::Ordering::SeqCst) {
                     log(match failed {
-                        Ok(Ok(said)) => format!("{relay} answered {said:?} to an answer for \"{}\" (request {request_id}); said again once they get there", self.name),
-                        Ok(Err(e)) => format!("an answer for \"{}\" did not reach {relay} (request {request_id}): {e}; said again once they get there", self.name),
-                        Err(_) => format!("an answer for \"{}\" was not sent: its sending failed (request {request_id}); said again once they get there", self.name),
+                        Ok(Ok(said)) => format!("{relay} answered {said:?} to an answer for {} (request {request_id}); said again once they get there", self.tag),
+                        Ok(Err(e)) => format!("an answer for {} did not reach {relay} (request {request_id}): {e}; said again once they get there", self.tag),
+                        Err(_) => format!("an answer for {} was not sent: its sending failed (request {request_id}); said again once they get there", self.tag),
                     });
                 }
                 false
@@ -183,7 +183,7 @@ impl Serve {
 
     /// A request the tower will not run, and the line that says so: which pairing, how it came, and why.
     fn refused(&self, call: &Call, via: &str, no: Refusal) -> (u16, Value) {
-        log(format!("refused a request from \"{}\" by {via} ({} {}, {}): {}", self.name, call.method, call.path.split('?').next().unwrap_or_default(), no.status(), no.reason().unwrap_or("no reason given")));
+        log(format!("refused a request from {} by {via} ({} {}, {}): {}", self.tag, call.method, call.path.split('?').next().unwrap_or_default(), no.status(), no.reason().unwrap_or("no reason given")));
         (no.status(), serde_json::to_value(&no).unwrap_or_default())
     }
 

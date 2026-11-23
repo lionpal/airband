@@ -2,8 +2,8 @@
 //!
 //! One JSON document per event, `POST /v1/agent/events`. An adapter is whatever turns a harness's own
 //! notifications into these: `airband hook <tool>` does it for a coding tool with hooks; `airband report` does it from any
-//! script. Unknown fields are ignored and unknown `type`/`kind` values are accepted and skipped, so a newer
-//! adapter never breaks an older tower.
+//! script. The adapters are the tower's own binary, so this is read as written: a `type` or `kind` the tower
+//! does not have is refused, never skipped.
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "airband.agent/1";
@@ -42,9 +42,6 @@ impl AgentEvent {
 pub enum Via {
     /// The tool's own hook ran `airband hook`.
     Hook,
-    /// A way this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 /// Who is reporting. Sent in full with every event, so the tower can restart without losing anyone.
@@ -100,9 +97,6 @@ pub enum Deliver {
     /// Through the agent's own tool, by whatever way that tool takes a turn of his into a session that is
     /// already open (its queue, its server). The tower's adapter for `name` knows how.
     Harness { name: String, session: String },
-    /// A kind this tower does not know yet.
-    #[serde(other)]
-    Unknown,
 }
 
 impl std::fmt::Debug for Deliver {
@@ -113,7 +107,6 @@ impl std::fmt::Debug for Deliver {
             Deliver::Held => f.write_str("Held"),
             Deliver::Keys { terminal, pane } => f.debug_struct("Keys").field("terminal", terminal).field("pane", pane).finish(),
             Deliver::Harness { name, session } => f.debug_struct("Harness").field("name", name).field("session", session).finish(),
-            Deliver::Unknown => f.write_str("Unknown"),
         }
     }
 }
@@ -159,9 +152,8 @@ pub enum Leave {
     Deny,
     /// No radio is there to ask, so the harness should ask in its own way at once.
     Nobody,
-    /// The tower no longer knows this request, or said something this build does not know.
+    /// The tower no longer knows this request.
     #[default]
-    #[serde(other)]
     Gone,
 }
 
@@ -254,8 +246,6 @@ pub enum Event {
     Took { receipt: String },
     /// It is gone.
     Signoff,
-    #[serde(other)]
-    Unknown,
 }
 
 /// What it wrote and what it needs him for are words from his session: their debug form says how long they
@@ -276,23 +266,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_and_tolerates_the_future() {
-        let j = r#"{"schema":"airband.agent/1","extra":1,
-            "agent":{"id":"a1","harness":"codex","cwd":"/x/shop","deliver":{"kind":"keys","terminal":"tmux","pane":"%3"},"colour":"red","meta":{"model":"gpt-5","branch":"fix/retry"}},
+    fn round_trips_and_refuses_a_kind_it_does_not_have() {
+        let j = r#"{"schema":"airband.agent/1",
+            "agent":{"id":"a1","harness":"codex","cwd":"/x/shop","deliver":{"kind":"keys","terminal":"tmux","pane":"%3"},"meta":{"model":"gpt-5","branch":"fix/retry"}},
             "event":{"type":"said","text":"Done.","kind":"report"}}"#;
         let e: AgentEvent = serde_json::from_str(j).unwrap();
         assert_eq!(e.agent.deliver, Some(Deliver::Keys { terminal: "tmux".into(), pane: "%3".into() }));
         assert_eq!(e.agent.meta["model"], "gpt-5");
         assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Report), turn: None });
-
-        let newer = r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x","deliver":{"kind":"carrier-pigeon"}},"event":{"type":"molting"}}"#;
-        let e: AgentEvent = serde_json::from_str(newer).unwrap();
-        assert_eq!(e.agent.deliver, Some(Deliver::Unknown));
-        assert_eq!(e.event, Event::Unknown);
-        // a kind of message this tower has not heard of does not cost it the message
-        let odd = r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x"},"event":{"type":"said","text":"Done.","kind":"celebration"}}"#;
-        let e: AgentEvent = serde_json::from_str(odd).unwrap();
-        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Unknown), turn: None });
+        for odd in [
+            r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x","deliver":{"kind":"carrier-pigeon"}},"event":{"type":"checkin"}}"#,
+            r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x"},"event":{"type":"molting"}}"#,
+            r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x"},"event":{"type":"said","text":"Done.","kind":"celebration"}}"#,
+        ] {
+            assert!(serde_json::from_str::<AgentEvent>(odd).is_err(), "{odd}");
+        }
     }
 }
 

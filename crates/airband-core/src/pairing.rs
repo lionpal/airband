@@ -1,11 +1,13 @@
-//! The pairing link: one string that tells a radio how to reach its tower. Hosts store it and hand it to the
-//! radio unread; they know nothing about routes.
+//! The pairing link: one string that tells a radio how to reach its tower, and what that computer is called.
+//! Hosts store it and hand it to the radio unread; they know nothing about routes.
 //!
 //!   airband://pair?relay=https%3A%2F%2Frelay.example&secret=<64 hex>     through a relay, from anywhere
 //!   airband://pair?secret=<64 hex>&at=http%3A%2F%2F192.168.1.20%3A7373   sealed the same way, with no relay: straight
 //!                                                                        to the tower at its own addresses (several,
 //!                                                                        with commas), on its network or a private one
 //!   airband://pair?url=http%3A%2F%2F127.0.0.1%3A7373&token=<token>       unsealed, to a tower on this same machine
+//!
+//! Every link ends `&name=<the computer's name>`: a phone calls the computer that from the moment it is paired.
 
 /// Its debug form says where it reaches and never the secret or the token.
 #[derive(Clone, PartialEq, Eq)]
@@ -28,52 +30,65 @@ impl std::fmt::Debug for Pairing {
     }
 }
 
+/// Why a string is not a pairing link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotALink {
+    /// It does not start `airband://pair?`.
+    NotOne,
+    /// It does not say how to reach the computer.
+    NoWay,
+    /// It does not say what the computer is called.
+    NoName,
+}
+
+impl std::fmt::Display for NotALink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            NotALink::NotOne => "a pairing link starts with airband://pair?",
+            NotALink::NoWay => "that is not a whole pairing link: copy it again from your computer, or scan its code",
+            NotALink::NoName => "that pairing link does not say what its computer is called: pair again from your computer",
+        })
+    }
+}
+
 /// A link's query, each value encoded: written with the same rules it is read by.
 fn query(pairs: &[(&str, &str)]) -> String {
     url::form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish()
 }
 
 impl Pairing {
-    pub fn parse(link: &str) -> Result<Pairing, String> {
-        let query = link.trim().strip_prefix("airband://pair?").ok_or("a pairing link starts with airband://pair?")?;
+    /// How a link reaches its computer. A link that does not also say what the computer is called is not one.
+    pub fn parse(link: &str) -> Result<Pairing, NotALink> {
+        let query = link.trim().strip_prefix("airband://pair?").ok_or(NotALink::NotOne)?;
         let get = |name: &str| url::form_urlencoded::parse(query.as_bytes()).find(|(k, _)| k == name).map(|(_, v)| v.into_owned()).filter(|v| !v.is_empty());
         let tidy = |u: String| u.trim_end_matches('/').to_string();
         let at = get("at").map(|at| at.split(',').map(|a| tidy(a.to_string())).filter(|a| !a.is_empty()).collect::<Vec<_>>()).filter(|at| !at.is_empty());
-        match (get("relay"), get("secret"), get("url"), get("token")) {
-            (Some(relay), Some(secret), _, _) => Ok(Pairing::Relay { relay: tidy(relay), secret }),
-            (None, Some(secret), _, _) if at.is_some() => Ok(Pairing::Near { at: at.unwrap_or_default(), secret }),
-            (_, _, Some(url), Some(token)) => Ok(Pairing::Direct { url: tidy(url), token }),
-            _ => Err("that is not a whole pairing link: copy it again from your computer, or scan its code".into()),
-        }
+        let pairing = match (get("relay"), get("secret"), get("url"), get("token")) {
+            (Some(relay), Some(secret), _, _) => Pairing::Relay { relay: tidy(relay), secret },
+            (None, Some(secret), _, _) if at.is_some() => Pairing::Near { at: at.unwrap_or_default(), secret },
+            (_, _, Some(url), Some(token)) => Pairing::Direct { url: tidy(url), token },
+            _ => return Err(NotALink::NoWay),
+        };
+        get("name").ok_or(NotALink::NoName)?;
+        Ok(pairing)
     }
-    /// The link, with the name of the computer it pairs with: what a phone calls that computer before it has
-    /// ever reached it.
-    pub fn link_named(&self, computer: &str) -> String {
-        if computer.is_empty() {
-            return self.link();
-        }
-        format!("{}&{}", self.link(), query(&[("name", computer)]))
+    /// What the computer a link pairs with is called: what a phone calls it from the moment it is paired.
+    pub fn computer(link: &str) -> Result<String, NotALink> {
+        Pairing::parse(link)?;
+        let query = link.trim().strip_prefix("airband://pair?").ok_or(NotALink::NotOne)?;
+        url::form_urlencoded::parse(query.as_bytes()).find(|(k, v)| k == "name" && !v.is_empty()).map(|(_, v)| v.into_owned()).ok_or(NotALink::NoName)
     }
-    /// What a phone may call the computer a link pairs with before it has ever reached it: the name the link
-    /// carries (`name`), or for a link to the one address of a tower on the same machine, that address's host.
-    /// Nothing for a link that names none and reaches it through a relay or at several addresses: none of
-    /// those is its name, and the first of them is no more so than the others.
-    pub fn computer_in(link: &str) -> Option<String> {
-        let query = link.trim().strip_prefix("airband://pair?")?;
-        if let Some((_, name)) = url::form_urlencoded::parse(query.as_bytes()).find(|(k, v)| k == "name" && !v.is_empty()) {
-            return Some(name.into_owned());
+    /// The link to the computer called `computer`. A computer with no name has no link: Err.
+    pub fn link(&self, computer: &str) -> Result<String, NotALink> {
+        if computer.trim().is_empty() {
+            return Err(NotALink::NoName);
         }
-        match Pairing::parse(link).ok()? {
-            Pairing::Direct { url, .. } => Some(crate::links::site(&url)).filter(|host| !host.is_empty()),
-            Pairing::Near { .. } | Pairing::Relay { .. } => None,
-        }
-    }
-    pub fn link(&self) -> String {
-        match self {
-            Pairing::Relay { relay, secret } => format!("airband://pair?{}", query(&[("relay", relay), ("secret", secret)])),
-            Pairing::Near { at, secret } => format!("airband://pair?{}", query(&[("secret", secret), ("at", &at.join(","))])),
-            Pairing::Direct { url, token } => format!("airband://pair?{}", query(&[("url", url), ("token", token)])),
-        }
+        let way = match self {
+            Pairing::Relay { relay, secret } => query(&[("relay", relay), ("secret", secret)]),
+            Pairing::Near { at, secret } => query(&[("secret", secret), ("at", &at.join(","))]),
+            Pairing::Direct { url, token } => query(&[("url", url), ("token", token)]),
+        };
+        Ok(format!("airband://pair?{way}&{}", query(&[("name", computer)])))
     }
 }
 
@@ -84,30 +99,29 @@ mod tests {
     #[test]
     fn round_trips() {
         for p in [Pairing::Relay { relay: "https://relay.example".into(), secret: "ab".repeat(32) }, Pairing::Near { at: vec!["http://192.168.1.20:7373".into(), "http://100.64.0.7:7373".into()], secret: "cd".repeat(32) }, Pairing::Direct { url: "http://100.64.0.7:7373".into(), token: "t0k-en".into() }] {
-            assert_eq!(Pairing::parse(&p.link()).unwrap(), p);
+            let link = p.link("Studio Mac").unwrap();
+            assert_eq!(Pairing::parse(&link).unwrap(), p);
+            assert_eq!(Pairing::computer(&link).unwrap(), "Studio Mac");
         }
-        assert_eq!(Pairing::parse("airband://pair?url=http%3A%2F%2Fx%3A1%2F&token=a").unwrap(), Pairing::Direct { url: "http://x:1".into(), token: "a".into() });
+        assert_eq!(Pairing::parse("airband://pair?url=http%3A%2F%2Fx%3A1%2F&token=a&name=x").unwrap(), Pairing::Direct { url: "http://x:1".into(), token: "a".into() });
     }
     #[test]
-    fn a_link_says_what_its_computer_is_called_or_where_it_is_and_still_reads_as_the_same_pairing() {
+    fn a_link_always_says_what_its_computer_is_called() {
         let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: "ab".repeat(32) };
-        let named = relay.link_named("Studio Mac");
-        assert_eq!(Pairing::parse(&named).unwrap(), relay);
-        assert_eq!(Pairing::computer_in(&named).as_deref(), Some("Studio Mac"));
-        assert_eq!(Pairing::computer_in(&relay.link()), None);
-        let direct = Pairing::Direct { url: "http://studio.local:7373".into(), token: "t".into() };
-        assert_eq!(Pairing::computer_in(&direct.link()).as_deref(), Some("studio.local"));
-        // several addresses and no name: none of them is its name
-        let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into(), "http://studio.tail.ts.net:7373".into()], secret: "cd".repeat(32) };
-        assert_eq!(Pairing::computer_in(&near.link()), None);
-        assert_eq!(Pairing::computer_in(&near.link_named("Studio Mac")).as_deref(), Some("Studio Mac"));
+        assert_eq!(relay.link(" "), Err(NotALink::NoName));
+        let nameless = format!("airband://pair?relay=https%3A%2F%2Frelay.example&secret={}", "ab".repeat(32));
+        assert_eq!(Pairing::parse(&nameless), Err(NotALink::NoName));
+        assert_eq!(Pairing::computer(&nameless), Err(NotALink::NoName));
+        // where a link reaches its computer is not its name
+        let direct = "airband://pair?url=http%3A%2F%2Fstudio.local%3A7373&token=t";
+        assert_eq!(Pairing::computer(direct), Err(NotALink::NoName));
     }
     #[test]
     fn refuses_what_is_not_a_pairing() {
-        assert!(Pairing::parse("https://example.com/?relay=a&secret=b").is_err());
-        assert!(Pairing::parse("airband://pair?relay=https%3A%2F%2Fr").is_err());
+        assert_eq!(Pairing::parse("https://example.com/?relay=a&secret=b&name=x"), Err(NotALink::NotOne));
+        assert_eq!(Pairing::parse("airband://pair?relay=https%3A%2F%2Fr&name=x"), Err(NotALink::NoWay));
         // a secret alone reaches nothing
-        assert!(Pairing::parse(&format!("airband://pair?secret={}", "ab".repeat(32))).is_err());
-        assert!(Pairing::parse("airband://pair?url=%ZZ&token=").is_err());
+        assert_eq!(Pairing::parse(&format!("airband://pair?secret={}&name=x", "ab".repeat(32))), Err(NotALink::NoWay));
+        assert_eq!(Pairing::parse("airband://pair?url=%ZZ&token=&name=x"), Err(NotALink::NoWay));
     }
 }

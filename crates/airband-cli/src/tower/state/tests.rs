@@ -163,8 +163,8 @@ fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
     let theirs = Callsign { project: "garden".into(), number: "one".into(), named: false };
     assert!(inner.taken_elsewhere(&[theirs]));
     let b = inner.find("b").unwrap();
-    assert_eq!((b.team.as_ref().map(|t| t.as_str()), b.callsign.project.as_str()), (Some(garden.as_str()), "laptop garden"));
-    assert_eq!(inner.roster_entries()[0].team, Some(garden));
+    assert_eq!((b.team.as_str(), b.callsign.project.as_str()), (garden.as_str(), "laptop garden"));
+    assert_eq!(inner.roster_entries()[0].team, garden);
 }
 
 #[test]
@@ -186,43 +186,6 @@ fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
     // an agent that starts there joins it
     assert_eq!(joins(&mut inner, &agent("a", &folder, None)).text(), "store one");
     let _ = std::fs::remove_dir_all(&here);
-}
-
-#[test]
-fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
-    // as kept before teams went by folder: one name, two folders
-    // kept with no team at all: read back, it is in none until the teams are settled
-    let session = |id: &str, cwd: &str, number: &str| {
-        let mut kept = serde_json::to_value(Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::new("/unused"))).unwrap();
-        kept.as_object_mut().unwrap().remove("team");
-        let read: Session = serde_json::from_value(kept).unwrap();
-        assert!(read.team.is_none());
-        read
-    };
-    let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
-    let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
-    // a line kept under a team's name, and one he said to several teams
-    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
-    inner.log.push(Entry { id: "l2".into(), ..Entry::default() });
-    inner.settle_teams(old, ["garden".to_string()].into());
-    assert_eq!(names(&inner), ["shop one", "work shop one"]);
-    assert_eq!(inner.sessions.iter().map(|s| s.team.as_ref().map(|t| t.as_str()).unwrap()).collect::<Vec<_>>(), ["/a/work/shop", "/b/work/shop"]);
-    assert_eq!(inner.log.iter().map(|e| e.team.as_ref().map(|t| t.as_str())).collect::<Vec<_>>(), [Some("/g"), None]);
-    assert!(inner.teams[&TeamId::new("/g")].named && !inner.teams[&TeamId::new("/a/work/shop")].named);
-    // once is enough: doing it again changes nothing
-    inner.settle_teams(BTreeMap::new(), BTreeSet::new());
-    assert_eq!(names(&inner), ["shop one", "work shop one"]);
-}
-
-#[test]
-fn a_team_id_kept_in_the_current_format_is_never_read_as_a_name() {
-    let mut inner = Inner::default();
-    let garden = inner.new_team("garden", true).unwrap();
-    // a line and a placement kept under an id the teams no longer hold, though it reads as a team's name
-    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
-    inner.settle_teams(BTreeMap::new(), BTreeSet::new());
-    assert_eq!(inner.log[0].team, Some(TeamId::new("garden")), "left as kept, never moved to {garden:?} by its name");
-    assert_ne!(inner.log[0].team.as_ref(), Some(&garden));
 }
 
 #[test]
@@ -624,10 +587,10 @@ fn an_agent_no_team_can_be_found_for_is_not_taken_in_under_a_made_up_team() {
 #[test]
 fn a_kept_agent_whose_team_is_gone_goes_to_its_folders_team_or_is_let_go() {
     let mut inner = Inner { sessions: vec![kept_session("a", Some("/x/shop"), "gone"), kept_session("b", None, "!!")], ..Inner::default() };
-    inner.settle_teams(BTreeMap::new(), BTreeSet::new());
+    inner.settle_teams();
     // no team is made from a name nothing has, and nobody is left in no team
     assert_eq!(inner.teams.values().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["shop"]);
-    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_ref().map(|t| t.as_str()).unwrap())).collect::<Vec<_>>(), [("a", "/x/shop")]);
+    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_str())).collect::<Vec<_>>(), [("a", "/x/shop")]);
 }
 
 #[test]
@@ -678,14 +641,15 @@ fn a_new_team_is_never_an_old_one_by_its_name_and_a_models_name_is_not_his() {
 
 #[test]
 fn a_start_keeps_the_name_he_gave_a_configured_team_and_makes_no_ghost() {
-    let old: BTreeMap<String, String> = [("garden".to_string(), "/x/shop".to_string())].into();
     let listed: BTreeMap<String, String> = [("shop".to_string(), "/x/shop".to_string())].into();
-    let mut inner = Inner { sessions: vec![kept_session("a", Some("/x/shop"), "garden")], ..Inner::default() };
-    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
-    inner.teams_at_start(old, ["garden".to_string()].into(), &listed);
+    let mut inner = Inner::default();
+    inner.new_folder_team("/x/shop", TeamName::new("garden").unwrap(), true);
+    let mut kept = kept_session("a", Some("/x/shop"), "garden");
+    kept.team = TeamId::new("/x/shop");
+    inner.sessions.push(kept);
+    inner.teams_at_start(&listed);
     assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [("/x/shop", "garden", true)]);
     assert_eq!(inner.sessions[0].callsign.text(), "garden one");
-    assert_eq!(inner.log[0].team, Some(TeamId::new("/x/shop")));
 }
 
 #[test]
@@ -707,10 +671,10 @@ fn a_renamed_teams_agents_never_take_a_callsign_another_agent_has() {
     let shop = inner.folder_team("/x/shop").unwrap();
     let garden = inner.folder_team("/x/garden").unwrap();
     let mut a = kept_session("a", Some("/x/shop"), "shop");
-    a.team = Some(shop.clone());
+    a.team = shop.clone();
     // one in another team still called by a name the renamed team now takes
     let mut b = kept_session("b", Some("/x/garden"), "orchard");
-    b.team = Some(garden);
+    b.team = garden;
     inner.sessions = vec![a, b];
     inner.rename_team(&shop, "orchard").unwrap();
     assert_eq!(names(&inner), ["orchard two", "orchard one"]);
@@ -762,9 +726,6 @@ fn no_way_of_naming_a_team_gives_it_a_name_another_team_has() {
     let mut inner = Inner::default();
     let shop_id = inner.folder_team(&shop).unwrap();
     let back_id = inner.folder_team(&back).unwrap();
-    // a name kept by an older tower as his for one team, which another team already has, is not given
-    let old: BTreeMap<String, String> = [("shop".to_string(), back.clone())].into();
-    inner.settle_teams(old, ["shop".to_string()].into());
     assert_eq!(inner.team_name(&shop_id), Some("shop"));
     assert_eq!(inner.team_name(&back_id), Some("back"));
     assert!(inner.rename_team(&back_id, "shop").is_err());
@@ -808,15 +769,4 @@ fn of_two_free_radios_the_one_he_showed_was_there_last_takes_it_never_the_first_
     // a request from the other shows it is there now
     inner.call("zed");
     assert_eq!(inner.free_radio().as_deref(), Some("zed"));
-}
-
-#[test]
-fn a_kept_team_whose_name_another_team_has_now_gets_a_name_of_its_own() {
-    let mut inner = Inner::default();
-    inner.new_folder_team("/x/shop", TeamName::new("shop").unwrap(), false);
-    let old: BTreeMap<String, String> = [("shop".to_string(), "/y/work/shop".to_string())].into();
-    inner.settle_teams(old, BTreeSet::new());
-    let mut names: Vec<String> = inner.teams.values().map(|t| t.name.to_string()).collect();
-    names.sort();
-    assert_eq!(names, ["shop", "work shop"], "two teams never share a name");
 }

@@ -29,23 +29,9 @@ pub(super) struct Wake {
 }
 
 impl Wake {
-    /// The addresses kept, each under its radio's channel. Ones kept by a tower from before radios went by
-    /// channel are under a pairing's name: each is moved to that pairing's channel, by the name compared whole.
-    pub(super) fn load(store: &Store, pairings: &[config::PairedRadio]) -> Result<Wake, String> {
-        let mut targets = store.push_targets()?;
-        let mut moved = false;
-        for p in pairings {
-            let Some(channel) = channel_of(p) else { continue };
-            if channel != p.name
-                && let Some(kept) = targets.remove(&p.name) {
-                    targets.entry(channel).or_default().extend(kept);
-                    moved = true;
-                }
-        }
-        if moved {
-            store.save_push_targets(&targets);
-        }
-        Ok(Wake { targets: Mutex::new(targets) })
+    /// The addresses kept, each under its radio's channel.
+    pub(super) fn load(store: &Store) -> Result<Wake, String> {
+        Ok(Wake { targets: Mutex::new(store.push_targets()?) })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
@@ -55,7 +41,7 @@ impl Wake {
 
 /// A radio says where it can be woken, or (with no token) that it no longer can.
 pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
-    if target.provider == airband_core::relay::PushService::Unknown || !(target.token.is_empty() || airband_core::relay::push_address(&target.token)) {
+    if !(target.token.is_empty() || airband_core::relay::push_address(&target.token)) {
         return;
     }
     let mut targets = app.push.targets.lock().unwrap();
@@ -69,7 +55,7 @@ pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
         mine.drain(..extra);
     }
     if *mine != before {
-        log(format!("push: \"{}\" {}", radio_name(&app.cfg(), radio), if mine.is_empty() { "can no longer be woken" } else { "can be woken with a notification" }));
+        log(format!("push: {} {}", radio_tag(radio), if mine.is_empty() { "can no longer be woken" } else { "can be woken with a notification" }));
         if mine.is_empty() {
             targets.remove(radio);
         }
@@ -140,7 +126,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     // only a radio paired through a relay can be woken: the relay is what holds the push service's key
     let (Some(relay), Some(pairing)) = (cfg.relay.clone(), cfg.pairings.iter().find(|p| channel_of(p).as_deref() == Some(radio))) else { return };
     let Ok(keys) = Keys::derive(&pairing.secret) else { return };
-    let what = format!("{} ({})", note.from, if note.permission { "permission" } else if note.kind == Some(Kind::NeedsYou) { "question" } else { "report" });
+    let what = format!("line {} ({})", note.id, if note.permission { "permission" } else if note.kind == Some(Kind::NeedsYou) { "question" } else { "report" });
     let sealed = loop {
         let sealed = keys.seal(Direction::Push, &serde_json::to_vec(&note).unwrap());
         if sealed.len() <= PUSH_MOST {
@@ -149,7 +135,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
         // too long for one push: he gets the opening, and the rest when he opens it
         let keep = note.text.chars().count() * 2 / 3;
         if keep < 20 {
-            return log(format!("push: {what} is too long to send to \"{}\"", pairing.name));
+            return log(format!("push: {what} is too long to send to {}", radio_tag(radio)));
         }
         note.text = airband_core::prose::clip(&note.text, keep);
         // cut: never an Allow under part of a command
@@ -166,7 +152,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
             Err(e) => format!("the relay could not be reached ({e})"),
             Ok(mut res) => {
                 let status = res.status().as_u16();
-                // what the relay says, typed; a relay with no such route answers no `PushAnswer` at all
+                // what the relay says, typed
                 match res.body_mut().read_json::<PushAnswer>() {
                     Ok(answer) if answer.sent => "sent".into(),
                     Ok(PushAnswer { why: Some(NotPushed::Gone), .. }) => {
@@ -183,11 +169,11 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                     Ok(PushAnswer { why: Some(why), .. }) => format!("not sent: {why}"),
                     // no answer of the push route's shape: what the status says, and nothing more is claimed
                     Ok(_) => format!("the relay answered {status} with no word on whether it was sent"),
-                    Err(_) => format!("the relay answered {:?} with no push answer: it may not send notifications", crate::tower::RelaySaid::of(status)),
+                    Err(_) => format!("the relay answered {:?} with no push answer", crate::tower::RelaySaid::of(status)),
                 }
             }
         };
-        log(format!("push: asked the relay to wake \"{}\" for {what}: {outcome}", pairing.name));
+        log(format!("push: asked the relay to wake {} for {what}: {outcome}", radio_tag(radio)));
     }
 }
 
@@ -219,24 +205,16 @@ mod tests {
     }
 
     #[test]
-    fn a_radio_is_woken_by_its_pairings_channel_and_an_address_kept_under_its_name_moves_there() {
+    fn the_addresses_kept_are_read_back_under_each_radios_channel() {
         let path = std::env::temp_dir().join(format!("airband-push-channel-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let store = Store::open(&path).unwrap();
         let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
         let channel = channel_of(&phone).unwrap();
-        assert_ne!(channel, phone.name);
         let target = PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) };
-        // kept by a tower from before radios went by channel: under the pairing's name
-        store.save_push_targets(&BTreeMap::from([("phone".to_string(), vec![target.clone()]), ("unpaired".to_string(), vec![target.clone()])]));
-        let wake = Wake::load(&store, std::slice::from_ref(&phone)).unwrap();
-        let kept = wake.targets.lock().unwrap().clone();
-        assert_eq!(kept.get(&channel), Some(&vec![target.clone()]));
-        assert!(!kept.contains_key("phone"));
-        // a name no pairing has is left as it is: nothing is guessed about it
-        assert!(kept.contains_key("unpaired"));
-        // and the move is written, so the next start finds it under the channel
-        assert!(store.push_targets().unwrap().contains_key(&channel));
+        store.save_push_targets(&BTreeMap::from([(channel.clone(), vec![target.clone()])]));
+        let wake = Wake::load(&store).unwrap();
+        assert_eq!(wake.targets.lock().unwrap().get(&channel), Some(&vec![target]));
         let _ = std::fs::remove_file(&path);
     }
 

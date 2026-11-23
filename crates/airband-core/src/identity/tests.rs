@@ -28,7 +28,7 @@ fn an_unknown_account_is_never_taken_for_another() {
     assert!(one.same(&one.clone()));
     // one person in two workspaces: two allowances
     assert!(!one.same(&AccountIdentity::Id { id: "p".into(), org: Some("w2".into()) }));
-    assert_eq!(serde_json::from_value::<AccountIdentity>(json!({"kind": "something_new"})).unwrap(), AccountIdentity::None);
+    assert!(serde_json::from_value::<AccountIdentity>(json!({"kind": "something_new"})).is_err(), "a kind it does not have is refused");
     assert_eq!(serde_json::from_value::<AccountIdentity>(serde_json::to_value(&one).unwrap()).unwrap(), one);
 }
 

@@ -99,9 +99,6 @@ pub enum PullRefused {
     /// after it went, is not. Ask again at once, saying nothing to him: if the other tower pulls again first, the
     /// answer is [`PullRefused::AnotherTower`]; if not, this pull is taken.
     AskAgain,
-    /// A reason this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 impl PullRefused {
@@ -109,7 +106,7 @@ impl PullRefused {
     pub fn status(self) -> u16 {
         match self {
             PullRefused::OtherVersion { .. } => 426,
-            PullRefused::AnotherTower | PullRefused::AskAgain | PullRefused::Unknown => 409,
+            PullRefused::AnotherTower | PullRefused::AskAgain => 409,
         }
     }
     /// The version a pull says it speaks ([`PULL_HEADER`]), if a relay takes it; else why not, with the side to
@@ -141,16 +138,13 @@ pub enum CallRefused {
     TowerSilent,
     /// 410: the pairing was ended. Only a new pairing reaches that computer again.
     Ended,
-    /// A reason this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 impl CallRefused {
     /// The status the relay answers with.
     pub fn status(self) -> u16 {
         match self {
-            CallRefused::Behind | CallRefused::Unknown => 409,
+            CallRefused::Behind => 409,
             CallRefused::Away => 503,
             CallRefused::TowerSilent => 504,
             CallRefused::Ended => 410,
@@ -529,10 +523,10 @@ mod tests {
         assert_eq!(PullRefused::version(Some("1")), older(Side::Tower));
         assert_eq!(PullRefused::version(Some("two")), older(Side::Tower));
         assert_eq!(PullRefused::version(Some("4")), older(Side::Relay));
-        // on the wire, and a reason from a newer relay
+        // on the wire; a reason this build does not have is not read as one
         let told = serde_json::to_string(&PullRefused::OtherVersion { older: Side::Relay }).unwrap();
         assert_eq!(told, r#"{"refused":"other_version","older":"relay"}"#);
-        assert_eq!(serde_json::from_str::<PullRefused>(r#"{"refused":"later"}"#).unwrap(), PullRefused::Unknown);
+        assert!(serde_json::from_str::<PullRefused>(r#"{"refused":"later"}"#).is_err());
         assert_eq!((PullRefused::AnotherTower.status(), PullRefused::OtherVersion { older: Side::Tower }.status()), (409, 426));
     }
     #[test]
@@ -560,9 +554,9 @@ mod tests {
         }
         assert_eq!(serde_json::to_string(&CallRefused::TowerSilent).unwrap(), r#"{"refused":"tower_silent"}"#);
         assert_eq!((CallRefused::of(Route::Call, 200, b""), CallRefused::of(Route::Queue, 202, b"")), (Ok(()), Ok(())));
-        // one about the request itself has no such body; one from a newer relay is a reason not known here
+        // one about the request itself has no such body, and a reason this build does not have is none
         assert_eq!(CallRefused::of(Route::Call, 429, b"too many requests"), Err(None));
-        assert_eq!(CallRefused::of(Route::Queue, 409, br#"{"refused":"later"}"#), Err(Some(CallRefused::Unknown)));
+        assert_eq!(CallRefused::of(Route::Queue, 409, br#"{"refused":"later"}"#), Err(None));
     }
     #[test]
     fn freshness_window() {

@@ -1,7 +1,8 @@
 #!/bin/sh
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
-#   scripts/check.sh           the linter, then the unit tests of every crate (under a minute once built)
+#   scripts/check.sh           the linter (for this Mac, Linux and Windows), then the unit tests of every crate
+#                              (under a minute once built)
 #   scripts/check.sh --full    those, then the end-to-end suites, side by side: the relay and its queue, the pull,
 #                              agents the tower runs itself, links, the paths the audits keep finding faults in
 #                              (e2e-scenarios), notifications (e2e-push), and the whole tower with real model calls
@@ -15,6 +16,23 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 # the linter first: a warning from it fails the check
 cargo clippy -q --workspace --all-targets -- -D warnings
+# The same linter as it reads the code for Linux and for Windows, which CI builds the tower on: code built on
+# one system only and reached from code built on every one is caught here, before a push. Read, never linked,
+# so the C the crates compile (sqlite, ring) is stood in for by a compiler and an archiver that make empty
+# files; the build cache is left out of that, as it would try to compile the C itself.
+none=$(mktemp -d "${TMPDIR:-/tmp}/airband-cross.XXXXXX")
+trap 'rm -rf "$none"' EXIT
+printf '#!/bin/sh\nfor a; do case $a in -out:*) : >"${a#-out:}" ;; *.a|*.lib) : >"$a" ;; esac; done\n' >"$none/ar"
+chmod +x "$none/ar"
+installed=$(rustup target list --installed)
+for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+  if ! printf '%s\n' "$installed" | grep -qx "$target"; then
+    echo "The Rust target $target is not installed:  rustup target add $target"
+    exit 1
+  fi
+  t=$(printf '%s' "$target" | tr - _)
+  env -u RUSTC_WRAPPER "CC_$t=/usr/bin/true" "AR_$t=$none/ar" cargo clippy -q --workspace --all-targets --target "$target" -- -D warnings
+done
 cargo test -q --release -p airband-core -p airband-io -p airband-relay -p airband-radio -p airband-cli
 [ "$1" = "--full" ] || exit 0
 # The suites run a build with the stand-ins in it (test accounts and addresses read from the environment). It is

@@ -357,7 +357,7 @@ pub struct UsesTools {
 /// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
 /// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
 /// `token` takes the address away.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushTarget {
     /// The push service.
     pub provider: crate::relay::PushService,

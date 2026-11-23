@@ -31,7 +31,7 @@ pub(crate) fn refresh() -> (bool, Vec<String>) {
 
 
 
-const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--against <the copy published before>]\n  airband catalog stamp <catalog/rev>";
+const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--against <the copy published now>]\n  airband catalog stamp <catalog/rev>";
 
 /// `airband catalog export` prints the catalogue built into this program, as it is published.
 /// `sign` prints a document's signature, made with the private key in a file (32 bytes, in hex). `check` says
@@ -79,7 +79,7 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
             if let Some(before) = read.flag("against") {
                 let before = text_of(before)?;
                 catalog::would_take(text, &before)?;
-                println!("A build that has the copy published before would take it.");
+                println!("This build, holding the copy published before, would take it in its place.");
             }
             println!("Number {}: {} providers and {} models for the phone, and this version of airband can use every one.", c.rev, c.providers.len(), c.models.len());
             Ok(())

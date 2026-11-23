@@ -45,7 +45,9 @@ impl Links {
             if !keep {
                 stop.store(true, Ordering::SeqCst);
                 app.served.forget(&key.1);
-                log(format!("\"{}\" is no longer served", key.1.name));
+                if let Some(channel) = super::super::push::channel_of(&key.1) {
+                    log(format!("{} is no longer served", super::super::radio_tag(&channel)));
+                }
             }
             keep
         });
@@ -57,7 +59,7 @@ impl Links {
             let serve = match Serve::new(app, key.0.clone(), &key.1, router.clone(), handle.clone()) {
                 Ok(serve) => serve,
                 Err(why) => {
-                    log(format!("pairing \"{}\" cannot be served: {why}", key.1.name));
+                    log(format!("a pairing cannot be served: {why}"));
                     continue;
                 }
             };

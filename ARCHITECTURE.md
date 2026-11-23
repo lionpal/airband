@@ -65,7 +65,7 @@ The compiler keeps some of them, so they cannot drift:
 | The models and efforts he can ask a new agent for ("with fable high, …") | For a program started with arguments: `models`, `efforts`, `with_model` and `with_effort` on the launcher, and one he names that the row does not list is refused in words. The routing model names the model he heard, never a launcher; which launcher starts it is a rule (`launch::starter`): the tool he named if it offers it, else his usual launcher if it does, else the one launcher that does, else he is asked which, by the tool's name, and his answer starts it. An agent that speaks the Agent Client Protocol lists its own when a session opens (its settings of the protocol's kinds `model` and `thought_level`): its holder passes the two lists to the tower, which offers what the tool last listed (nothing until one of its agents has been started on this computer), and sets what he asked for before the agent is said to be there. One the agent does not have starts nothing, and he is told. | The row, or nothing |
 | Another way to drive a held program | A kind of `Held` in `airband-core/src/tools.rs` and its driver in `hold.rs`. The tower says the same typed lines to every holder (`hold::Tell`) and asks it where it has got to (`hold::State`). | Two files |
 | Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/edges/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
-| Something else an agent can report (a file, a cost) | A variant of `Event`. Old towers skip what they do not know. | `agent.rs`, `tower/intake.rs` |
+| Something else an agent can report (a file, a cost) | A variant of `Event`. | `agent.rs`, `tower/intake.rs` |
 | Permission prompts from another agent tool | No code: `airband report … permission "<what>"` and act on its exit code. Or two functions in its adapter: its prompt to a `PermissionAsk`, and yes or no to whatever the tool reads back. | `adapters/` only |
 | Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts/` is the model. | `adapters/` only |
 | What an agent is doing right now, and its model and effort | No code: `airband report … doing "<text>"` and `… model "<name>" [effort]`. Or one function in its adapter (`glance`). | `adapters/` only |
@@ -351,8 +351,13 @@ relay logs only its own failed calls, with no content and six characters of the 
 
 ## Compatibility
 
-Unknown fields are ignored, and unknown `type` and `kind` values are accepted and skipped. Adding is never a
-new version. There is a test for this (`round_trips_and_tolerates_the_future`).
+There is none with older versions: only the current release matters. The tower, its adapters (the same
+binary), the relay and the phone's core read what each other sends as it is written, and a `type`, `kind` or
+reason one does not have is refused, never skipped. Each protocol says its version (`radio::SCHEMA`,
+`relay::PULL_VERSION`); a request in another one is refused with which side to update. What the tower and the
+phone keep is read in the shape this build writes: nothing reads an older shape, an older name or an older
+file. The published catalogue is checked against the one compiled into the build being released
+(`scripts/publish-catalog.sh`).
 
 ## Names
 

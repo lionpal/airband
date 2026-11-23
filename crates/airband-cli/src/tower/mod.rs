@@ -150,6 +150,11 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
+/// A radio as the log names it: the start of its id (its pairing's relay channel), never the name he gave it.
+fn radio_tag(radio: &str) -> String {
+    format!("radio {}", short_id(radio))
+}
+
 /// A team as the log names it. Its id is its folder's path and its name is usually the folder's, so neither is
 /// ever logged: a short digest of the id, the same each time, tells its lines apart.
 fn team_tag(team: &TeamId) -> String {

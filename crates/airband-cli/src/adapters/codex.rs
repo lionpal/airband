@@ -18,7 +18,8 @@
 //!
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
-#![expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol")]
+#![cfg_attr(unix, expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol"))]
+#![cfg_attr(not(unix), allow(dead_code, reason = "its app server is reached by a unix socket, so what reads it runs on unix only"))]
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};

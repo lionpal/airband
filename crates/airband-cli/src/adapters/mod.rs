@@ -145,6 +145,7 @@ pub(crate) struct Tower {
     /// tower last stopped. One of these the tool no longer lists has gone.
     pub(crate) listed: Listed,
     /// Has this session reported by its tool's hooks? One that has asks for leave by its hook.
+    #[cfg_attr(not(unix), allow(dead_code, reason = "asked only by a watcher that runs on unix"))]
     pub(crate) hooked: Box<dyn Fn(&str) -> bool + Send>,
 }
 

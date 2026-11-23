@@ -5,7 +5,7 @@ use super::*;
 use airband_core::radio::wire::{Refusal, at};
 
 fn link(n: u8) -> String {
-    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}")
+    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&name=computer%20{n}")
 }
 fn desk_with(towers: Vec<(String, Arc<FakeTower>)>) -> Desk {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));

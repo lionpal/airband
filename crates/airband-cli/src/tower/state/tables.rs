@@ -23,12 +23,6 @@ pub(crate) struct Saved {
     pub(in crate::tower) sessions: Vec<Session>,
     #[serde(default)]
     pub(in crate::tower) teams: BTreeMap<TeamId, Team>,
-    /// Kept by a tower from before teams had ids: teams by name with their folders, and the names he gave.
-    /// Read once, by `settle_teams`, and never written again.
-    #[serde(default, skip_serializing)]
-    pub(in crate::tower) projects: BTreeMap<String, String>,
-    #[serde(default, skip_serializing)]
-    pub(in crate::tower) named_teams: BTreeSet<String>,
     #[serde(default)]
     pub(in crate::tower) held: Vec<held::Kept>,
     #[serde(default)]
@@ -43,6 +37,7 @@ pub(crate) struct Saved {
 
 /// The tables kept from one run to the next, each under its own key in the database's state table, so one that
 /// cannot be read is set aside alone and a change to one writes only that one.
+#[cfg(test)]
 pub(in crate::tower) const KEPT: [&str; 7] = ["sessions", "teams", "held", "menus", "tools", "placed", "links"];
 
 /// What is to be written after a change to the state: the kept tables whose contents changed, and the messages

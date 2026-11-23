@@ -193,7 +193,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             inner.took(&receipt, now_ms());
             return Ok(());
         }
-        Event::Checkin | Event::Signoff | Event::Unknown => {}
+        Event::Checkin | Event::Signoff => {}
     }
     inner.tell();
     Ok(())

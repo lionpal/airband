@@ -7,9 +7,7 @@ pub(super) struct Session {
     pub(super) agent: Agent,
     pub(super) callsign: Callsign,
     /// The team it is in, by the team's id ([`Inner::teams`]). Its callsign carries what that team is called.
-    /// None only for one kept before sessions had a team, until the teams are settled (`Inner::settle_teams`).
-    #[serde(default)]
-    pub(super) team: Option<TeamId>,
+    pub(super) team: TeamId,
     /// It finished a turn and is waiting on him.
     pub(super) waiting: bool,
     /// The line of the last thing he heard from it, for "say more" and "repeat".
@@ -59,11 +57,11 @@ pub(super) struct Session {
 impl Session {
     /// One just met: nothing heard, nothing queued, nothing known of what it is doing.
     pub(super) fn new(agent: Agent, callsign: Callsign, team: TeamId) -> Session {
-        Session { agent, callsign, team: Some(team), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+        Session { agent, callsign, team, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
     }
     /// It is in the room he was looking at, or he was in none.
     pub(super) fn in_room(&self, room: Option<&str>) -> bool {
-        room.is_none_or(|g| self.team.as_ref().is_some_and(|t| t.as_str() == g))
+        room.is_none_or(|g| self.team.as_str() == g)
     }
 }
 
@@ -91,8 +89,8 @@ impl Inner {
     /// name it was started under; or its folder's team. A team found by the name is written down as where it
     /// was put, so the team keeps it when he renames the team.
     fn team_of(&mut self, agent: &Agent) -> Option<TeamId> {
-        if let Some(team) = self.find(&agent.id).and_then(|s| s.team.clone()) {
-            return Some(team);
+        if let Some(s) = self.find(&agent.id) {
+            return Some(s.team.clone());
         }
         if let Some(Placed { team, .. }) = self.placed.get(&AgentId::new(agent.id.as_str())).filter(|p| self.teams.contains_key(&p.team)) {
             return Some(team.clone());
@@ -217,7 +215,7 @@ impl Inner {
         let was = self.find(id)?.callsign.clone();
         let name = self.teams.get(team)?.name.clone();
         let to = was.moved_to(name.as_str(), &self.taken_callsigns(Some(id)))?;
-        if self.find(id)?.team.as_ref() == Some(team) {
+        if self.find(id)?.team == *team {
             // already there: if it was he who said so, it now stays
             if by == Mover::Him {
                 self.session(id)?.moved = Some(Mover::Him);
@@ -226,7 +224,7 @@ impl Inner {
         }
         self.rename(id, to.clone());
         let s = self.session(id)?;
-        s.team = Some(team.clone());
+        s.team = team.clone();
         s.moved = Some(by);
         self.put(id, team, by);
         Some((was, to))

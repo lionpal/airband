@@ -67,9 +67,6 @@ pub enum Refusal {
     /// The token opens nothing on this computer: the pairing is wrong or was undone, and the phone must be paired
     /// again. Not the same as a route this phone may not use.
     NotPaired,
-    /// A refusal this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 impl Refusal {
@@ -80,7 +77,7 @@ impl Refusal {
     pub fn status(&self) -> u16 {
         match self {
             Refusal::Told { .. } => 409,
-            Refusal::BadAsk { .. } | Refusal::Unknown => 400,
+            Refusal::BadAsk { .. } => 400,
             Refusal::OtherVersion { .. } => 426,
             Refusal::NotNow { .. } => 503,
             Refusal::TooBig => 413,

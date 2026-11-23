@@ -20,7 +20,7 @@ pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick)
     };
     inner.move_to(agent, &team, Mover::Him);
     inner.tell();
-    inner.find(agent).and_then(|s| Some(airband_core::radio::Moved { callsign: s.callsign.clone(), team: s.team.clone()? })).ok_or_else(|| NOT_RUNNING.into())
+    inner.find(agent).map(|s| airband_core::radio::Moved { callsign: s.callsign.clone(), team: s.team.clone() }).ok_or_else(|| NOT_RUNNING.into())
 }
 
 /// Is this report one to look at where the agent belongs on? Its first, so one in the wrong team is not left

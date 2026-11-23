@@ -55,7 +55,7 @@ pub const SCHEMA_HEADER: &str = "x-airband-schema";
 pub enum Kind {
     /// The agent is stopped until he answers or acts, or something broke that he must know now.
     /// Interrupts in call mode; flagged in chat.
-    #[serde(rename = "needs-you", alias = "question")]
+    #[serde(rename = "needs-you")]
     NeedsYou,
     /// It finished a piece of work, or found or decided something he would want to know.
     #[serde(rename = "report")]
@@ -72,10 +72,6 @@ pub enum Kind {
     /// it as he is of a report, since nothing says it is routine.
     #[serde(rename = "unjudged")]
     Unjudged,
-    /// A kind a newer tower uses that this build does not know. Shown like a report: never dropped, and never
-    /// a reason to refuse the rest of what came with it.
-    #[serde(other, rename = "unknown")]
-    Unknown,
 }
 
 /// One thing an agent has to say.
@@ -224,9 +220,6 @@ pub enum Outcome {
 pub enum Rejected {
     /// It was left with the relay more than a week ago: too late to act on.
     TooOld,
-    /// A reason this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 /// What came of one thing he said, as the feed tells the radio that said it.
@@ -327,13 +320,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_feed_from_a_newer_tower_still_reads() {
-        let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
-        assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
-        let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
-        assert_eq!(t.kind, Kind::Unknown);
-        // a team not said is no team, never an empty id standing in for one
-        assert_eq!(feed.roster[0].team, None);
+    fn a_kind_or_an_agent_the_tower_does_not_say_in_full_is_not_read() {
+        let t: Result<Transmission, _> = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#);
+        assert!(t.is_err());
+        // an agent on the roster always has its team: one without is not made up
+        let roster: Result<RosterEntry, _> = serde_json::from_str(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"state":"idle"}"#);
+        assert!(roster.is_err());
+        let roster: RosterEntry = serde_json::from_str(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"team":"t1","harness":"h","waiting":false,"state":"idle"}"#).unwrap();
+        assert_eq!(roster.team, crate::ids::TeamId::new("t1"));
     }
     #[test]
     fn a_question_and_its_answer_are_one_typed_id_and_its_plain_string_on_the_wire() {
@@ -344,6 +338,6 @@ mod tests {
         assert_eq!(sent["answers"], "q1");
         assert_eq!(serde_json::from_value::<Utterance>(sent).unwrap().answers, asked.question);
         let other: Other = serde_json::from_str(r#"{"id":"a","callsign":"shop one","group":"shop","team":"t1"}"#).unwrap();
-        assert_eq!(other.team, Some(crate::ids::TeamId::new("t1")));
+        assert_eq!(other.team, crate::ids::TeamId::new("t1"));
     }
 }

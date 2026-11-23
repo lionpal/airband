@@ -71,11 +71,10 @@ pub(crate) fn said(saved: Saved) -> Result<(), String> {
     saved.into_result().map_err(|why| not_kept(&why))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn an_unreadable_file_that_cannot_be_moved_aside_is_never_saved_over() {
         use std::os::unix::fs::PermissionsExt;
@@ -95,7 +94,6 @@ mod tests {
         assert_eq!(left, b"{ half written");
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_phone_stores_take_a_file_that_could_not_be_read_once_it_can_be() {
         use std::os::unix::fs::PermissionsExt;

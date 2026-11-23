@@ -5,7 +5,7 @@ use super::*;
 use airband_core::radio::{Feed, wire::at};
 
 fn link(n: u8) -> String {
-    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}")
+    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&name=computer%20{n}")
 }
 /// A stand-in that answers its feed as the computer called `name`.
 fn tower(name: &str) -> Arc<FakeTower> {
@@ -117,9 +117,9 @@ fn a_computer_that_refuses_this_phone_is_told_by_what_it_said_and_the_others_are
     let told = looked(&desk, None, None).cannot_reach;
     desk.stop();
     assert!(asked >= 1, "the refusing computer was not asked through its own connection");
-    assert_eq!(away, ["127.0.0.1"], "only the computer that refused is out of reach");
+    assert_eq!(away, ["computer 2"], "only the computer that refused is out of reach");
     // he is told what it said, not that it cannot be reached
-    assert_eq!(told, format!("127.0.0.1: {}", crate::link::LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() }).said()));
+    assert_eq!(told, format!("computer 2: {}", crate::link::LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() }).said()));
 }
 
 #[test]
@@ -161,8 +161,8 @@ fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes
 fn one_computer_paired_by_two_links_is_two_entries_with_names_of_their_own() {
     // made at once with one secret, through the relay and straight on its network
     let secret = "ab".repeat(32);
-    let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link();
-    let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link();
+    let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link("Mac").unwrap();
+    let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link("Mac").unwrap();
     assert_ne!(station_id(&relay), station_id(&near));
     // the relay link keeps the name a notification from that computer gives
     assert_eq!(station_id(&relay).to_string(), Keys::derive(&"ab".repeat(32)).unwrap().channel);

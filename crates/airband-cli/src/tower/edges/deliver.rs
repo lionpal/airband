@@ -81,7 +81,6 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
             let (name, session, words) = (name.clone(), session.clone(), words.to_string());
             tokio::task::spawn_blocking(move || crate::adapters::deliver(&name, &session, &words)).await.map_err(|e| e.to_string())?
         }
-        Deliver::Unknown => Err("this tower does not know its kind of delivery".into()),
     }
 }
 

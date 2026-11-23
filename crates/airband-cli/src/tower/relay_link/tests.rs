@@ -199,7 +199,7 @@ fn he_is_told_which_side_to_update_or_that_another_computer_pulls() {
     assert!(refused_pull("r", Ok(read(r#"{"refused":"other_version","older":"tower"}"#))).contains("update airband here"));
     assert!(refused_pull("r", Ok(read(r#"{"refused":"other_version","older":"relay"}"#))).contains("update the relay"));
     assert!(refused_pull("r", Ok(read(r#"{"refused":"another_tower"}"#))).contains("another computer"));
-    assert_eq!(read(r#"{"refused":"tomorrow"}"#), PullRefused::Unknown);
+    assert!(serde_json::from_str::<PullRefused>(r#"{"refused":"tomorrow"}"#).is_err());
     // an answer whose reason cannot be read is said as that, never as a reason guessed for it
     let unread = refused_pull("r", Err("expected value"));
     assert!(unread.contains("could not be read") && !unread.contains("update"), "{unread}");

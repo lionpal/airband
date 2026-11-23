@@ -170,7 +170,7 @@ pub(crate) fn pair(cfg: Config, name: &str) -> Result<(), String> {
         }
     };
     // the phone shows this computer by its name from the start, before it has reached it
-    let link = pairing.link_named(&config::station(&cfg));
+    let link = pairing.link(&config::station(&cfg)).map_err(|_| crate::terminal::NO_NAME.to_string())?;
     // on a terminal, the link as a picture to point the phone's camera at; piped somewhere, only the link
     if std::io::IsTerminal::is_terminal(&std::io::stdout())
         && let Ok(code) = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L) {

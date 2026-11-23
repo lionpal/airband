@@ -37,7 +37,6 @@ mod acp;
 mod adapters;
 mod catalog;
 mod config;
-#[cfg(unix)]
 mod hold;
 mod commands;
 mod install;

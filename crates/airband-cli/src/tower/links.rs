@@ -38,23 +38,12 @@ pub(super) struct Book {
     pending: HashMap<String, Vec<String>>,
 }
 
-/// Where a tower from before the book was kept in the database kept it.
-fn file() -> std::path::PathBuf {
-    config::dir().join("links.json")
-}
-
 impl Book {
-    /// The book kept in the database, with what has not been said for a month let go. An empty one is read
-    /// once from the file a tower from before kept it in, which is only read, never written again.
-    pub(super) fn settled(kept: Book) -> Book {
-        let mut book = if kept.known.is_empty() && kept.with.is_empty() && !cfg!(test) { Self::from_file(&file()).unwrap_or(kept) } else { kept };
+    /// The book kept in the database, with what has not been said for a month let go.
+    pub(super) fn settled(mut book: Book) -> Book {
         let oldest = airband_core::clock::now_secs().saturating_sub(KEPT_FOR);
         book.known.retain(|_, k| k.at >= oldest);
         book
-    }
-    fn from_file(path: &std::path::Path) -> Option<Book> {
-        let text = airband_io::files::read_text(path).ok().flatten()?;
-        serde_json::from_str(&text).map_err(|e| log(format!("links: {} could not be read ({e}); starting without it", path.display()))).ok()
     }
     /// An agent's tool made something. It goes with the next thing that agent says.
     pub(super) fn made(&mut self, agent: &str, address: &str, title: Option<String>, kind: Option<String>) {
@@ -110,7 +99,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn what_a_tool_made_is_written_with_the_other_tables_and_the_old_file_is_only_read() {
+    fn what_a_tool_made_is_written_with_the_other_tables() {
         let mut inner = Inner::default();
         let before = inner.changes();
         assert!(before.tables.iter().any(|(k, _)| *k == "links"), "the book is one of the kept tables");
@@ -119,15 +108,6 @@ mod tests {
         let (_, text) = after.tables.iter().find(|(k, _)| *k == "links").expect("a thing made changes the book's table");
         assert!(text.contains("https://example.com/pr/1"));
         assert!(inner.changes().tables.iter().all(|(k, _)| *k != "links"), "nothing new, nothing written");
-        // a book from before, kept in its own file, is read from it and the file is left as it was
-        let dir = std::env::temp_dir().join(format!("airband-links-{}", config::random_hex(6)));
-        airband_io::files::make_folder(&dir).unwrap();
-        let path = dir.join("links.json");
-        airband_io::files::write_atomic(&path, text.as_bytes()).unwrap();
-        let read = Book::from_file(&path).expect("the old file reads");
-        assert!(read.known.contains_key("https://example.com/pr/1"));
-        assert_eq!(airband_io::files::read_text(&path).unwrap().unwrap(), *text);
-        airband_io::files::remove_folder(&dir).ok();
     }
 
     fn kinds() -> Vec<LinkKind> {

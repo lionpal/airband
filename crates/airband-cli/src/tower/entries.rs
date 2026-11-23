@@ -153,12 +153,12 @@ impl Entry {
 
     /// Something an agent said.
     pub(super) fn said(id: String, s: &Session, kind: Option<Kind>, full: String) -> Entry {
-        Entry { id, from: s.callsign.text(), team: s.team.clone(), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
+        Entry { id, from: s.callsign.text(), team: Some(s.team.clone()), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
     }
     /// Something he said, to these agents.
     pub(super) fn his(id: String, to: &[Session], text: String) -> Entry {
-        let teams: HashSet<Option<&TeamId>> = to.iter().map(|s| s.team.as_ref()).collect();
-        let team = if teams.len() == 1 { teams.into_iter().next().flatten().cloned() } else { None };
+        let teams: HashSet<&TeamId> = to.iter().map(|s| &s.team).collect();
+        let team = if teams.len() == 1 { teams.into_iter().next().cloned() } else { None };
         Entry { id, from: HIM.into(), his: true, team, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
     }
 }
@@ -268,12 +268,12 @@ impl Inner {
     /// The team a line belongs to now, by id: its sender's, or for something he said, the team of the agents it
     /// went to while they are all here and in one team; otherwise the team it was written down under.
     pub(super) fn line_team(&self, e: &Entry) -> Option<TeamId> {
-        if let Some(team) = self.sender(e).and_then(|s| s.team.clone()) {
-            return Some(team);
+        if let Some(s) = self.sender(e) {
+            return Some(s.team.clone());
         }
-        let teams: HashSet<Option<&TeamId>> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| s.team.as_ref()).collect();
+        let teams: HashSet<&TeamId> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
         match teams.into_iter().collect::<Vec<_>>()[..] {
-            [Some(team)] if e.to_agents.iter().all(|id| self.find(id).is_some()) => Some(team.clone()),
+            [team] if e.to_agents.iter().all(|id| self.find(id).is_some()) => Some(team.clone()),
             _ => e.team.clone(),
         }
     }
@@ -331,7 +331,7 @@ impl Inner {
     /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every
     /// line does. His words belong with the agents they went to.
     pub(super) fn in_view(&self, e: &Entry, team: Option<&TeamId>, agent: Option<&str>) -> bool {
-        let of = |id: &String| self.find(id).and_then(|s| s.team.as_ref());
+        let of = |id: &String| self.find(id).map(|s| &s.team);
         let by_agent = agent.is_none_or(|a| e.agent.as_deref() == Some(a) || e.to_agents.iter().any(|t| t == a));
         let by_team = team.is_none_or(|t| self.line_team(e).as_ref() == Some(t) || e.to_agents.iter().any(|id| of(id) == Some(t)));
         by_agent && by_team

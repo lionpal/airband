@@ -4,7 +4,7 @@ use super::*;
 
 /// A computer that is never there: nothing listens on port 9. `n` makes each link its own computer.
 fn nobody(n: u8) -> String {
-    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}")
+    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&name=computer%20{n}")
 }
 fn opened(dir: &std::path::Path) -> Arc<Desk> {
     Desk::open(dir.display().to_string(), Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))))
@@ -136,7 +136,7 @@ fn n28_a_question_is_still_waiting_while_the_microphone_is_open_for_it() {
 #[test]
 fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
     let port = tower_saying(409, r#"{"refusal":"told","reason":"That folder is not there."}"#);
-    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
+    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac"), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let got = radio.folders("/nowhere".into());
     assert!(matches!(&got, Err(RadioError::Told { reason }) if reason == "That folder is not there."), "{got:?}");
@@ -147,7 +147,7 @@ fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
 #[test]
 fn n31_a_notification_answer_kept_for_later_is_not_told_as_refused() {
     let port = tower_saying(503, "{}");
-    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
+    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac"), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let got = radio.answer_now("Leave".into(), "q1".into(), Some(Act::Option { index: 1 }));
     let kept: Vec<Option<String>> = radio.unsent().into_iter().map(|o| o.re).collect();

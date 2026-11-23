@@ -249,7 +249,7 @@ fn others(state: &State, pick: &StationId, room: Option<&str>) -> Vec<airband_co
         .filter(|(_, a)| room.is_none_or(|r| a.room == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
-            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: (!a.team.is_empty()).then(|| airband_core::ids::TeamId::new(a.team.clone())), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
+            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: airband_core::ids::TeamId::new(a.team.clone()), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
         .collect()
 }

@@ -69,8 +69,8 @@ impl RadioHost for Terminal {
 
 pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let read = crate::words("radio", args, &["--link", "--window"], &[])?;
-    let link = link_from(cfg, read.flag("link"));
-    let route = match Pairing::parse(&link)? {
+    let link = link_from(cfg, read.flag("link"))?;
+    let route = match Pairing::parse(&link).map_err(|e| e.to_string())? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
         Pairing::Direct { url, .. } => format!("directly to {url}"),
@@ -136,14 +136,20 @@ fn started_line(route: &str) -> String {
 }
 
 /// The pairing link he gave with `--link`, or with none, straight to the tower on this machine.
-fn link_from(cfg: &Config, link: Option<&str>) -> String {
+fn link_from(cfg: &Config, link: Option<&str>) -> Result<String, String> {
+    if let Some(link) = link {
+        return Ok(link.to_string());
+    }
     // a link he gives needs none of the kept keys
-    if let (None, Err(why)) = (link, cfg.keys_read()) {
+    if let Err(why) = cfg.keys_read() {
         eprintln!("airband: {why}");
         std::process::exit(2);
     }
-    link.map(String::from).unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
+    Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link(&crate::config::station(cfg)).map_err(|_| NO_NAME.to_string())
 }
+
+/// Why this computer gives no pairing link: the system gives it no name a phone could call it by.
+pub(crate) const NO_NAME: &str = "this computer has no name a phone could call it by: give it one in its system settings (or its host name), then try again";
 
 /// An agent as the feed's roster has it, for finding by name: its id, its team's id, and its callsign as shown
 /// and as its parts.
@@ -186,7 +192,7 @@ fn agent_named(roster: &[Named], named: &str) -> Result<String, String> {
 /// short version.
 pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let read = crate::words("feed", args, &["--team", "--agent", "--link"], &["--once"])?;
-    let radio = Radio::start(link_from(cfg, read.flag("link")), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, read.flag("link"))?, String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = read.is_on("once");
     // the team and the agent he named, by their ids: the feed goes by ids, and a name is only shown
     let (team, agent) = match (read.flag("team"), read.flag("agent")) {
@@ -226,7 +232,7 @@ pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
     let Some((project, task)) = rest.split_first() else {
         return Err("say which team: airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task]".into());
     };
-    let radio = Radio::start(link_from(cfg, flags.get("link").map(String::as_str)), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, flags.get("link").map(String::as_str))?, String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     // the tower starts it in a team by the team's id: the name he typed only finds it
     let team = team_named(&roster(&radio)?, project)?;
     println!("{}", radio.launch(team, flags.remove("tool"), flags.remove("model"), flags.remove("effort"), task.join(" ")).map_err(|e| e.to_string())?);
@@ -244,7 +250,7 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
     if read.is_on("keep-trying") {
         // what the phone app does: hand it over and let the radio get it through whenever it can
         let dir = crate::config::dir().join("radio");
-        let radio = Radio::start(link_from(cfg, read.flag("link")), dir.display().to_string(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+        let radio = Radio::start(link_from(cfg, read.flag("link"))?, dir.display().to_string(), Arc::new(Silent)).map_err(|e| e.to_string())?;
         // the tower says what came of it in the feed, which the radio follows as the app does
         {
             let radio = radio.clone();
@@ -269,7 +275,7 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
             }
         }
     }
-    let radio = Radio::start(link_from(cfg, read.flag("link")), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, read.flag("link"))?, String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     println!("{}", radio.send(words.join(" "), None).map_err(|e| e.to_string())?);
     Ok(())
 }

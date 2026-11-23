@@ -73,7 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with: { targets: aarch64-apple-ios }
+        # the device's, and the simulator's: scripts/build-apple.sh builds the radio core for both
+        with: { targets: 'aarch64-apple-ios,aarch64-apple-ios-sim' }
       - uses: Swatinem/rust-cache@v2
       - run: brew install xcodegen
       - name: Build the radio core, generate the Swift module, compile and link the app (unsigned)

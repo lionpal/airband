@@ -72,18 +72,12 @@ impl ReadsWanted {
     }
 }
 
-/// A kept pick as this build reads it. One it cannot read (a place this build does not have) is nothing
-/// chosen: he is told to choose where he would use it, and the rest of what was kept stands.
-pub(super) fn pick_or_nothing<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Pick>, D::Error> {
-    Ok(Option::<serde_json::Value>::deserialize(d)?.and_then(|v| serde_json::from_value(v).ok()))
-}
-
 /// Everything kept about what he chose.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Saved {
-    #[serde(default, deserialize_with = "pick_or_nothing")]
+    #[serde(default)]
     pub(super) ears: Option<Pick>,
-    #[serde(default, deserialize_with = "pick_or_nothing")]
+    #[serde(default)]
     pub(super) voice: Option<Pick>,
     #[serde(default)]
     pub(super) reads: Option<Intent<ReadsWanted>>,

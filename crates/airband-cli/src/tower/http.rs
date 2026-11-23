@@ -149,8 +149,7 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
     if req.uri().path().starts_with(airband_core::radio::PATH)
         && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok())
         && let Some(RadioId(radio)) = req.extensions().get::<RadioId>() {
-            let name = push::radio_name(&app.cfg(), radio);
-            app.change().radio_named_says(radio, name, said);
+            app.change().radio_says(radio, said);
         }
     next.run(req).await
 }
@@ -220,7 +219,7 @@ pub(super) mod tests {
         let _ = std::fs::remove_file(&path);
         let store = Arc::new(Store::open(&path).unwrap());
         let cfg: Config = serde_json::from_value(settings).unwrap();
-        let push = push::Wake::load(&store, &[]).unwrap();
+        let push = push::Wake::load(&store).unwrap();
         let saver = saver::Saver::start(store.clone());
         Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), changed: tokio::sync::watch::channel(0).0, said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs, deliverer, listening: Default::default() })
     }

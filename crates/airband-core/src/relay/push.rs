@@ -2,16 +2,12 @@
 use serde::{Deserialize, Serialize};
 
 /// A push service a phone can be woken through.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum PushService {
     /// Apple's.
     #[serde(rename = "apns")]
     Apns,
-    /// One a newer build knows and this one does not: kept, and never sent to.
-    #[default]
-    #[serde(other, rename = "unknown")]
-    Unknown,
 }
 
 /// `POST /v1/channels/<channel>/push`, from the channel's tower: have a push service wake the phone. The relay
@@ -91,9 +87,6 @@ pub enum NotPushed {
     TimedOut,
     /// The push service could not be reached.
     Unreachable,
-    /// A reason a newer relay has and this build does not.
-    #[serde(other)]
-    Other,
 }
 
 impl std::fmt::Display for NotPushed {
@@ -109,7 +102,6 @@ impl std::fmt::Display for NotPushed {
             NotPushed::CannotSign => f.write_str("the push key could not sign"),
             NotPushed::TimedOut => f.write_str("the push service did not answer in time"),
             NotPushed::Unreachable => f.write_str("the push service could not be reached"),
-            NotPushed::Other => f.write_str("the relay did not send it"),
         }
     }
 }

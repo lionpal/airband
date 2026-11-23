@@ -500,33 +500,6 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_choice_this_build_cannot_read_is_nothing_chosen_and_says_where_to_choose() {
-        // kept by a build that let his computer listen and speak for the phone
-        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"computer","id":"","offer":"","set":{},"voice":""},"voice":{"place":"computer","id":""},"tools":["codex"]}"#).unwrap();
-        let host = Arc::new(Host::default());
-        let desk = Desk::alone(&dir.display().to_string(), host.clone());
-        // nothing is chosen for either, the rest of what was kept stands, and nothing else took their place
-        for job in [ChoiceJob::Ears, ChoiceJob::Voice] {
-            assert!(chosen(&desk.choices(job)).is_empty());
-            assert_eq!(desk.chosen_label(job), "Nothing chosen");
-        }
-        assert_eq!(desk.tools(), vec!["codex".to_string()]);
-        assert!(!desk.shared.senses.mouth.ready());
-        // the microphone, opened: he is told where to choose, and nothing listened
-        let tape = crate::ears_stream::Tape::of(&[], false);
-        let ears = crate::ears::Ears::new(desk.shared.senses.clone());
-        assert!(matches!(ears.hear(&tape, true), Listened::Cannot));
-        assert_eq!(desk.shared.senses.ears.failed().as_deref(), Some(crate::ears::nothing_chosen().as_str()));
-        // reading aloud, turned on: the same for the voice, and nothing is said
-        desk.set_call_mode(true);
-        assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::nothing_chosen().as_str()));
-        assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::nothing_chosen()));
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn a_service_that_takes_a_key_is_never_tried_without_one() {
         let dir = std::env::temp_dir().join(format!("airband-choices-nokey-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();

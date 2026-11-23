@@ -8,7 +8,7 @@ const LABEL: &str = crate::platform::MAC_NAME;
 fn installed_exe() -> PathBuf {
     config::dir().join("bin").join(if cfg!(windows) { "airband.exe" } else { "airband" })
 }
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn plist_path() -> PathBuf {
     config::home().join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
 }
@@ -60,7 +60,7 @@ pub(crate) fn install() -> Result<(), String> {
 }
 
 /// Text as it is written inside an XML element: a folder or PATH with `&` or `<` in it stays what it is.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "the plist is a Mac's"))]
+#[cfg(target_os = "macos")]
 fn xml_text(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -132,7 +132,7 @@ pub(crate) fn uninstall() -> Result<(), String> {
 
 /// Whether airband can say it is stopped and will not start at login: only when the system no longer has it
 /// loaded and its start-at-login file is gone. Either left is said.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn stopped(still_loaded: bool, removed: std::io::Result<()>) -> Result<(), String> {
     if still_loaded {
         return Err("airband is still running: the system would not stop it. Try again, or log out and in.".into());
@@ -144,6 +144,7 @@ fn stopped(still_loaded: bool, removed: std::io::Result<()>) -> Result<(), Strin
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn stopped_is_said_only_when_it_is_unloaded_and_its_file_is_gone() {
         assert!(stopped(false, Ok(())).is_ok());
@@ -160,7 +161,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod xml_tests {
     #[test]
     fn a_path_with_markup_in_it_is_written_as_text() {

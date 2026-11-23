@@ -8,7 +8,7 @@ use airband_core::radio::wire::Done;
 use std::collections::BTreeMap;
 
 fn link(n: u8) -> String {
-    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}")
+    format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&name=computer%20{n}")
 }
 /// A stand-in for the computer called `name`, offering one summary service; `has_key` when it keeps the key.
 fn tower(name: &str, has_key: bool) -> Arc<FakeTower> {
@@ -131,7 +131,7 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
 #[test]
 fn what_each_computer_was_told_is_still_known_after_the_app_opens_again() {
     let dir = temp("relaunch");
-    let target = airband_core::radio::PushTarget { provider: PushService::default(), token: "abc".into() };
+    let target = airband_core::radio::PushTarget { provider: PushService::Apns, token: "abc".into() };
     {
         let mut kept = super::super::intents::KeptIntents::open(dir.to_str().unwrap());
         let (changed, lost) = kept.change(|i| {
@@ -161,7 +161,7 @@ fn where_the_phone_can_be_woken_goes_to_each_computer_once_and_a_no_stays_with_t
     let desk = desk_with(&dir, vec![(link(1), studio.clone()), (link(2), laptop.clone())]);
     desk.set_links(vec![link(1), link(2)]);
     assert!(all_answered(&desk, 2));
-    desk.set_push(PushService::default(), "abc".into());
+    desk.set_push(PushService::Apns, "abc".into());
     let settled = || desk.shared.state.lock().unwrap().intents.now.push.as_ref().is_some_and(|p| p.per.len() == 2);
     for _ in 0..300 {
         if settled() {

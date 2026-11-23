@@ -10,13 +10,7 @@ extension RadioModel {
     /// The keys he has given this phone, by provider. Kept in the Keychain group only the app can read, on this
     /// phone only. Only the core asks for one, to use it: no screen is ever handed a key.
     private var keys: KeychainRead<[String: String]> {
-        let here: KeychainRead<[String: String]> = Stored.load("airband.keys", in: .appOnly)
-        guard case .none = here else { return here }
-        // kept by an earlier build in the group the extension shares: moved to the app's own group once, and
-        // taken out of the shared one only after it is safely in its new place
-        let earlier: KeychainRead<[String: String]> = Stored.load("airband.keys", in: .shared)
-        if case .found(let all) = earlier, Stored.keep("airband.keys", all, in: .appOnly) { Keychain.write("airband.keys", "{}", in: .shared) }
-        return earlier
+        Stored.load("airband.keys", in: .appOnly)
     }
 
     func secret(name: String) -> String? {

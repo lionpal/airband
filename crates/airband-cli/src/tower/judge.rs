@@ -79,8 +79,8 @@ pub(super) async fn prepare(settings: &Settings, item: &Item) -> Judged {
     }
     let parsed = ask_json::<Answer>(settings, reading(&settings.current(), item), Some(answer_shape())).await;
     match parsed {
-        // a kind the model made up is no verdict: he gets the message as written, below
-        Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => judged(item, o),
+        // a kind the model made up does not read, and is no verdict: he gets the message as written, below
+        Ok(o) if !o.say.trim().is_empty() => judged(item, o),
         other => {
             // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
             // marked as read by no model unless its harness said what it is.

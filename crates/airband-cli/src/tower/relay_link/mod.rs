@@ -76,7 +76,8 @@ struct Serve {
     app: Arc<App>,
     /// The relay this pairing is also reached through, when there is one.
     relay: Option<String>,
-    name: String,
+    /// What the log calls its radio ([`radio_tag`](super::radio_tag)).
+    tag: String,
     keys: Keys,
     router: Router,
     handle: Handle,
@@ -105,7 +106,7 @@ impl Serve {
         Ok(Serve {
             app: app.clone(),
             relay,
-            name: pairing.name.clone(),
+            tag: super::radio_tag(&keys.channel),
             keys,
             router,
             handle,

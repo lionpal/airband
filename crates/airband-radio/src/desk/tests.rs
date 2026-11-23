@@ -38,7 +38,7 @@ fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage 
     ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), computer: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, answer_apart: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Computer {
-    let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
+    let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac");
     let radio = Radio::start(link.clone(), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let mut station = Computer {
@@ -254,7 +254,7 @@ fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     std::fs::create_dir_all(&dir).unwrap();
     // paired through a relay nobody is at, so what he says fails and is written down
     let secret = "ef".repeat(32);
-    let link = format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={secret}");
+    let link = format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={secret}&name=Mac");
     let radio = Radio::start(link.clone(), dir.display().to_string(), Arc::new(Quiet)).unwrap();
     radio.queue("the door code is 4471".into(), None, None, None);
     for _ in 0..200 {
@@ -320,7 +320,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
 #[test]
 fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     use airband_core::radio::Notice;
-    let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link();
+    let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link("laptop").unwrap();
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
@@ -480,7 +480,7 @@ fn unplaced_words_he_places_keep_the_files_they_took() {
 #[test]
 fn a_tapped_answer_kept_for_later_is_still_what_the_button_stood_for() {
     // nobody is at this address: the answer cannot go now and is kept
-    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), Arc::new(Quiet)).unwrap();
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".into(), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let act = Act::Option { index: 1 };
     assert!(matches!(radio.answer_now("Leave".into(), "q1".into(), Some(act.clone())), AnswerOutcome::KeptForLater { .. }));
@@ -619,7 +619,7 @@ fn a_new_team_colour_counts_only_teams_on_his_screen() {
 fn lines_kept_on_the_phone_are_in_their_room_before_any_computer_answers() {
     let dir = temp_dir("kept-lines");
     // nobody is at this address
-    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".to_string();
+    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".to_string();
     let saved = serde_json::json!({ "history": [{ "seq": 1, "id": "m1", "at": 1, "from": "shop two", "group": "shop", "team": "shop", "text": "done" }], "outbox": [], "after": 1 });
     let folder = dir.join(super::folder(&link));
     std::fs::create_dir_all(&folder).unwrap();
@@ -665,7 +665,7 @@ impl RadioHost for Telling {
 #[test]
 fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     let host = Arc::new(Telling(Mutex::new(Vec::new())));
-    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), host.clone()).unwrap();
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".into(), String::new(), host.clone()).unwrap();
     radio.stop();
     // a voice is chosen, so it is the fetching that fails
     radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
@@ -679,7 +679,7 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
 fn what_he_said_that_the_phone_could_not_keep_is_told_once() {
     let dir = temp_dir("unkept");
     let host = Arc::new(Telling(Mutex::new(Vec::new())));
-    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), dir.display().to_string(), host.clone()).unwrap();
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".into(), dir.display().to_string(), host.clone()).unwrap();
     radio.stop();
     // the folder the chat is kept in can no longer be written
     use std::os::unix::fs::PermissionsExt;
@@ -693,14 +693,9 @@ fn what_he_said_that_the_phone_could_not_keep_is_told_once() {
 }
 
 #[test]
-fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
-    let mut state = two();
-    // neither computer has said its name
-    state.computers.iter_mut().for_each(|s| s.name.clear());
-    let desk = desk_of(state);
+fn a_computer_is_chosen_as_main_by_its_id() {
+    let desk = desk_of(two());
     let shown = looked(&desk, None, None).stations;
-    // never by its place in the list: by where its pairing link reaches it
-    assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["127.0.0.1", "127.0.0.1"]);
     desk.set_main_computer(shown[1].id.clone());
     let main = desk.shared.state.lock().unwrap().main().map(Computer::id);
     assert_eq!(main, Some(StationId::new(shown[1].id.as_str())));
@@ -710,7 +705,7 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
 #[test]
 fn what_he_attached_and_the_question_he_was_asked_outlive_a_reconnect() {
     let desk = desk_of(State::default());
-    desk.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into()]);
+    desk.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".into()]);
     let radio = desk.shared.state.lock().unwrap().computers[0].radio.clone();
     radio.arm("f1".into());
     radio.session.asked(&Reply { question: Some(airband_core::ids::QuestionId::new("q1")), ..Reply::default() });
@@ -722,9 +717,32 @@ fn what_he_attached_and_the_question_he_was_asked_outlive_a_reconnect() {
 }
 
 #[test]
+fn each_computer_is_called_what_its_link_says_from_the_moment_it_is_paired_and_then_what_it_last_said() {
+    let dir = temp_dir("names");
+    let link = |n: &str, name: &str| format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}&name={name}");
+    let (studio, laptop) = (link("1", "Studio%20Mac"), link("2", "Laptop"));
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let first = Desk::open(dir.display().to_string(), host.clone());
+    // neither has answered yet: each is called what its link says, never a made-up label
+    assert_eq!(first.set_links(vec![studio.clone(), laptop.clone()]).len(), 2);
+    let names = |desk: &Desk| looked(desk, None, None).stations.into_iter().map(|c| c.name).collect::<Vec<_>>();
+    assert_eq!(names(&first), ["Studio Mac", "Laptop"]);
+    // the name it last said is kept on the phone, and outlives the app
+    first.shared.state.lock().unwrap().computers[0].radio.store.change(|s| s.computer = "Studio".into());
+    first.stop();
+    let again = Desk::open(dir.display().to_string(), host);
+    again.set_links(vec![studio, laptop]);
+    assert_eq!(names(&again), ["Studio", "Laptop"]);
+    // a link that does not say what its computer is called is not taken
+    assert!(again.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t3".into()]).is_empty());
+    again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn what_he_sent_that_has_not_gone_is_still_shown_after_the_app_opens_again() {
     let dir = temp_dir("unsent");
-    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".to_string();
+    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".to_string();
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let first = Desk::open(dir.display().to_string(), host.clone());
     first.set_links(vec![link.clone()]);
@@ -812,7 +830,7 @@ fn tower_saying(status: u16, body: &'static str) -> u16 {
     port
 }
 fn radio_at(port: u16) -> Arc<Radio> {
-    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
+    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac"), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     radio
 }

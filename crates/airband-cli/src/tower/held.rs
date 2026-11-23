@@ -51,7 +51,6 @@ pub(super) fn offers(inner: &Inner, name: &str, launcher: &config::Launcher) -> 
 }
 
 /// An agent that is there: what its tool calls its session, and what it said a session can be set to.
-#[cfg_attr(not(unix), expect(dead_code, reason = "made only from what a holder says on its socket, and holders run on unix only"))]
 struct Started {
     session: Option<String>,
     offers: airband_core::tools::Offers,
@@ -87,16 +86,21 @@ async fn say(id: &str, line: &[u8]) -> Result<String, String> {
     tokio::time::timeout(Duration::from_secs(5), to.read_to_string(&mut answer)).await.map_err(|_| "its holder did not answer".to_string())?.map_err(|e| e.to_string())?;
     Ok(answer)
 }
+/// Holders run on unix only: elsewhere there is never one listening.
+#[cfg(not(unix))]
+async fn say(_: &str, _: &[u8]) -> Result<String, String> {
+    Err(NOT_HERE.into())
+}
+/// Why an agent cannot be held on this system.
+const NOT_HERE: &str = "airband cannot start agents itself on this system yet";
 
 /// Where a held agent's holder has got to.
-#[cfg(unix)]
 async fn status(id: &str) -> Result<crate::hold::State, String> {
     let answer = say(id, format!("{}\n", crate::hold::status_line()).as_bytes()).await?;
     serde_json::from_str(answer.trim()).map_err(|e| format!("its holder's answer does not read: {e}"))
 }
 
 /// Tell a held agent's holder something.
-#[cfg(unix)]
 async fn tell_holder(kept: &Kept, tell: crate::hold::Tell) -> Result<(), String> {
     let answer = say(&kept.id, format!("{}\n", tell.line()).as_bytes()).await?;
     taken(&answer)
@@ -117,14 +121,15 @@ pub(super) fn new_id() -> String {
 
 /// How long a new agent is given to be there. One that speaks the Agent Client Protocol through a program
 /// fetched on first use takes a while the first time.
-#[cfg(unix)]
 const STARTS_WITHIN: Duration = Duration::from_secs(150);
 
 /// Start the program for `kept`, new or carried on, in a holder of its own (`airband hold`): a process apart
 /// from the tower, so the agent goes on when the tower is restarted. Returns once the agent is there (the
-/// holder says so), with what its tool calls its session; or with why it is not.
-#[cfg(unix)]
+/// holder says so), with what its tool calls its session; or with why it is not. Holders run on unix only.
 async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, NotStarted> {
+    if !cfg!(unix) {
+        return Err(NotStarted::Told(NOT_HERE.into()));
+    }
     spawn_with(app, &*app.procs, kept, fresh).await
 }
 
@@ -186,7 +191,6 @@ fn holder_run(cfg: &config::Config, me: std::path::PathBuf, sock: &std::path::Pa
     Ok((holder, program))
 }
 
-#[cfg(unix)]
 async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept, fresh: bool) -> Result<Started, NotStarted> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let sock = socket(&kept.id);
@@ -218,10 +222,6 @@ async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept
     }
     Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()).into())
 }
-#[cfg(not(unix))]
-async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, NotStarted> {
-    Err(NotStarted::Told("airband cannot start agents itself on this system yet".into()))
-}
 
 /// Carry on a held agent whose holder has gone, and remember what its session is called now.
 async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
@@ -244,26 +244,18 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str, lines: &[String])
 }
 async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Result<(), String> {
     let kept = app.read().kept_held(id).ok_or("airband is no longer running this agent")?;
-    #[cfg(unix)]
-    {
-        let words = || crate::hold::Tell::Say(text.to_string(), receipt.to_string());
-        if tell_holder(&kept, words()).await.is_ok() {
-            return Ok(());
-        }
-        // its holder has gone: carry the session on, then say it. One at a time: another delivery may have
-        // started it again while this one waited, and then it is only told
-        let _one = app.reviving.lock().await;
-        if tell_holder(&kept, words()).await.is_ok() {
-            return Ok(());
-        }
-        revive(app, &kept).await?;
-        tell_holder(&kept, words()).await
+    let words = || crate::hold::Tell::Say(text.to_string(), receipt.to_string());
+    if tell_holder(&kept, words()).await.is_ok() {
+        return Ok(());
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (kept, text, receipt);
-        Err("airband cannot start agents itself on this system yet".into())
+    // its holder has gone: carry the session on, then say it. One at a time: another delivery may have
+    // started it again while this one waited, and then it is only told
+    let _one = app.reviving.lock().await;
+    if tell_holder(&kept, words()).await.is_ok() {
+        return Ok(());
     }
+    revive(app, &kept).await?;
+    tell_holder(&kept, words()).await
 }
 
 /// A held agent has stopped (it finished its turn, or he stopped it): everything he said to it meanwhile, and
@@ -323,10 +315,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     if session.waiting {
         return Err("It is not doing anything.".into());
     }
-    #[cfg(unix)]
     tell_holder(&kept, crate::hold::Tell::Stop).await.map_err(|_| "Its process has gone.".to_string())?;
-    #[cfg(not(unix))]
-    let _ = kept;
     log(format!("stopped {}", short_id(&session.agent.id)));
     // a harness may or may not report a stopped turn as finished: either way it is waiting from now
     {
@@ -428,7 +417,6 @@ pub(super) async fn carry_on(app: &Arc<App>) {
         // one at a time with a delivery that may be starting it too
         let _one = app.reviving.lock().await;
         // its holder outlived the last tower, or a delivery started it: it is running, and there is nothing to do
-        #[cfg(unix)]
         if status(&k.id).await.is_ok() {
             continue;
         }
@@ -468,14 +456,10 @@ fn a_team_can_hold(inner: &Inner, cwd: &str) -> bool {
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
 pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
     let kept = app.read().kept_held(id);
-    #[cfg(unix)]
     let was = match &kept {
         Some(kept) => tell_holder(kept, crate::hold::Tell::End).await.is_ok(),
         None => false,
     };
-    #[cfg(not(unix))]
-    let was = false;
-    let _ = &kept;
     let mut inner = app.change();
     let before = inner.held.len();
     inner.held.retain(|k| k.id != id);
@@ -528,9 +512,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         return Err("It has no team airband can put it in, so it was left running in its terminal.".into());
     }
     // ending it signs it off: written down first is the team it goes back to, by whoever put it there
-    if let Some(team) = &session.team {
-        app.change().put(id, team, session.moved.unwrap_or(Mover::Tower));
-    }
+    app.change().put(id, &session.team, session.moved.unwrap_or(Mover::Tower));
     // ask it to end, and wait for it to be gone: two processes must never run one session, so the one the
     // tower holds can only start once this one has ended
     if edges::procs::end_and_wait(&*app.procs, pid).await.is_err() {

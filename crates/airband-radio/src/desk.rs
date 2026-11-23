@@ -242,19 +242,10 @@ impl State {
     fn radio_with_agent(&self, id: &str) -> Option<Arc<Radio>> {
         self.with_agent(id).map(|s| s.radio.clone())
     }
-    /// What a computer is called wherever one is named to him, by its id: the name it gave itself, and for
-    /// one that never gave one, what its pairing link calls it.
+    /// What a computer is called wherever one is named to him, by its id: the name it last gave itself, kept
+    /// on the phone, and from the moment it was paired, the name its pairing link gave it.
     pub(super) fn computer_name(&self, id: &StationId) -> String {
-        let Some(computer) = self.computer(id) else { return String::new() };
-        if !computer.name.is_empty() {
-            return computer.name.clone();
-        }
-        // one that has never said its name: what its pairing link calls it, or where the link reaches it
-        match airband_core::pairing::Pairing::computer_in(&computer.link) {
-            Some(name) => name,
-            None if self.computers.len() == 1 => "Your computer".to_string(),
-            None => "New computer".to_string(),
-        }
+        self.computer(id).map(|c| c.name.clone()).unwrap_or_default()
     }
     /// Every computer's radio with its id and what it is called.
     fn named_radios(&self) -> Vec<(DeskComputer, Arc<Radio>)> {
@@ -412,10 +403,13 @@ impl Desk {
         // each new computer is connected outside the lock: what it last showed is read from this device
         let mut made: Vec<Computer> = Vec::new();
         for (link, epoch) in new {
+            // a link that does not say what its computer is called is not a pairing link: left out
+            let Ok(named) = airband_core::pairing::Pairing::computer(&link) else { continue };
             let Ok(radio) = self.connect(&link, None) else { continue };
             radio.set_call_mode(calling);
-            // what it last said it is called, kept on the phone: known before it answers again
-            let name = radio.store.saved.lock().unwrap().computer.clone();
+            // what it last said it is called, kept on the phone; until it has said, what its link calls it
+            let kept = radio.store.saved.lock().unwrap().computer.clone();
+            let name = if kept.is_empty() { named } else { kept };
             let was_waiting = radio.unsent();
             let mut computer = Computer {
                 messages: radio.history(),

@@ -83,8 +83,8 @@ impl LinkError {
             (Some(CallRefused::Away), _) => LinkError::Away,
             (Some(CallRefused::TowerSilent), _) => LinkError::TowerSilent,
             // a radio asks the relay on these two routes only: kept is the one, any other passed on
-            (Some(CallRefused::Unknown) | None, Route::Queue) => LinkError::HoldRefused(status),
-            (Some(CallRefused::Unknown) | None, _) => LinkError::Relay(status),
+            (None, Route::Queue) => LinkError::HoldRefused(status),
+            (None, _) => LinkError::Relay(status),
         })
     }
     /// The same, for a relay that has passed on a request of this phone's before (`knew`): its not knowing
@@ -133,12 +133,10 @@ impl LinkError {
             LinkError::Refused(Refusal::Gone) => "your computer no longer has what it names".into(),
             LinkError::Refused(Refusal::NotAllowed) => "your computer does not let this phone do that".into(),
             LinkError::Refused(Refusal::NotPaired) => "your computer no longer knows this phone; pair it again".into(),
-            LinkError::Refused(Refusal::Unknown) => "your computer refused it".into(),
             // trouble of its own, which may pass: not a no
             LinkError::Trouble(status @ 500..=599) => format!("your computer ran into trouble with it ({status})"),
             LinkError::Trouble(status) => format!("your computer refused it ({status})"),
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
-            LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
             LinkError::Ended => "the relay says this pairing was ended; pair this phone again".into(),
             LinkError::Forgotten => "the relay no longer knows this phone for that computer; pair this phone again".into(),
         }

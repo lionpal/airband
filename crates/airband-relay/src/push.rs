@@ -107,7 +107,6 @@ impl Push {
     pub(crate) async fn send(&self, provider: PushService, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
         match provider {
             PushService::Apns => Some(self.apns.as_ref()?.send(to, sealed, question).await),
-            PushService::Unknown => None,
         }
     }
 }

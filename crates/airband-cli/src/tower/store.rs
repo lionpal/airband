@@ -39,18 +39,22 @@ const KEEP_UNDER: &str = "insert into state (key, value) values (?1, ?2) on conf
 impl Store {
     /// The database file, and the log and index the database keeps beside it (`-wal`, `-shm`), readable by him
     /// alone. Each that is not there yet is made so when it is; the database makes them on its first write.
+    #[cfg(unix)]
     fn private(path: &std::path::Path) -> Result<(), String> {
-        #[cfg(unix)]
-        {
-            for file in [path.to_path_buf(), Store::beside(path, "-wal"), Store::beside(path, "-shm")] {
-                match airband_io::files::set_mode(&file, 0o600) {
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    other => other.map_err(|e| format!("cannot make {} private: {e}", file.display()))?,
-                }
+        for file in [path.to_path_buf(), Store::beside(path, "-wal"), Store::beside(path, "-shm")] {
+            match airband_io::files::set_mode(&file, 0o600) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                other => other.map_err(|e| format!("cannot make {} private: {e}", file.display()))?,
             }
         }
         Ok(())
     }
+    /// Elsewhere a file's mode is not how it is kept private.
+    #[cfg(not(unix))]
+    fn private(_: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+    #[cfg(unix)]
     fn beside(path: &std::path::Path, tail: &str) -> std::path::PathBuf {
         let mut name = path.as_os_str().to_owned();
         name.push(tail);
@@ -66,28 +70,15 @@ impl Store {
              create table if not exists messages (seq integer primary key, id text not null unique, at integer not null, sender text not null,
                  grp text not null, recipients text not null, kind text, short text, full text not null, detail text, options text,
                  recommended integer, pictures text, agent text, to_agents text, rev integer, read text, waiting text, own_session integer,
-                 seen integer, leave integer, aloud text, notice integer);
+                 seen integer, aloud text, notice integer, request text, note text, his integer, more integer, background integer);
              create table if not exists events (n integer primary key autoincrement, at integer not null, agent text not null, harness text not null, event text not null, agent_doc text);
              create table if not exists receipts (id text primary key, at integer not null, reply text);
              create table if not exists deliveries (n integer primary key autoincrement, at integer not null, message text not null, callsign text not null, ok integer not null, error text, utterance text);
              create table if not exists state (key text primary key, value text not null);
              create table if not exists replays (id text primary key, at integer not null);
-             drop table if exists tower;
              create table if not exists tower_here (one integer primary key check (one = 1), id text not null, machine text not null);",
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
-        // columns added since the table was first made: what a request for leave asked and where it stands,
-        // and what airband says around the tool's words
-        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer"), ("more", "integer"), ("background", "integer")] {
-            if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
-                db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
-                // Kept from before whether a line is his had its own column: his lines were the ones written
-                // under his label. Read so once, here, and kept in the column from then on.
-                if column == "his" {
-                    db.execute("update messages set his = (sender = ?1)", params![HIM]).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
-                }
-            }
-        }
         // its log and index are there now that it has been written to
         Store::private(path)?;
         Ok(Store { db: Mutex::new(db) })
@@ -119,34 +110,22 @@ impl Store {
     /// by themselves, so a table of them that cannot be read starts with nobody on the radio.
     pub(super) fn load(&self, keep: usize) -> Result<(Saved, Vec<Entry>), String> {
         let db = self.db.lock().unwrap();
-        let saved = if Self::any_kept(&db)? {
-            Saved {
-                sessions: Self::kept(&db, "sessions")?,
-                teams: Self::kept(&db, "teams")?,
-                held: Self::kept(&db, "held")?,
-                menus: Self::kept(&db, "menus")?,
-                tools: Self::kept(&db, "tools")?,
-                placed: Self::kept(&db, "placed")?,
-                links: Self::kept(&db, "links")?,
-                ..Saved::default()
-            }
-        } else {
-            // kept by a tower from before each table had its own key: read once, written as tables from then on
-            Self::kept(&db, "tower")?
+        let saved = Saved {
+            sessions: Self::kept(&db, "sessions")?,
+            teams: Self::kept(&db, "teams")?,
+            held: Self::kept(&db, "held")?,
+            menus: Self::kept(&db, "menus")?,
+            tools: Self::kept(&db, "tools")?,
+            placed: Self::kept(&db, "placed")?,
+            links: Self::kept(&db, "links")?,
         };
         Ok((saved, Self::messages(&db, keep)))
-    }
-
-    /// Whether any table is kept under its own key.
-    fn any_kept(db: &Connection) -> Result<bool, String> {
-        let keys = KEPT.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(", ");
-        db.query_row(&format!("select count(*) from state where key in ({keys})"), [], |r| r.get::<_, i64>(0)).map(|n| n > 0).map_err(|e| format!("the database could not be read ({e})"))
     }
 
     /// The newest `keep` messages, oldest first. A row this build cannot read, or a column of one that does not
     /// read as what it should be, is said in the log with the message's number, never passed over in silence.
     fn messages(db: &Connection, keep: usize) -> Vec<Entry> {
-        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more, background from messages order by seq desc limit ?1")) else { return Vec::new() };
+        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, own_session, aloud, notice, request, note, his, more, background from messages order by seq desc limit ?1")) else { return Vec::new() };
         let rows = q.query_map(params![keep as i64], |r| {
             let seq = r.get::<_, i64>(0)? as u64;
             let column = |n: usize| r.get::<_, Option<String>>(n);
@@ -158,36 +137,27 @@ impl Store {
                 team: Some(r.get::<_, String>(4)?).filter(|t| !t.is_empty()).map(TeamId::new),
                 to: read_json(seq, "recipients", column(5)?).unwrap_or_default(),
                 kind: read_word(seq, "kind", column(6)?),
-                // a short version kept before whether it was cut was: not known to be whole, so made again
-                short: {
-                    let known = r.get::<_, Option<bool>>(26)?.is_some() || r.get::<_, Option<bool>>(25)? == Some(true);
-                    r.get::<_, Option<String>>(7)?.filter(|_| known)
-                },
+                short: r.get(7)?,
                 full: r.get(8)?,
                 detail: r.get(9)?,
                 options: read_json(seq, "options", column(10)?).unwrap_or_default(),
                 recommended: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
                 pictures: read_json(seq, "pictures", column(12)?).unwrap_or_default(),
                 agent: r.get(13)?,
-                his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
-                more: r.get::<_, Option<bool>>(26)?.unwrap_or(false),
+                his: r.get::<_, Option<bool>>(24)?.unwrap_or(false),
+                more: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
                 to_agents: read_json(seq, "to_agents", column(14)?).unwrap_or_default(),
                 rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                 read: r.get(16)?,
-                own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
-                background: r.get::<_, Option<bool>>(27)?.unwrap_or(false),
+                own_session: r.get::<_, Option<i64>>(19)?.unwrap_or(0) != 0,
+                background: r.get::<_, Option<bool>>(26)?.unwrap_or(false),
                 held: read_word(seq, "waiting", column(17)?),
                 seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
                 permit: None,
-                // a request kept before what it asked was written down is still known as one, so a late
-                // answer to it is never passed on as words
-                leave: match read_json(seq, "request", column(23)?) {
-                    Some(request) => Some(request),
-                    None => (r.get::<_, Option<i64>>(19)? == Some(1)).then_some(super::permit::Request { what: None, at_keyboard: true }),
-                },
-                aloud: read_json(seq, "aloud", column(21)?).unwrap_or_default(),
-                notice: r.get::<_, Option<i64>>(22)? == Some(1),
-                note: read_word(seq, "note", column(24)?),
+                leave: read_json(seq, "request", column(22)?),
+                aloud: read_json(seq, "aloud", column(20)?).unwrap_or_default(),
+                notice: r.get::<_, Option<i64>>(21)? == Some(1),
+                note: read_word(seq, "note", column(23)?),
             })
         });
         let Some(rows) = Self::warn("reading messages", rows) else { return Vec::new() };
@@ -245,10 +215,10 @@ impl Store {
     fn put_one(db: &Connection, e: &Entry) -> rusqlite::Result<usize> {
         let kind = e.kind.as_ref().and_then(word);
         db.execute(
-            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more, background) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
-             on conflict (seq) do update set background = excluded.background, grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more
+            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, own_session, aloud, notice, request, note, his, more, background) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+             on conflict (seq) do update set background = excluded.background, grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more
              on conflict do nothing",
-            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more, e.background],
+            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more, e.background],
         )
     }
 
@@ -419,17 +389,6 @@ mod tests {
         let (s, path) = store("background");
         s.put_messages(&[Entry { seq: 1, id: "a".into(), short: Some("Waiting on the build.".into()), background: true, ..Entry::default() }]);
         assert!(s.load(10).unwrap().1[0].background);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn a_short_version_kept_before_whether_it_was_cut_was_is_made_again() {
-        let (s, path) = store("more-unknown");
-        s.put_messages(&[Entry { seq: 1, id: "a".into(), short: Some("Done.".into()), full: "Done, and more.".into(), more: true, ..Entry::default() }, Entry { seq: 2, id: "b".into(), short: Some("Done.".into()), ..Entry::default() }, Entry { seq: 3, id: "c".into(), his: true, short: Some("fix it".into()), ..Entry::default() }]);
-        // as a row from before the column was there
-        s.db.lock().unwrap().execute("update messages set more = null", []).unwrap();
-        let kept = s.load(10).unwrap().1;
-        assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.short.is_some())).collect::<Vec<_>>(), [("a", false), ("b", false), ("c", true)]);
         let _ = std::fs::remove_file(path);
     }
 

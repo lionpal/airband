@@ -5,8 +5,9 @@ Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
 
-Compatibility: unknown fields are ignored, and unknown `type` / `kind` values are accepted and skipped. Adding
-a field or a variant is not a new version. `/2` is for a change an old peer would misread.
+Compatibility: none with older versions. Each side reads the other's documents as they are written: a `type`,
+`kind` or reason it does not have is refused, not skipped. A change to what is sent goes out in one release of
+the tower, the relay and the app together; one a peer of the release before would misread is a new version.
 
 Two tokens open the tower's port, which listens on 127.0.0.1 and the computer's Tailscale addresses. Its own
 (`token` in `~/.airband/config.json`) opens everything. A radio's (`radio_token`), which is what a direct

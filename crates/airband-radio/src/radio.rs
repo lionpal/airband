@@ -111,7 +111,7 @@ impl Radio {
         let Kept { session, store, trail } = kept;
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
-        let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me, trail)).map_err(|reason| RadioError::BadLink { reason })?;
+        let link = Pairing::parse(&link).map_err(|e| e.to_string()).and_then(|p| Link::new(p, &me, trail)).map_err(|reason| RadioError::BadLink { reason })?;
         let link = match transport {
             Some(transport) => link.through(transport),
             None => link,

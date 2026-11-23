@@ -232,6 +232,7 @@ mod file {
         Ok(ChaCha20Poly1305::new((&key).into()))
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn has() -> bool {
         sealed_at().is_file()
     }
@@ -322,7 +323,7 @@ pub(crate) fn put(kept: &Map<String, Value>) -> Result<(), String> {
 
 /// Keep the keys where `keep` puts them, then take the sealed file away. A sealed file that stays would shadow
 /// the newer keys (`get` reads it first, `settle` puts it back), so one that cannot be removed is an error.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn kept_then_forgotten(keep: impl FnOnce(&Map<String, Value>) -> Result<(), String>, kept: &Map<String, Value>) -> Result<(), String> {
     keep(kept)?;
     file::forget().map_err(|why| format!("The keys are kept, but {why}; remove it, or the older keys are read in their place."))
@@ -352,6 +353,7 @@ pub(crate) fn carry() -> Result<bool, CarryFailed> {
 /// Why the keys could not be carried out of the keychain: the keychain could not be read from here (a run that
 /// can read it does the carrying), or the sealed file could not be made, which no other run would do better.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "carrying the keys out of a keychain is for a Mac"))]
 pub(crate) enum CarryFailed {
     Keychain(String),
     Sealing(String),

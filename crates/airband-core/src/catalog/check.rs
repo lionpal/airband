@@ -75,11 +75,12 @@ pub fn inspect(text: &str) -> Result<Catalog, String> {
     }
 }
 
-/// Would a build that has `before` compiled in take `newer`? For checking a document against the copy
-/// published before it.
+/// Would this build, holding `before` (the copy published now), take `newer` in its place? Held to the
+/// catalogue this build has compiled in: the build being released is the only one that matters, so what an
+/// older build had compiled in is never asked. For checking a document against the copy published before it.
 pub fn would_take(newer: &str, before: &str) -> Result<(), String> {
     let before = read(before)?;
-    match weigh_against(newer, crate::clock::now_secs(), &before, &before)? {
+    match weigh(newer, crate::clock::now_secs(), &before)? {
         (Some(_), _) => Ok(()),
         (None, _) => Err(format!("its rev is not higher than the one before ({})", before.rev)),
     }
@@ -88,11 +89,7 @@ pub fn would_take(newer: &str, before: &str) -> Result<(), String> {
 /// Everything about taking a copy but the signature: is it newer than `have`, in date, and within what a
 /// later copy may do? The catalogue to use from now on, when it is.
 pub(super) fn weigh(text: &str, now: u64, have: &Catalog) -> Result<(Option<Catalog>, Taken), String> {
-    weigh_against(text, now, have, built())
-}
-
-/// The same, held to what `built` has in place of this build's own catalogue.
-pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Result<(Option<Catalog>, Taken), String> {
+    let built = built();
     let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalog does not read: {e}"))?["expires"].as_u64().ok_or("this copy of the catalog does not say until when it may be taken")?;
     // a signed copy says until when it may be taken, so one that was replaced long ago cannot be served again
     if expires <= now {

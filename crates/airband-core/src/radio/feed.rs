@@ -20,9 +20,6 @@ pub enum NotRead {
     Stale,
     /// The request for leave it put to him is over.
     PermissionEnded,
-    /// A reason this build does not know.
-    #[serde(other)]
-    Unknown,
 }
 
 /// An agent on another of his computers, as his screen shows it.
@@ -33,9 +30,7 @@ pub struct Other {
     pub callsign: String,
     pub group: String,
     /// Its team's id on the computer that has it: what is kept and sent about the team. `group` is only shown.
-    /// None from a radio that does not say.
-    #[serde(default)]
-    pub team: Option<crate::ids::TeamId>,
+    pub team: crate::ids::TeamId,
     /// Its two characters, as that computer gave them.
     #[serde(default)]
     pub badge: String,
@@ -122,8 +117,8 @@ pub struct Message {
     pub at: u64,
     /// What to show it as coming from: its sender's callsign as a screen shows it.
     pub from: String,
-    /// Two characters for whoever said it, or for the one agent his message went to. Empty when the sender is
-    /// no longer known as a callsign the tower can take apart (a line kept from before it was written down).
+    /// Two characters for whoever said it, or for the one agent his message went to, while that agent is here.
+    /// Empty once it has gone.
     #[serde(default)]
     pub badge: String,
     /// He said it. A client goes by this and never by what `from` reads.
@@ -233,7 +228,7 @@ impl Note {
 }
 
 /// What an agent is doing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentState {
     Working,
@@ -243,29 +238,22 @@ pub enum AgentState {
     Stalled,
     /// It finished and reported.
     Idle,
-    /// A state this build does not know, or none given. Shown as not known, never as one of the others.
-    #[default]
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RosterEntry {
     /// The agent's id: stable while it runs. What messages refer to.
-    #[serde(default)]
     pub id: String,
     /// What it is called, as its typed parts: its team's name, and what tells it from the others of its team
     /// (a number the tower handed out, or a name he gave it). Every form it is shown in is made from these.
     pub callsign: crate::routing::Callsign,
     /// Its team's id on this computer: what views, colours, moves and renames go by. The callsign's team name
-    /// is only shown. None from a tower that does not say.
-    #[serde(default)]
-    pub team: Option<crate::ids::TeamId>,
+    /// is only shown.
+    pub team: crate::ids::TeamId,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,
     /// What it is doing.
-    #[serde(default)]
     pub state: AgentState,
     /// How many subagents it has running, when its harness reports them.
     #[serde(default)]
@@ -295,8 +283,7 @@ pub struct RosterEntry {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Feed {
-    /// Always [`crate::radio::SCHEMA`] from a tower that says; a client need not check it, but can.
-    #[serde(default)]
+    /// Always [`crate::radio::SCHEMA`].
     pub schema: String,
     /// The log's change count as of this answer: pass it back as `since`. Lower than the one a client holds
     /// means the tower's log was reset, and the client should start again from nothing.

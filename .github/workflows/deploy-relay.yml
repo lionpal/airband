@@ -22,16 +22,10 @@ name: Deploy relay.airband.dev
 #   aws s3 cp relay.tar.gz s3://airband-relay-ship-<account>-us-east-2/relay/relay.tar.gz
 #   aws ssm send-command --region us-east-2 --document-name airband-relay-deploy --targets Key=tag:Name,Values=airband-relay
 #
-# The relay that ran in Tokyo before (AirbandRelay) is still defined and is deployed only when asked for by hand.
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      tokyo:
-        description: 'Deploy the old relay in Tokyo instead (a minute off the air for anyone still using it)'
-        type: boolean
-        default: false
 # a running deploy is never cancelled; a waiting run GitHub drops loses nothing (above)
 concurrency: { group: deploy-relay, cancel-in-progress: false }
 permissions: { id-token: write, contents: read }
@@ -39,7 +33,6 @@ env: { REGION: us-east-2 }
 jobs:
   changed:
     name: Did this push change what the relay is made from
-    if: ${{ !inputs.tokyo }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -63,7 +56,7 @@ jobs:
           echo "relay=$(python3 scripts/relay-sources.py --since-deployed relay-deployed HEAD)" >> "$GITHUB_OUTPUT"
   deploy:
     needs: changed
-    if: ${{ !inputs.tokyo && needs.changed.outputs.relay == 'true' }}
+    if: ${{ needs.changed.outputs.relay == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # contents: write only to move the tag that records what is deployed
@@ -125,17 +118,3 @@ jobs:
           elif [ "$there" != 2 ]; then exit 1; fi
           git tag --force relay-deployed HEAD
           git push --force origin refs/tags/relay-deployed
-  tokyo:
-    if: ${{ inputs.tokyo }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: aws-actions/configure-aws-credentials@v4
-        with: { role-to-assume: '${{ vars.AWS_DEPLOY_ROLE_ARN }}', aws-region: ap-northeast-1 }
-      - name: Deploy
-        working-directory: infra
-        env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}', AIRBAND_APNS: '${{ vars.AIRBAND_APNS }}' }
-        run: npm ci --no-audit --no-fund && npx cdk deploy AirbandRelay --require-approval never

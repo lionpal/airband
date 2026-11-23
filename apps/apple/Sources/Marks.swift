@@ -67,15 +67,14 @@ struct StateDot: View {
         case .asking: Palette.ask
         case .working: Palette.signal
         case .stalled: Palette.quiet
-        case .idle, .unknown: Palette.dim
+        case .idle: Palette.dim
         }
     }
 
     var body: some View {
-        Circle().fill(state == .idle || state == .unknown ? Color.clear : color).frame(width: 8, height: 8)
+        Circle().fill(state == .idle ? Color.clear : color).frame(width: 8, height: 8)
             .overlay {
                 if state == .idle { Circle().strokeBorder(Palette.dim, lineWidth: 1.5) }
-                if state == .unknown { Circle().strokeBorder(Palette.dim, style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])) }
             }
             .overlay {
                 if state == .working || working {

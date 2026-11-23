@@ -496,7 +496,7 @@ mod tests {
         #[cfg(unix)]
         {
             let reader = serde_json::json!({ "summarizer": { "kind": "command", "offer": "own", "argv": ["sh", "-c", "cat >/dev/null; echo '{\"to\":[2],\"all\":false,\"sure\":true,\"new\":null}'"] } });
-            let other = airband_core::radio::Other { id: "far".into(), callsign: "far one".into(), group: "far".into(), team: None, badge: String::new(), said: String::new(), ago: 0 };
+            let other = airband_core::radio::Other { id: "far".into(), callsign: "far one".into(), group: "far".into(), team: airband_core::ids::TeamId::new("/far"), badge: String::new(), said: String::new(), ago: 0 };
             let lines = logged_saying(&crate::tower::http::tests::app_with("words-unlogged-far", reader), &["a"], words, vec![other]).await;
             assert!(lines.iter().any(|l| l.contains("on another computer")) && unlogged(&lines), "{lines:?}");
         }

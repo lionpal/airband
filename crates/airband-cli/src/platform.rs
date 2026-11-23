@@ -3,6 +3,7 @@
 //! not catalogue rows.
 
 /// The service manager that keeps the tower running (macOS).
+#[cfg(target_os = "macos")]
 pub(crate) const LAUNCHCTL: &str = "/bin/launchctl";
 /// Process status: when a process started, to tell a process from a later one given the same number.
 pub(crate) const PS: &str = "/bin/ps";

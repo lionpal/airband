@@ -24,7 +24,6 @@ pub enum AccountIdentity {
     Key { fingerprint: String, last4: String },
     /// Nothing the tool records says who it is.
     #[default]
-    #[serde(other)]
     None,
 }
 

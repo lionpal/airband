@@ -62,7 +62,6 @@ pub(super) fn refused_pull(relay: &str, why: Result<PullRefused, &str>) -> Strin
         Ok(PullRefused::OtherVersion { older: Side::Relay }) => format!("this computer's airband is newer than {relay}: update the relay"),
         Ok(PullRefused::AnotherTower) => format!("another computer is serving this pairing through {relay}; stop airband there, or pair this computer again on its own"),
         Ok(PullRefused::AskAgain) => format!("{relay} let another computer's pull go to see whether it is still there; asking again"),
-        Ok(PullRefused::Unknown) => format!("{relay} refused this computer's pull for a reason this airband does not know: update airband here"),
         Err(e) => format!("{relay} refused this computer's pull, and its answer saying why could not be read ({e}); retrying"),
     }
 }
@@ -113,7 +112,7 @@ impl Serve {
     pub(super) fn run(self) -> Ended {
         // with no relay there is nothing to pull: requests come straight (`answer_here`) until this is stopped
         let Some(relay) = self.relay.clone() else {
-            log(format!("serving \"{}\" at this computer's own addresses, with no relay", self.name));
+            log(format!("serving {} at this computer's own addresses, with no relay", self.tag));
             while !self.stop.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_secs(1));
             }
@@ -129,7 +128,7 @@ impl Serve {
             // `airband unpair` has just closed its channel, and opening it would put it back on record for a
             // phone that was cut off
             if !self.still_paired() {
-                log(format!("\"{}\" is no longer paired; its channel is not opened again", self.name));
+                log(format!("{} is no longer paired; its channel is not opened again", self.tag));
                 return Ended::Unpaired;
             }
             if !at.open {
@@ -189,21 +188,21 @@ impl Serve {
         }
         match answered.map(|(said, _)| said) {
             Ok(RelaySaid::Done | RelaySaid::Nothing) => {
-                log(format!("serving \"{}\" through {relay}", self.name));
+                log(format!("serving {} through {relay}", self.tag));
                 // opened again, the relay hands again whatever it had handed and is not still answered for
                 self.pulling.lock().unwrap_or_else(|e| e.into_inner()).reopened();
                 (at.open, at.wait, at.told) = (true, 1, false);
             }
             // the relay keeps this channel closed for good: it was unpaired, and only a new pairing opens one
             Ok(RelaySaid::Closed) => {
-                log(format!("{relay} keeps the channel for \"{}\" closed; pair again to use it", self.name));
+                log(format!("{relay} keeps the channel for {} closed; pair again to use it", self.tag));
                 return Some(Ended::Closed);
             }
             other => {
                 if !at.told {
                     log(match other {
                         Ok(RelaySaid::NeedsAdmission) => format!("{relay} needs an admission key: airband relay <url> --admission <key>"),
-                        Ok(RelaySaid::NotYours) => format!("{relay} says the channel for \"{}\" belongs to another computer; pair again", self.name),
+                        Ok(RelaySaid::NotYours) => format!("{relay} says the channel for {} belongs to another computer; pair again", self.tag),
                         Ok(said) => format!("{relay} refused to open a channel ({said:?})"),
                         Err(e) => format!("cannot reach {relay}: {e}; retrying"),
                     });
@@ -250,7 +249,7 @@ impl Serve {
                 at.wait = 1;
                 // a request with no id could never be answered: the relay has broken its side of the contract
                 let Some(id) = id else {
-                    return log(format!("{relay} handed over a request for \"{}\" with no id; it cannot be answered", self.name));
+                    return log(format!("{relay} handed over a request for {} with no id; it cannot be answered", self.tag));
                 };
                 match body {
                     // read whole: the next pull says it was got, and it is answered for from here
@@ -259,7 +258,7 @@ impl Serve {
                         self.answer_apart(id, kept, handing, sealed);
                     }
                     // one cut off on the way is not named as got, so the relay hands it over again
-                    Err(e) => log(format!("a request for \"{}\" was cut off on the way ({e}); the relay hands it over again", self.name)),
+                    Err(e) => log(format!("a request for {} was cut off on the way ({e}); the relay hands it over again", self.tag)),
                 }
             }
             Pull::Nothing => {
@@ -269,7 +268,7 @@ impl Serve {
             }
             // the relay restarted without its data, or the channel changed hands: open it again
             Pull::Gone(said) => {
-                log(format!("{relay} no longer knows the channel for \"{}\" ({said:?}); opening it again", self.name));
+                log(format!("{relay} no longer knows the channel for {} ({said:?}); opening it again", self.tag));
                 at.open = false;
             }
             // refused, saying why: which side is the older, or that another computer pulls with this pairing. A
@@ -279,7 +278,7 @@ impl Serve {
             Pull::Refused(Ok(PullRefused::AskAgain)) => at.again(),
             Pull::Refused(why) => at.refused(relay, why.as_ref().copied().map_err(String::as_str)),
             Pull::Other(said) => {
-                log(format!("{relay} answered {said:?} when asked for \"{}\"'s requests; retrying", self.name));
+                log(format!("{relay} answered {said:?} when asked for {}'s requests; retrying", self.tag));
                 at.nap();
             }
             Pull::Lost(e) => {

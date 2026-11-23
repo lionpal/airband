@@ -289,7 +289,7 @@ mod tests {
     fn a_message_that_cannot_go_is_kept_with_its_reason_and_holds_up_nothing() {
         let host = Arc::new(Watching::default());
         // a relay nobody is at
-        let radio = Radio::start(format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={}", "ab".repeat(32)), String::new(), host.clone()).unwrap();
+        let radio = Radio::start(format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={}&name=Mac", "ab".repeat(32)), String::new(), host.clone()).unwrap();
         let outbox = || radio.store.saved.lock().unwrap().outbox.clone();
         let until = |what: &dyn Fn(&[Outgoing]) -> bool| {
             for _ in 0..200 {

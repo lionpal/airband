@@ -48,12 +48,12 @@ impl Aloud {
         }
     }
     /// For the log: the state in a word or two.
-    pub(super) fn words(&self, name: impl Fn(&str) -> String) -> String {
+    pub(super) fn words(&self) -> String {
         match self {
             Aloud::No => "not for reading".into(),
             Aloud::Waiting => "waiting".into(),
-            Aloud::Handed { radio, .. } => format!("handed to {}", name(radio)),
-            Aloud::Heard { radio, .. } => format!("heard on {}", name(radio)),
+            Aloud::Handed { radio, .. } => format!("handed to {}", super::radio_tag(radio)),
+            Aloud::Heard { radio, .. } => format!("heard on {}", super::radio_tag(radio)),
             Aloud::Dropped { why, .. } => format!("dropped ({})", super::store::word(why).map(|w| w.replace('_', " ")).unwrap_or_default()),
         }
     }
@@ -72,8 +72,7 @@ impl Inner {
         if e.aloud == to {
             return;
         }
-        let calls = &self.calls;
-        let line = format!("aloud: {} ({id}) {} → {}", e.from, e.aloud.words(|r| super::calls::name_of(calls, r)), to.words(|r| super::calls::name_of(calls, r)));
+        let line = format!("aloud: line {id} {} → {}", e.aloud.words(), to.words());
         e.aloud = to;
         self.unsaved.borrow_mut().insert(id.to_string());
         // a radio showing the chat is sent the line again, to mark it

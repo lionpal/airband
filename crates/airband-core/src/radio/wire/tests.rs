@@ -59,14 +59,14 @@ fn an_address_puts_the_id_in_its_place_and_the_query_after() {
 }
 
 #[test]
-fn a_refusal_says_what_it_is_and_one_from_a_newer_tower_still_reads() {
-    for r in [Refusal::told("no"), Refusal::BadAsk { reason: "x".into() }, Refusal::OtherVersion { speaks: "airband.radio/9".into() }, Refusal::NotNow { reason: "later".into() }, Refusal::TooBig, Refusal::Gone, Refusal::NotAllowed, Refusal::NotPaired, Refusal::Unknown] {
+fn a_refusal_says_what_it_is_and_one_this_build_does_not_have_is_not_read() {
+    for r in [Refusal::told("no"), Refusal::BadAsk { reason: "x".into() }, Refusal::OtherVersion { speaks: "airband.radio/9".into() }, Refusal::NotNow { reason: "later".into() }, Refusal::TooBig, Refusal::Gone, Refusal::NotAllowed, Refusal::NotPaired] {
         assert_eq!(round(&r), r);
         // a no is a 4xx; "not now" is the one refusal that is not a no
         assert!((400..500).contains(&r.status()) || matches!(r, Refusal::NotNow { .. }) && r.status() == 503);
     }
     assert_eq!(serde_json::to_value(Refusal::told("no")).unwrap(), serde_json::json!({"refusal": "told", "reason": "no"}));
-    assert_eq!(serde_json::from_str::<Refusal>(r#"{"refusal":"something_new","x":1}"#).unwrap(), Refusal::Unknown);
+    assert!(serde_json::from_str::<Refusal>(r#"{"refusal":"something_new","x":1}"#).is_err());
 }
 
 #[test]

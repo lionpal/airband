@@ -158,7 +158,6 @@ pub fn spoken_state(state: AgentState) -> String {
         AgentState::Stalled => "stopped",
         AgentState::Working => "working",
         AgentState::Idle => "idle",
-        AgentState::Unknown => "state not known",
     }
     .into()
 }

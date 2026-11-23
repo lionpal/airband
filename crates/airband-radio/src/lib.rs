@@ -229,7 +229,7 @@ pub struct Outgoing {
 }
 
 /// What an agent is doing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum AgentState {
     Working,
     /// It has a question open for him.
@@ -238,9 +238,6 @@ pub enum AgentState {
     Stalled,
     /// It finished and reported.
     Idle,
-    /// His computer did not say, or said something this build does not know.
-    #[default]
-    Unknown,
 }
 impl From<airband_core::radio::AgentState> for AgentState {
     fn from(s: airband_core::radio::AgentState) -> Self {
@@ -250,7 +247,6 @@ impl From<airband_core::radio::AgentState> for AgentState {
             S::Asking => Self::Asking,
             S::Stalled => Self::Stalled,
             S::Idle => Self::Idle,
-            S::Unknown => Self::Unknown,
         }
     }
 }

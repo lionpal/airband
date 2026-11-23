@@ -112,8 +112,8 @@ fn end_the_last_one() {
     let note = dir().join("server.pid");
     let noted = airband_io::files::read_text(&note).ok().flatten().unwrap_or_default();
     let mut lines = noted.lines();
-    // the moment is kept in seconds; a note from before that kept the system's words for it is read in those
-    let at = |t: &str| t.trim().parse::<u64>().ok().or_else(|| crate::platform::lstart(t));
+    // the moment is kept in seconds
+    let at = |t: &str| t.trim().parse::<u64>().ok();
     if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().and_then(at))
         && crate::platform::started(pid) == Some(was)
     {

@@ -48,8 +48,11 @@ async fn told_to_stop() {
             _ = tokio::signal::ctrl_c() => {}
         }
     }
+    // one that cannot be listened for is never taken for one that came
     #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await
+    }
 }
 
 /// Keys a run without the keychain had to seal in a file go into the keychain when this one can use it.
@@ -117,11 +120,12 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     let (saved, entries) = store.load(LOG_KEEP)?;
     let (seq, rev) = store.last_counts()?;
     let mut inner = Inner { sessions: saved.sessions, teams: saved.teams, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
-    inner.teams_at_start(saved.projects, saved.named_teams, &cfg.projects);
+    inner.teams_at_start(&cfg.projects);
     inner.links = links::Book::settled(saved.links);
     inner.reap();
     inner.close_requests_from_before();
-    // credentials said before the chat masked them: masked now, and sent to every radio again as they are
+    // kept lines masked again by this build's rules: a credential one of them catches is masked now, and sent to
+    // every radio again as it is
     let leaked: Vec<String> = inner.log.iter_mut().filter_map(|e| e.scrub().then(|| e.id.clone())).collect();
     if !leaked.is_empty() {
         log(format!("masked a credential in {} kept message{}", leaked.len(), if leaked.len() == 1 { "" } else { "s" }));
@@ -130,7 +134,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     pictures::prune();
     attachments::prune();
     inner.settle_reading();
-    let push = push::Wake::load(&store, &cfg.pairings)?;
+    let push = push::Wake::load(&store)?;
     let saver = saver::Saver::start(store.clone());
     SAVER.set(saver.flusher()).ok();
     let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), changed: tokio::sync::watch::channel(0).0, said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs: Arc::new(edges::procs::SystemProcs), deliverer: None, listening: Default::default() });

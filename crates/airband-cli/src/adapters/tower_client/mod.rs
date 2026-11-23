@@ -31,7 +31,7 @@ impl TowerHere {
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
     // the agent's routes do not read it.
     /// The tower's own page about itself, read as the type the tower writes it from. Nothing when the tower is
-    /// not running, did not take the request, or answered in another shape (an older version).
+    /// not running, did not take the request, or answered in another shape.
     pub(crate) fn status(&self) -> Option<crate::tower::Status> {
         let res = self.client.send(airband_io::http::Ask::get(format!("{}{}", self.base, crate::tower::STATUS_PATH)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA));
         taken(res)?.body_mut().read_json::<crate::tower::Status>().ok()

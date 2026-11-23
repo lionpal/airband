@@ -51,9 +51,6 @@ pub(super) struct Call {
     pub(super) focus: Option<String>,
     /// Whether it is there.
     pub(super) presence: Presence,
-    /// What he calls it, for the log and `airband status`: its pairing's name (a call is kept under the pairing's
-    /// channel).
-    pub(super) name: Option<String>,
     /// What it took to read out and has not answered for yet (heard, not heard, or ready for the next). If the
     /// answer that carried it was lost on the way, it is given the same thing again.
     pub(super) handed: Option<Transmission>,
@@ -168,20 +165,7 @@ impl Call {
 /// How many outcomes are kept for the feed. One that has gone from here is still told to a radio that asks
 /// again under its id: the database has every answer.
 pub(super) const SETTLED_KEEP: usize = 200;
-/// What he calls the radio a call is kept under: its pairing's name, once it has said where it stands.
-pub(super) fn name_of(calls: &HashMap<String, Call>, radio: &str) -> String {
-    calls.get(radio).and_then(|c| c.name.clone()).unwrap_or_else(|| radio.to_string())
-}
 impl Inner {
-    /// What he calls this radio.
-    pub(super) fn radio_name(&self, radio: &str) -> String {
-        name_of(&self.calls, radio)
-    }
-    /// A radio says where it stands, with the name he calls it by.
-    pub(super) fn radio_named_says(&mut self, radio: &str, name: String, said: airband_core::radio::Presence) {
-        self.call(radio).name = Some(name);
-        self.radio_says(radio, said);
-    }
     /// Is any radio there?
     pub(super) fn connected(&self) -> bool {
         self.calls.values().any(Call::connected)
@@ -208,7 +192,7 @@ impl Inner {
     /// to be handed something, and what it had when it was last on one is still to be heard.
     pub(super) fn radio_says(&mut self, radio: &str, said: airband_core::radio::Presence) {
         if self.call(radio).presence.says(said) {
-            log(format!("{} is on a call", self.radio_name(radio)));
+            log(format!("{} is on a call", radio_tag(radio)));
             let call = self.call(radio);
             (call.began, call.ready, call.outbox) = (now_ms(), true, None);
             self.give_back(radio);

@@ -1,8 +1,8 @@
 // The Airband relay and homepage. Three stacks:
 //
 //   AirbandRelayUs  where relay.airband.dev runs: one small server in the United States with DynamoDB behind it.
-//   AirbandRelay    where it ran before, and can again: a Fargate task in Tokyo behind an existing load balancer.
-//                   Nothing deploys it any more unless asked to (see .github/workflows/deploy-relay.yml).
+//   AirbandRelay    where it ran before: a Fargate task in Tokyo behind an existing load balancer. No workflow
+//                   deploys it; it is defined here only while it still owns the relay's DNS record (below).
 //   AirbandSite     the homepage.
 //
 // AirbandRelay: the relay as one small Fargate task behind an existing load balancer, keeping its

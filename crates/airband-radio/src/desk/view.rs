@@ -195,7 +195,6 @@ impl Desk {
 /// Each team, in the state of whichever of its agents most needs him, with its agents.
 fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from: &HashMap<&str, u32>, unread_in: &HashMap<&str, u32>) -> Vec<DeskRoom> {
     let rank = |s: AgentState| match s {
-        AgentState::Unknown => 0,
         AgentState::Idle => 1,
         AgentState::Working => 2,
         AgentState::Stalled => 3,

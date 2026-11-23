@@ -976,8 +976,7 @@ mod tests {
         // the service's own word for a refusal is never passed on: the tower is told its status
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "dd44").await, (502, false, Some(NotPushed::Refused { status: 503 })));
         assert_eq!(seen.load(Ordering::SeqCst), 4);
-        // a service this relay does not have, and an address that is not one
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Unknown, "aa11").await.0, 503);
+        // an address that is not one
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11/../x").await.0, 400);
         // and only so many from one channel
         relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));

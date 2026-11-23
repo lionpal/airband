@@ -93,9 +93,7 @@ mod tests {
         let mut shown = Status::of(&app).radios;
         shown.sort();
         assert_eq!(shown, vec!["desk phone".to_string(), "phone".to_string()]);
-        // and once it has said where it stands under that name, the log and the reading trail call it so too
-        app.change().radio_named_says(&channel, "phone".into(), airband_core::radio::Presence { on_call: true, showing_chat: false });
-        assert_eq!(app.read().radio_name(&channel), "phone");
-        assert_eq!(super::super::Aloud::Heard { radio: channel.clone(), at: 0 }.words(|r| app.read().radio_name(r)), "heard on phone");
+        // the log calls it by its id, never by the name he gave it
+        assert_eq!(super::super::Aloud::Heard { radio: channel.clone(), at: 0 }.words(), format!("heard on radio {}", &channel[..8]));
     }
 }
