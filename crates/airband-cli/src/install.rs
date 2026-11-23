@@ -9,7 +9,7 @@ const LABEL: &str = "dev.airband.tower";
 fn installed_exe() -> PathBuf {
     config::dir().join("bin").join(if cfg!(windows) { "airband.exe" } else { "airband" })
 }
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn plist_path() -> PathBuf {
     config::home().join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
 }
@@ -114,16 +114,36 @@ pub(crate) fn uninstall() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let uid = unsafe { libc::getuid() };
-        std::process::Command::new(crate::platform::LAUNCHCTL).args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
-        airband_io::files::remove(&plist_path()).ok();
+        let service = format!("gui/{uid}/{LABEL}");
+        // one not running cannot be stopped, and that is no error: whether it is still loaded after is the fact
+        std::process::Command::new(crate::platform::LAUNCHCTL).args(["bootout", &service]).output().map_err(|e| format!("could not run launchctl: {e}"))?;
+        let loaded = std::process::Command::new(crate::platform::LAUNCHCTL).args(["print", &service]).output().is_ok_and(|o| o.status.success());
+        stopped(loaded, airband_io::files::remove(&plist_path()))?;
     }
     println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");
     Ok(())
 }
 
+/// Whether airband can say it is stopped and will not start at login: only when the system no longer has it
+/// loaded and its start-at-login file is gone. Either left is said.
+#[cfg(any(target_os = "macos", test))]
+fn stopped(still_loaded: bool, removed: std::io::Result<()>) -> Result<(), String> {
+    if still_loaded {
+        return Err("airband is still running: the system would not stop it. Try again, or log out and in.".into());
+    }
+    removed.map_err(|e| format!("airband is stopped, but its start-at-login file could not be removed ({e}): {}", plist_path().display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_is_said_only_when_it_is_unloaded_and_its_file_is_gone() {
+        assert!(stopped(false, Ok(())).is_ok());
+        assert!(stopped(true, Ok(())).is_err());
+        assert!(stopped(false, Err(std::io::Error::other("busy"))).is_err());
+    }
 
     #[test]
     fn a_packaged_binary_is_used_from_the_path_that_outlives_an_update() {

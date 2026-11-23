@@ -212,6 +212,11 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
                 }
             }
             Msg::Tell(Tell::End) => {
+                // ended in the middle of a turn: what it had said of it so far is what it said, and with
+                // nothing said it stopped; neither is lost
+                if running.is_some() {
+                    post(me, cut_short(&mut said));
+                }
                 held.close_input();
                 break;
             }
@@ -253,6 +258,14 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
     // it ended with words of his still waiting: they never reached it, and he is told, not left thinking they did
     if !waiting.is_empty() {
         post(me, Event::Stopped { why: Some(never_reached(waiting.len())) });
+    }
+}
+
+/// A turn ended before the agent said it was done: its words so far, or a stop.
+fn cut_short(said: &mut String) -> Event {
+    match std::mem::take(said).trim() {
+        "" => Event::Stopped { why: None },
+        text => Event::Said { text: text.to_string(), kind: None, turn: None },
     }
 }
 
@@ -323,6 +336,14 @@ fn option(params: &Value, allow: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turn_ended_part_way_keeps_its_words_or_says_it_stopped() {
+        let mut said = " Half the refunds are sent ".to_string();
+        assert_eq!(cut_short(&mut said), Event::Said { text: "Half the refunds are sent".into(), kind: None, turn: None });
+        assert!(said.is_empty());
+        assert_eq!(cut_short(&mut said), Event::Stopped { why: None });
+    }
 
     #[test]
     fn his_answer_picks_one_of_the_agents_own_choices_and_only_for_this_once() {
