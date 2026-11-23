@@ -107,7 +107,7 @@ pub(crate) trait Harness: Sync {
     /// them, each as an agent the tower can put on the radio and reach. Nothing when the tool cannot say
     /// (it is not on this computer, it is not running, it keeps no such record): then the tower learns of
     /// its sessions only as they report. Asked every few seconds, so it must be quick.
-    fn open(&self) -> Option<Vec<Open>> {
+    fn open(&self) -> Option<Listing> {
         None
     }
     /// The folders this tool has had sessions in, by its own record, each with when the last one was.
@@ -123,6 +123,22 @@ pub(crate) struct Open {
     /// Its tool says it is doing nothing right now. One the tower first learns of this way starts out
     /// waiting for him, not working; what it does after that comes with its own reports.
     pub(crate) idle: bool,
+}
+
+/// What a tool says is open now, and whether that is all of it.
+#[derive(Debug, Clone)]
+pub(crate) struct Listing {
+    pub(crate) open: Vec<Open>,
+    /// Every record the tool keeps of an open session was read. One that could not be (the tool was writing it
+    /// just then) may be a session that is still open: none that is missing from `open` is taken to have ended
+    /// on this look. A session's end is then told by its process going.
+    pub(crate) whole: bool,
+}
+impl Listing {
+    /// What a tool lists in one answer: all of it.
+    pub(crate) fn whole(open: Vec<Open>) -> Listing {
+        Listing { open, whole: true }
+    }
 }
 
 /// A folder a tool has had a session in.
@@ -271,7 +287,7 @@ pub(crate) fn find_all(tower: Tower) {
 
 /// One look at one tool's open sessions.
 fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<String, Value>) {
-    let Some(open) = h.open() else { return };
+    let Some(Listing { open, whole }) = h.open() else { return };
     // the ones the tower runs itself are reported by their own driver
     let open: Vec<Open> = open.into_iter().filter(|o| !(tower.holds)(&o.agent.id)).collect();
     let listed = (tower.listed)(h.name());
@@ -280,6 +296,10 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
         if (!listed.contains(&o.agent.id) || told.get(&o.agent.id) != Some(&now)) && (tower.found)(o.agent.clone(), o.idle) {
             told.insert(o.agent.id.clone(), now);
         }
+    }
+    // a session whose record could not be read just now is not one that has ended
+    if !whole {
+        return;
     }
     for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
         let gone = crate::adapters::agent_with(id.clone(), h.name());
@@ -488,14 +508,14 @@ mod finding {
     use std::sync::{Arc, Mutex};
 
     /// A tool that lists whatever the test says is open.
-    struct Lists(Mutex<Option<Vec<&'static str>>>);
+    struct Lists(Mutex<Option<Vec<&'static str>>>, Mutex<bool>);
     impl Harness for Lists {
         fn name(&self) -> &'static str {
             "lists"
         }
-        fn open(&self) -> Option<Vec<Open>> {
+        fn open(&self) -> Option<Listing> {
             let open = self.0.lock().unwrap().clone()?;
-            Some(open.into_iter().map(|id| Open { agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(id, "lists") }, idle: true }).collect())
+            Some(Listing { open: open.into_iter().map(|id| Open { agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(id, "lists") }, idle: true }).collect(), whole: *self.1.lock().unwrap() })
         }
     }
 
@@ -523,7 +543,7 @@ mod finding {
                 listed: Box::new(move |_| listed.lock().unwrap().clone()),
             }
         };
-        let tool = Lists(Mutex::new(Some(vec!["a", "b", "held"])));
+        let tool = Lists(Mutex::new(Some(vec!["a", "b", "held"])), Mutex::new(true));
         let mut told = Default::default();
         look(&tool, &tower, &mut told);
         // the two that are his, not the one the tower runs itself
@@ -539,8 +559,14 @@ mod finding {
         let mut gone = events.lock().unwrap().clone();
         gone.sort();
         assert_eq!(gone, ["signoff b", "signoff from-before"]);
-        // a tool that cannot say what is open just now has nothing signed off on its silence
+        // a record that could not be read on this look ends nobody: "a" is missing from it, and stays
         events.lock().unwrap().clear();
+        *tool.1.lock().unwrap() = false;
+        *tool.0.lock().unwrap() = Some(vec![]);
+        look(&tool, &tower, &mut told);
+        assert!(events.lock().unwrap().is_empty());
+        *tool.1.lock().unwrap() = true;
+        // a tool that cannot say what is open just now has nothing signed off on its silence
         *tool.0.lock().unwrap() = None;
         look(&tool, &tower, &mut told);
         assert!(events.lock().unwrap().is_empty());

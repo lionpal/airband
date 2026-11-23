@@ -41,17 +41,22 @@ fn first_object(bytes: &[u8]) -> Option<Value> {
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
 /// (`sessions/<process>.json` in its folder: the session, its folder, the socket it takes messages on) and
 /// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
-/// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
-pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<crate::adapters::Open>> {
+/// have a record too, with another `entrypoint`: those are not his to talk to and are left out. A record that
+/// holds no whole JSON value (Claude Code was writing it just then) makes the listing less than whole: no
+/// session is taken to have ended on that look.
+pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<crate::adapters::Listing> {
     let dir = claude.join(said("sessions"));
-    let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| first_object(&b));
+    // each file's record (`first_object`); one that is not whole yet is told apart
+    let read = |path: &std::path::Path| -> Result<Value, ()> { airband_io::files::read_bytes(path).ok().flatten().and_then(|b| first_object(&b)).ok_or(()) };
     // no folder of records at all: Claude Code cannot say what is open
     if !dir.is_dir() {
         return None;
     }
     // what each file is, by what it holds, never by how its name ends: a session's record says its kind, and the
     // token for its socket is the one that holds a peer token
-    let files: Vec<(std::path::PathBuf, Value)> = airband_io::files::entries(&dir).ok()?.into_iter().filter_map(|p| read(&p).map(|v| (p, v))).collect();
+    let read: Vec<(std::path::PathBuf, Result<Value, ()>)> = airband_io::files::entries(&dir).ok()?.into_iter().map(|p| { let v = read(&p); (p, v) }).collect();
+    let whole = read.iter().all(|(_, v)| v.is_ok());
+    let files: Vec<(std::path::PathBuf, Value)> = read.into_iter().filter_map(|(p, v)| v.ok().map(|v| (p, v))).collect();
     let mut open = Vec::new();
     for (_, v) in &files {
         let field = |k: &str| text(v, k);
@@ -84,7 +89,7 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
             idle: v["status"] == "idle",
         });
     }
-    Some(open)
+    Some(crate::adapters::Listing { open, whole })
 }
 
 /// Where a session's transcript is: the file named for the session, in one of the folders Claude Code keeps

@@ -222,7 +222,7 @@ impl crate::adapters::Harness for ClaudeCode {
     fn steps(&self, agent: &Agent, since: u64) -> Vec<String> {
         steps(agent, since)
     }
-    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
+    fn open(&self) -> Option<crate::adapters::Listing> {
         open_in(&claude_home(), &running)
     }
     fn worked(&self) -> Vec<crate::adapters::Worked> {
@@ -342,7 +342,10 @@ mod tests {
         let whole = std::fs::read_to_string(&cut).unwrap();
         std::fs::write(&cut, &whole[..whole.len() / 2]).unwrap();
         let running = |pid: u32, started: &str| pid != 14 && started == format!("Sun Nov 22 10:00:{pid:02} 2026");
-        let mut open = open_in(&claude, &running).unwrap();
+        let listing = open_in(&claude, &running).unwrap();
+        // the one cut short is not read, and the look says it is not whole: nobody missing from it has ended
+        assert!(!listing.whole);
+        let mut open = listing.open;
         open.sort_by(|a, b| a.agent.id.cmp(&b.agent.id));
         let ids: Vec<&str> = open.iter().map(|o| o.agent.id.as_str()).collect();
         assert_eq!(ids, ["open-one", "open-two", "rewritten"]);

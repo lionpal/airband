@@ -40,7 +40,7 @@ fn what_codex_reports_is_what_it_reported_before() {
         "accounts": adapter.accounts().is_some(),
         "puts_away": adapter.puts_away(),
         "put_away": put_away(NAME, "t1"),
-        "open": adapter.open().map(|o| o.len()),
+        "open": adapter.open().map(|o| o.open.len()),
     });
     s.hold(NAME, &made, include_str!("fixtures/golden.json"));
 }

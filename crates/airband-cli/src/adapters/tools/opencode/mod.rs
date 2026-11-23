@@ -260,8 +260,8 @@ impl crate::adapters::Harness for OpenCode {
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)
     }
-    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
-        open()
+    fn open(&self) -> Option<crate::adapters::Listing> {
+        open().map(crate::adapters::Listing::whole)
     }
     fn put_away(&self, session: &str) -> Option<Result<(), String>> {
         Some(put_away(session))

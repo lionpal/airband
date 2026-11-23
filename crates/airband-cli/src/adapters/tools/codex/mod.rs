@@ -431,8 +431,8 @@ impl crate::adapters::Harness for Codex {
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)
     }
-    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
-        open()
+    fn open(&self) -> Option<crate::adapters::Listing> {
+        open().map(crate::adapters::Listing::whole)
     }
     fn watch(&self, tower: crate::adapters::Tower) {
         watch(tower)
