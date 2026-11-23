@@ -134,7 +134,7 @@ mod tests {
             let at = format!("http://{}/catalog.json", listener.local_addr().unwrap());
             std::thread::spawn(move || {
                 let (mut conn, _) = listener.accept().unwrap();
-                conn.read(&mut [0u8; 2048]).unwrap();
+                assert!(conn.read(&mut [0u8; 2048]).unwrap() > 0);
                 conn.write_all(answer.as_bytes()).unwrap();
             });
             at

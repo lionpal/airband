@@ -306,10 +306,23 @@ mod tests {
         let at = format!("http://{}", listener.local_addr().unwrap());
         let served = std::thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
-            let mut got = vec![0u8; 4096];
-            let n = conn.read(&mut got).unwrap();
+            // the head and the body may come in pieces: read until the head is whole and the body it announces
+            let mut got = Vec::new();
+            let mut piece = [0u8; 4096];
+            loop {
+                let n = conn.read(&mut piece).unwrap();
+                got.extend_from_slice(&piece[..n]);
+                let text = String::from_utf8_lossy(&got).to_lowercase();
+                let whole = text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+                    let wants = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    body.len() >= wants
+                });
+                if n == 0 || whole {
+                    break;
+                }
+            }
             conn.write_all(answer.as_bytes()).unwrap();
-            String::from_utf8_lossy(&got[..n]).to_string()
+            String::from_utf8_lossy(&got).to_string()
         });
         (at, served)
     }
