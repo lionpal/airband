@@ -31,7 +31,7 @@ struct NewAgentSheet: View {
     /// What the computer will call the team: the core names it by the computer's own rule.
     private var team: String { teamName(written: name) }
     /// Every choice made: a folder and a name, and the computer and the coding agent when there is more than one.
-    private var ready: Bool { place != nil && !team.isEmpty && !starting && (model.view.stations.count <= 1 || !computer.isEmpty) && (model.usedTools.count <= 1 || !tool.isEmpty) }
+    private var ready: Bool { place != nil && !team.isEmpty && !starting && (model.onlyComputer != nil || !computer.isEmpty) && (model.onlyTool != nil || !tool.isEmpty) }
     /// A folder he walked to, when it is none of the recent ones: shown with them, chosen.
     private var walked: Place? { place.flatMap { p in recent.contains { $0.folder == p.folder } && !p.make ? nil : p } }
 
@@ -39,11 +39,11 @@ struct NewAgentSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if model.view.stations.count > 1 {
+                    if model.onlyComputer == nil {
                         label("Computer")
                         chips(model.view.stations.map { ($0.id, $0.name, nil) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
                     }
-                    if model.usedTools.count > 1 {
+                    if model.onlyTool == nil {
                         label("Coding agent")
                         chips(model.usedTools.map { ($0.id, $0.name, Marks.tool($0.id)) }, chosen: tool) { tool = $0 }
                     }
@@ -83,8 +83,9 @@ struct NewAgentSheet: View {
                                 .font(.system(size: 16)).foregroundStyle(Palette.ink).padding(.horizontal, 14)
                                 .frame(minHeight: 48).background(Palette.field, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        Text(place.make ? (team.isEmpty ? "The new folder gets the team\u{2019}s name." : "Starts in a new folder, \(name.trimmingCharacters(in: .whitespaces)), inside \(place.shown).") : "Starts in \(place.shown) and waits for your first message.")
-                            .font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
+                        if place.make {
+                            Text("New folder inside \(place.shown), named after the team.").font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
+                        }
                     }
                     if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
                 }
@@ -262,7 +263,6 @@ struct FolderWalk: View {
                 .background(Palette.card, in: RoundedRectangle(cornerRadius: 14)).clipShape(RoundedRectangle(cornerRadius: 14))
                 Toggle("Make a new folder here", isOn: $makeNew).font(.system(size: 16)).foregroundStyle(Palette.ink).tint(Palette.signal)
                     .padding(.horizontal, 14).frame(minHeight: 52).background(Palette.card, in: RoundedRectangle(cornerRadius: 14))
-                Text("Go up from your home folder to reach other folders and disks.").font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
                 if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
             }
             .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)

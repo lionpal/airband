@@ -24,7 +24,7 @@ fn told<T: Copy>(m: &Model, field: &str, known: &[(&str, T)]) -> Result<T, Strin
 
 impl Engine for Ptts {
     fn load(&self, folder: &Path, m: &Model) -> Result<Box<dyn Loaded>, String> {
-        let (quant, lang, device) = (told(m, "quant", QUANTS)?, told(m, "lang", LANGS)?, told(m, "device", DEVICES)?);
+        let (quant, lang, device) = (told(m, crate::models::field::QUANT, QUANTS)?, told(m, crate::models::field::LANG, LANGS)?, told(m, crate::models::field::DEVICE, DEVICES)?);
         let checkpoint = Checkpoint::resolve(folder, ResolveOptions { quant, weights: None }).map_err(|e| e.to_string())?;
         let mut synth = checkpoint.builder(lang).device(device).build().map_err(|e| e.to_string())?;
         checkpoint.register_voices(&mut synth);

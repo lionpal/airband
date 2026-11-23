@@ -160,7 +160,11 @@ fn a_computer_is_never_picked_for_him() {
     assert_eq!(*host.0.lock().unwrap(), ["That computer is no longer paired.", "That computer is no longer paired."]);
     // the same for anything else asked of a computer he did not name
     assert!(matches!(desk.station_radio(&StationId::default()), Err(RadioError::Told { .. })));
-    assert!(matches!(desk.station_radio(&StationId::from("laptop")), Err(RadioError::Offline)));
+    // a computer this phone does not have is gone, never out of reach; one it has that is not answering is
+    assert!(matches!(desk.station_radio(&StationId::from("laptop")), Err(RadioError::Told { reason }) if reason == UNPAIRED), "unknown");
+    let macbook = desk.shared.state.lock().unwrap().computers[1].id();
+    desk.shared.state.lock().unwrap().computers[1].online = false;
+    assert!(matches!(desk.station_radio(&macbook), Err(RadioError::Offline)));
 }
 
 #[test]
@@ -214,7 +218,7 @@ fn a_message_sent_again_goes_to_the_agent_picked_by_its_id() {
     }
     let picked = state.computers[0].agents[1].id.clone();
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
-    desk.resend("q1".into(), picked.clone());
+    desk.resend("q1".into(), picked.clone()).unwrap();
     let sent: Vec<Vec<String>> = desk.shared.state.lock().unwrap().computers[0].radio.unsent().into_iter().map(|o| o.to).collect();
     assert_eq!(sent, vec![vec![picked]]);
 }
@@ -245,7 +249,7 @@ fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
     assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
     assert!(record.contains("POST /v1/radio/utterance by relay: there was no connection to the relay"), "{record}");
-    assert!(record.contains("told in passing and not delivered, since the app was opened: heard 1"), "{record}");
+    assert!(record.contains(&format!("told in passing and not delivered, since the app was opened: {} 1", <airband_core::radio::wire::at::Heard as airband_core::radio::wire::Endpoint>::PATH)), "{record}");
     // what is not: anything he or an agent said, an id of a message, the pairing's secret or anything made
     // from it, or an address
     let keys = Keys::derive(&secret).unwrap();
@@ -371,13 +375,27 @@ fn desk_of(state: State) -> Desk {
 }
 
 #[test]
+fn a_long_message_whose_whole_cannot_be_fetched_is_not_sent_again_as_its_opening() {
+    let mut state = two();
+    state.computers[0].messages[0].long = true;
+    let picked = state.computers[0].agents[1].id.clone();
+    let desk = desk_of(state);
+    // the test computers answer nothing: the whole cannot be fetched, so nothing goes and he is told why
+    assert!(desk.resend("q1".into(), picked.clone()).is_err());
+    assert!(desk.shared.state.lock().unwrap().computers[0].radio.unsent().is_empty());
+    // a message or an agent no computer has is said as gone
+    assert!(matches!(desk.resend("nope".into(), picked), Err(RadioError::Told { reason }) if reason == "That message is no longer on any of your computers."));
+    assert!(matches!(desk.resend("q1".into(), "nobody".into()), Err(RadioError::Told { reason }) if reason == "That agent is no longer on any of your computers."));
+}
+
+#[test]
 fn words_sent_again_go_to_the_agent_he_picked_whatever_tag_they_start_with() {
     let mut state = two();
     // what he first said tagged the agent on the other computer
     state.computers[0].messages[0].text = "@ff1 stop that".into();
     let picked = state.computers[0].agents[1].id.clone();
     let desk = desk_of(state);
-    desk.resend("q1".into(), picked.clone());
+    desk.resend("q1".into(), picked.clone()).unwrap();
     let state = desk.shared.state.lock().unwrap();
     let here: Vec<Vec<String>> = state.computers[0].radio.unsent().into_iter().map(|o| o.to).collect();
     assert_eq!(here, vec![vec![picked]]);
@@ -590,7 +608,7 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     // a voice is chosen, so it is the fetching that fails
     radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
     assert!(!radio.read_question("m1"));
-    assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud. Your computer could not be reached."]);
+    assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud. Can\u{2019}t reach your computer."]);
 }
 
 // Unix only: it makes the folder unwritable by its permission bits
@@ -683,7 +701,7 @@ fn a_button_a_poke_or_words_sent_on_leave_his_files_and_his_question_for_his_own
     radio.arm("f1".into());
     radio.session.asked(&Reply { question: Some("q9".into()), ..Reply::default() });
     desk.tap("q1".into(), Tapped::Allow);
-    desk.resend("d1".into(), agent.clone());
+    desk.resend("d1".into(), agent.clone()).unwrap();
     desk.shared.state.lock().unwrap().computers[0].agents[0].state = AgentState::Stalled;
     desk.poke(None);
     assert!(radio.unsent().iter().all(|o| o.attachments.is_empty() && o.answers.is_none()), "{:?}", radio.unsent().iter().map(|o| (&o.text, &o.attachments, &o.answers)).collect::<Vec<_>>());

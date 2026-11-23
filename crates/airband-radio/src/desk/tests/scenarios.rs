@@ -116,7 +116,7 @@ fn n27_a_poke_a_tap_and_words_sent_again_leave_his_files_and_question() {
     radio.session.asked(&asking("q9"));
     desk.poke(None);
     desk.tap("q1".into(), Tapped::Allow);
-    desk.resend("q1".into(), "shop two".into());
+    desk.resend("q1".into(), "shop two".into()).unwrap();
     let took: Vec<(String, Vec<String>, Option<String>)> = radio.unsent().into_iter().map(|o| (o.text, o.attachments, o.answers)).collect();
     assert!(took.iter().all(|(_, files, answers)| files.is_empty() && answers.is_none()), "{took:?}");
     assert_eq!(radio.armed(), ["f1"]);

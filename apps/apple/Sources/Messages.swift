@@ -43,7 +43,6 @@ struct Report: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Speaker(m: m)
-                if m.stalled { Text("stopped").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).padding(.horizontal, 8).padding(.vertical, 2).background(Palette.raised, in: Capsule()) }
             }
             // a tap picks it as the message he is answering, and nothing else: it does not change size under his
             // finger. Seeing all of what it wrote is the small button beside it.
@@ -264,7 +263,7 @@ struct Unsent: View {
                 }
                 .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
             } else if o.stage == .left {
-                Text("With the relay. Your computer gets it when it is back.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
+                Text("Waiting for your computer.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             } else if let trying = o.trying {
                 Text(trying).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             }

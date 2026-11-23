@@ -31,7 +31,8 @@ struct AgentMarks: View {
             } else {
                 Image(systemName: "terminal").font(.system(size: 13, weight: .medium))
             }
-            if model.view.stations.count > 1, !agent.station.isEmpty {
+            // the core names its computer only when he has several
+            if !agent.station.isEmpty {
                 Image(systemName: model.icon(of: agent.station)).font(.system(size: 14, weight: .medium))
             }
         }

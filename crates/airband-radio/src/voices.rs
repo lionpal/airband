@@ -69,7 +69,7 @@ fn pump(mut sound: impl std::io::Read, sink: &mut dyn FnMut(&[u8])) -> Result<()
 
 impl Reach {
     fn of(voice: &Use, by: &By, provider: &Provider) -> Result<Reach, String> {
-        let url = airband_core::providers::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
+        let url = airband_core::providers::fill(by.text(crate::models::field::URL), &|field| voice.get(Job::Voice, field))?;
         let auth = key_header(by, &voice.key)?;
         let rate = by.with.get(crate::models::field::RATE).and_then(serde_json::Value::as_u64).map(|r| r as u32).filter(|r| RATES.contains(r)).ok_or("That voice service's row does not say the rate of its sound.")?;
         let headers = by.with.get(crate::models::field::HEADERS).and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();

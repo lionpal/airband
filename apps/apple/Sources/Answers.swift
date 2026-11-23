@@ -55,7 +55,7 @@ struct Answers: View {
     /// The buttons, each with what it stands for. A request for leave has two of its own, Allow and Deny; any
     /// other question has the answers it offered.
     private var buttons: [(String, Tapped)] {
-        m.permission ? [(leaveWord(allow: true), .allow), (leaveWord(allow: false), .deny)] : m.options.enumerated().map { ($0.element, .option(index: UInt32($0.offset))) }
+        answerButtons(permission: m.permission, options: m.options).map { ($0.words, $0.tapped) }
     }
 
     private func choice(_ i: Int) -> some View {
@@ -76,7 +76,7 @@ struct Answers: View {
 
     private var yolo: some View {
         Button { model.answer(m, Answers.yolo); after() } label: {
-            Text("YO\nLO").font(.system(size: 13, weight: .heavy, design: .rounded)).tracking(1).lineSpacing(-2)
+            Text("Your\ncall").font(.system(size: 12, weight: .semibold)).lineSpacing(-2)
                 .multilineTextAlignment(.center).foregroundStyle(Palette.ink)
                 .frame(width: 52, height: 52)
                 .background(Palette.raised, in: RoundedRectangle(cornerRadius: 16))

@@ -21,7 +21,6 @@ impl<T> Reach<T> {
         match answer {
             Ok(value) => Reach::Done(value),
             Err(RadioError::Told { reason } | RadioError::BadLink { reason }) => Reach::Refused(reason),
-            Err(no @ RadioError::Refused) => Reach::Refused(no.said()),
             // trouble that may pass is not a no: it is asked again
             Err(RadioError::Offline | RadioError::Trouble { .. }) => Reach::Unreachable,
         }

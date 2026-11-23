@@ -15,7 +15,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
     /// A project: show just its agents, and keep what he says among them. The desk keeps it ([`look`]).
     var room: String? { view.focus.room }
     /// An agent, by id: show just that agent.
@@ -133,8 +133,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         case .failed: problem = RadioModel.linksUnread; return nil
         }
     }
-    static let linksUnread = "Can't read your pairings yet. Unlock your phone."
-    static let keysUnread = "Can't read your keys yet. Unlock your phone and try again."
+    static let linksUnread = "Can\u{2019}t read your pairings yet. Unlock your phone."
+    static let keysUnread = "Can\u{2019}t read your keys yet. Unlock your phone and try again."
+    static let keyNotKept = "Couldn\u{2019}t keep your key on this phone. Try again."
 
     /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
     /// through headphones or a car. From the phone's own speaker it stops.
@@ -348,18 +349,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// choice stands, as the core last said. The core decides all of it; the screens draw this.
     @Published var choices: [ChoiceJob: [Choice]] = [:]
 
-    /// What he is told when a computer could not be asked.
-    static let unreached = "Your computer could not be reached."
-
-    /// What went wrong, in words for him: the reason the computer gave when it gave one, that it cannot be
-    /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
+    /// What went wrong, in words for him: the core's words for any of its errors, and otherwise `fallback`,
+    /// which says what did not happen.
     static func words(for error: Error, else fallback: String) -> String {
-        switch error {
-        case RadioError.Told(let reason), RadioError.Trouble(let reason), RadioError.BadLink(let reason): return reason
-        case RadioError.Offline: return unreached
-        case RadioError.Refused: return "That computer refused it."
-        default: return fallback
-        }
+        (error as? RadioError).map { errorWords(error: $0) } ?? fallback
     }
 
     /// Run one of the core's blocking calls off the main thread and come back on it: with what the call gave,
@@ -405,10 +398,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The clip being played to let him hear a voice before choosing it, and which voice it is.
     @Published var previewing: String?
     var previewPlayer: AVAudioPlayer?
+    let previewEnd = PlayerEnd()
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
-    lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = ["phonon-coreml": { [unowned self] in self.phononCoreML(folder: $0, job: $1, input: $2) }]
+    lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = ["phonon-coreml": { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
 
     /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
     var heardWith: [String: Transcriber] = [:]
@@ -426,4 +420,11 @@ struct Caption {
         guard let i = marks.lastIndex(where: { $0.time <= t }) else { return 0 }
         return i + 1 < marks.count ? marks[i + 1].at : text.count
     }
+}
+
+/// Told by a player when its clip has finished, or could not be played.
+final class PlayerEnd: NSObject, AVAudioPlayerDelegate {
+    var ended: () -> Void = {}
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { DispatchQueue.main.async { self.ended() } }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { DispatchQueue.main.async { self.ended() } }
 }

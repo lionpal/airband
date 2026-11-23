@@ -151,7 +151,6 @@ pub(crate) struct Chooser {
     pub(crate) opened: Mutex<Option<String>>,
 }
 
-/// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
 /// The key kept on this phone for a provider, when there is one.
 pub(crate) fn kept_key(host: &dyn DeskHost, provider: &str) -> Option<String> {
     host.secret(provider.to_string()).filter(|k| !k.is_empty())
@@ -186,6 +185,9 @@ impl Chooser {
     /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
     fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = self.keeper.read_again::<Option<Saved>>() {
+            *saved = found.flatten().unwrap_or_else(|| Saved::fresh(&self.device));
+        }
         with(&mut saved);
         crate::kept::said(self.keeper.save(&*saved)).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }

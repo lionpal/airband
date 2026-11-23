@@ -115,6 +115,9 @@ impl KeptIntents {
     }
     /// Change them and keep them. The words for him when they could not be kept, the first time in a row.
     pub(crate) fn change<R>(&mut self, f: impl FnOnce(&mut Intents) -> R) -> (R, Option<String>) {
+        if let Some(k) = &self.keeper {
+            crate::kept::again(k, &mut self.now);
+        }
         let out = f(&mut self.now);
         let lost = self.keeper.as_ref().and_then(|k| crate::kept::told(k.save(&self.now), "Your computers may be told again what they already know."));
         (out, lost)

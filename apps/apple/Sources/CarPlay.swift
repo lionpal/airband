@@ -57,11 +57,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // the Talk tile, or a banner about no one in particular: everyone in the team he is in, and no
             // message picked
             model.look(room: model.room)
-            start(then: nil)
-            Task { @MainActor in
-                guard self.model.calling else { return }
-                self.model.openMic()
-            }
+            start(then: nil, talk: true)
         }
     }
 
@@ -115,23 +111,23 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // MARK: the conversation
 
     /// Start the conversation and put up the voice screen. With an agent named, its question is read out
-    /// first and the microphone then opens for the answer.
-    private func start(then answer: String?) {
+    /// first and the microphone then opens for the answer; with `talk`, the microphone opens once the call is on.
+    private func start(then answer: String?, talk: Bool = false) {
         Task { @MainActor in
             if let answer, let team = self.model.member(answer)?.team {
                 self.model.look(room: team.id, agent: answer)
             }
-            if !self.model.calling { await self.model.setCalling(true) }
+            // in the car he is told on the car's screen, not the phone's
+            if !self.model.calling { await self.model.setCalling(true, tell: false) }
             guard self.model.calling else {
                 // the microphone is not allowed. It can only be allowed on the phone, which he is not asked to touch
                 let ok = CPAlertAction(title: "OK", style: .cancel) { [weak self] _ in self?.car?.dismissTemplate(animated: true, completion: nil) }
                 self.car?.presentTemplate(CPAlertTemplate(titleVariants: ["airband is not allowed to use the microphone", "Microphone not allowed"], actions: [ok]), animated: true, completion: nil)
-                self.model.problem = nil
                 return
             }
             self.started = true
             self.open()
-            if let answer { self.model.answer(answer) }
+            if let answer { self.model.answer(answer) } else if talk { self.model.openMic() }
         }
     }
 
@@ -147,7 +143,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             state(.listening, with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
             state(.sending, ["Sending"], "arrow.up.circle.fill", talk: nil),
             state(.speaking, with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: model.only.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
-            state(.offline, ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
+            state(.offline, [model.cannotReach, "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
             screen.leadingNavigationBarButtons = [CPBarButton(title: "End") { [weak self] _ in

@@ -45,8 +45,20 @@ pub(crate) mod field {
     pub(crate) const URL: &str = "url";
     /// A service's setting: which of its models does the work.
     pub(crate) const MODEL: &str = "model";
-    /// A listening service's setting: the language he speaks.
+    /// A listening service's setting, or a voice row's: the language he speaks.
     pub(crate) const LANGUAGE: &str = "language";
+    /// A service row: how his key is presented.
+    pub(crate) const AUTH: &str = "auth";
+    /// A voice row: how the words are to be said, sent beside them and never spoken.
+    pub(crate) const STYLE: &str = "style";
+    /// A live listening row: where its stream is reached.
+    pub(crate) const STREAM: &str = "stream";
+    /// A live listening row: where a pass for the stream is asked for.
+    pub(crate) const PASS: &str = "pass";
+    /// A model row for the device's own voice: how its weights are packed, its language, and what runs it.
+    pub(crate) const QUANT: &str = "quant";
+    pub(crate) const LANG: &str = "lang";
+    pub(crate) const DEVICE: &str = "device";
 }
 
 /// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.

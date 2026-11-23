@@ -275,8 +275,6 @@ pub enum RadioError {
     BadLink { reason: String },
     /// Nothing came back: no network, no relay, or the tower is not running.
     Offline,
-    /// The tower answered and said no.
-    Refused,
     /// The tower answered, said no, and said why in words for him.
     Told { reason: String },
     /// His computer or the relay had trouble that may pass, with why in words for him: not a no. It is tried
@@ -289,8 +287,7 @@ impl RadioError {
     pub(crate) fn said(&self) -> String {
         match self {
             RadioError::BadLink { reason } | RadioError::Told { reason } | RadioError::Trouble { reason } => reason.clone(),
-            RadioError::Refused => "That computer refused it.".into(),
-            RadioError::Offline => "Your computer could not be reached.".into(),
+            RadioError::Offline => UNREACHED.into(),
         }
     }
     /// What he asked about is not on any of his computers as this phone last saw them (a message, an agent):
@@ -311,6 +308,16 @@ pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
     let mut q = url::form_urlencoded::Serializer::new(String::new());
     q.extend_pairs(pairs);
     format!("{base}?{}", q.finish())
+}
+
+/// What he is told when his computer could not be reached: the one wording, on the screen
+/// ([`DeskView::cannot_reach`]) and for any request that got no answer.
+pub(crate) const UNREACHED: &str = "Can\u{2019}t reach your computer.";
+
+/// What went wrong, in words for him: the one wording the screens show for any of the core's errors.
+#[uniffi::export]
+pub fn error_words(error: RadioError) -> String {
+    error.said()
 }
 
 impl std::fmt::Display for RadioError {

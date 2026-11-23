@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Condvar;
 pub(crate) use airband_core::ids::StationId;
 mod agents;
-mod colours;
+pub(crate) mod colours;
 mod fanout;
 mod follow;
 mod ids;
@@ -124,6 +124,14 @@ pub(crate) struct Computer {
 }
 /// What he is told when what he acted on is on a computer he is no longer paired with.
 pub(super) const UNPAIRED: &str = "That computer is no longer paired.";
+/// How long something sent stays on screen as on its way while the chat does not have it yet. A timer standing
+/// in for a fact: the tower does not tell the phone when it has dropped a message it took (say one its agent
+/// left before it was delivered). An answer to `airband.radio` saying so would replace it.
+pub(super) const LANDING: Duration = Duration::from_secs(15);
+/// An open request waits up to [`airband_core::HOLD`] for news, so a computer not heard from for longer than
+/// that and a margin has a dead line. A timer standing in for a fact: iOS does not say which of the app's
+/// requests it cut when it put the app away.
+const DEAD_LINE: Duration = Duration::from_secs(airband_core::HOLD.as_secs() + 7);
 /// What he is told when the team he picked has no agents left, so no computer has it.
 pub(super) const NO_TEAM: &str = "That team has no agents now.";
 impl Computer {
@@ -458,8 +466,7 @@ impl Desk {
     pub fn wake(&self) {
         let stale: Vec<StationId> = {
             let state = self.shared.state.lock().unwrap();
-            // a request waits up to 25 seconds for news, so an answer older than that plus a margin is a dead line
-            state.computers.iter().filter(|s| s.answered_at.is_none_or(|t| t.elapsed() > Duration::from_secs(32))).map(|s| s.id()).collect()
+            state.computers.iter().filter(|s| s.answered_at.is_none_or(|t| t.elapsed() > DEAD_LINE)).map(|s| s.id()).collect()
         };
         self.reconnect_these(stale);
     }
@@ -531,7 +538,12 @@ impl Desk {
             (true, [_, _, ..]) => return Err(crate::choices::told("Choose which computer first.")),
             _ => state.computers.iter().find(|s| s.id() == *computer),
         };
-        found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
+        // a computer this phone does not have is gone; one it has that is not answering is out of reach
+        let found = found.ok_or_else(|| crate::choices::told(UNPAIRED))?;
+        if !found.online {
+            return Err(RadioError::Offline);
+        }
+        Ok((found.radio.clone(), station_id(&found.link)))
     }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         self.shared.state.lock().unwrap().owner(message).map(|s| s.radio.clone())

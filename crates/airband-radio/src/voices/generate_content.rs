@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
-pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "generate-content", can: &[], told: &["url", "style", "auth", "rate"] }, make };
+pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "generate-content", can: &[], told: &[crate::models::field::URL, crate::models::field::STYLE, crate::models::field::AUTH, crate::models::field::RATE] }, make };
 
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
-    Ok(Box::new(Generated { reach: Reach::of(voice, by, provider)?, style: by.text("style").into(), voice: voice.get(Job::Voice, crate::models::field::VOICE) }))
+    Ok(Box::new(Generated { reach: Reach::of(voice, by, provider)?, style: by.text(crate::models::field::STYLE).into(), voice: voice.get(Job::Voice, crate::models::field::VOICE) }))
 }
 
 struct Generated {
@@ -43,7 +43,11 @@ impl Synth for Generated {
         for line in BufReader::new(res.into_body().into_reader()).lines() {
             let line = line.map_err(|e| e.to_string())?;
             let Some(data) = line.strip_prefix("data: ") else { continue };
-            let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            // an event that is not JSON is the service saying something else: it is told, never taken for silence
+            let v = serde_json::from_str::<Value>(data).map_err(|_| format!("{} sent something this version of airband cannot read.", self.reach.service.name))?;
+            if let Some(error) = v.get("error") {
+                return Err(format!("{}: {}", self.reach.service.name, error["message"].as_str().unwrap_or("it stopped with an error")));
+            }
             for part in v["candidates"][0]["content"]["parts"].as_array().into_iter().flatten() {
                 if let Some(pcm) = part["inlineData"]["data"].as_str().and_then(unbase64) {
                     sink(&pcm);

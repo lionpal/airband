@@ -10,10 +10,10 @@ use serde_json::json;
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
-pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "timed-stream", can: &[], told: &["url", "auth", "rate"] }, make };
+pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "timed-stream", can: &[], told: &[crate::models::field::URL, crate::models::field::AUTH, crate::models::field::RATE] }, make };
 
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
-    Ok(Box::new(Timed { reach: Reach::of(voice, by, provider)?, model: voice.get(Job::Voice, "model") }))
+    Ok(Box::new(Timed { reach: Reach::of(voice, by, provider)?, model: voice.get(Job::Voice, crate::models::field::MODEL) }))
 }
 
 struct Timed {
@@ -34,7 +34,12 @@ impl Synth for Timed {
         let (mut at, mut gap) = (0u32, true);
         for line in BufReader::new(res.into_body().into_reader()).lines() {
             let line = line.map_err(|e| e.to_string())?;
-            let Ok(part) = serde_json::from_str::<Part>(&line) else { continue };
+            if line.trim().is_empty() {
+                continue;
+            }
+            // a line that is not a part is the service saying something else (an error, most likely): it is
+            // told, never taken for silence
+            let part = serde_json::from_str::<Part>(&line).map_err(|_| unreadable(&self.reach.service))?;
             // the timings, read as the service sends them; a part whose timings do not read marks nothing
             if let Some(Alignment { characters, character_start_times_seconds: starts }) = part.alignment {
                 for (c, start) in characters.iter().zip(starts) {
@@ -52,6 +57,11 @@ impl Synth for Timed {
         }
         Ok(())
     }
+}
+
+/// What he is told when the service's stream holds something this build cannot read.
+fn unreadable(service: &super::Answering) -> String {
+    format!("{} sent something this version of airband cannot read.", service.name)
 }
 
 /// One line of what the service streams back: some of the sound, and where in the text each character of it

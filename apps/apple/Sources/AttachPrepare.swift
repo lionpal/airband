@@ -74,13 +74,15 @@ enum Prepare {
         if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
         // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
         let whole = "video-\(number)" + ending(source)
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return (source, whole, picture) }
+        // with no way to make it smaller, the whole recording goes, untrimmed only when he kept all of it
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return kept == nil ? (source, whole, picture) : nil }
         export.outputURL = file
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true
         if let kept { export.timeRange = CMTimeRange(start: first, end: CMTime(seconds: kept.upperBound, preferredTimescale: 600)) }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in export.exportAsynchronously { done.resume() } }
-        guard export.status == .completed else { return (source, whole, picture) }
+        // a part he trimmed that could not be made is not sent as the whole: the tray shows it failed
+        guard export.status == .completed else { return kept == nil ? (source, whole, picture) : nil }
         return (file, name, picture)
     }
 
@@ -118,8 +120,7 @@ extension RadioModel {
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
-    /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
-    /// the tray it became.
+    /// He tapped one of his newest photos or videos: it goes the way a picked one does.
     func attach(_ asset: PHAsset) {
         let item = newItem(video: asset.mediaType == .video, asset: asset.localIdentifier)
         if item.video {

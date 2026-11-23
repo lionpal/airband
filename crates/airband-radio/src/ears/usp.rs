@@ -10,7 +10,7 @@ use serde_json::json;
 use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 
-pub(super) const LISTENER: Listener = Listener { is: Interface { name: "usp", can: &[], told: &["stream", "pass", "auth"] }, wire: &WIRE, pass, once: false };
+pub(super) const LISTENER: Listener = Listener { is: Interface { name: "usp", can: &[], told: &[crate::models::field::STREAM, crate::models::field::PASS, crate::models::field::AUTH] }, wire: &WIRE, pass, once: false };
 
 const WIRE: Wire = Wire { connect, audio, end: |request| audio(request, &[]), read, header: true, reopens: true };
 

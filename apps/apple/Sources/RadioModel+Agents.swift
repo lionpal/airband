@@ -7,19 +7,19 @@ import UIKit
 extension RadioModel {
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.
     func folders(on computer: String, under: String, done: @escaping (DeskFolders?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.folders(computer: computer, under: under) }, then: done)
+        ask("Couldn\u{2019}t read the folders.", { try self.desk.folders(computer: computer, under: under) }, then: done)
     }
 
     /// The folders the coding tools on a computer have had sessions in, newest first. Calls back with them, or
     /// with what is wrong.
     func recentFolders(on computer: String, done: @escaping ([DeskRecent]?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.recentFolders(computer: computer) }, then: done)
+        ask("Couldn\u{2019}t read the folders.", { try self.desk.recentFolders(computer: computer) }, then: done)
     }
 
     /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
     /// Calls back with the team's room id ([`DeskRoom.id`]), or with what is wrong.
     func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
+        ask("The agent did not start.", { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
     }
 
     /// One tap on an answer button: it goes as what the button stood for.
@@ -83,8 +83,9 @@ extension RadioModel {
 
     /// Try again a message that was not sent.
     func sendAgain(_ o: DeskOutgoing) { desk.sendAgain(id: o.id) }
-    /// Let go of a message that was not sent.
-    func discardUnsent(_ o: DeskOutgoing) { _ = desk.discardUnsent(id: o.id) }
+    /// Let go of a message that was not sent. Its words come back, for a screen that puts them back where he
+    /// types; Delete drops them.
+    @discardableResult func discardUnsent(_ o: DeskOutgoing) -> String? { desk.discardUnsent(id: o.id) }
     /// How each computer was last reached, as this phone saw it.
     func reach() -> [DeskReach] { desk.reach() }
     /// The record of failed requests, for him to copy. Made here and sent nowhere.
@@ -102,7 +103,7 @@ extension RadioModel {
 
     /// Send the words of one of his messages again, to another agent.
     func resend(_ m: ChatMessage, to agent: DeskMember) {
-        fetch.async { self.desk.resend(messageId: m.id, agentId: agent.id) }
+        tell("It was not sent.") { try self.desk.resend(messageId: m.id, agentId: agent.id) }
     }
 
     /// The phone has made a picked photo or video ready (or could not): hand it to the desk, which sends it to
@@ -147,13 +148,17 @@ extension RadioModel {
     /// What was said between him and this agent just before a message.
     func thread(before m: ChatMessage) -> [ChatMessage] { desk.thread(messageId: m.id) }
 
-    /// Fetch what the agent actually wrote, once.
+    /// Fetch what the agent actually wrote, once it arrives. Until then the opening is shown; a fetch that
+    /// failed is tried again the next time it is on screen.
     func loadFull(_ m: ChatMessage) {
-        guard m.long, full[m.id] == nil else { return }
-        full[m.id] = m.text // shown until the real text arrives, and stops a second request
+        guard m.long, full[m.id] == nil, !fetching.contains(m.id) else { return }
+        fetching.insert(m.id)
         fetch.async {
-            guard let text = try? self.desk.full(messageId: m.id) else { return }
-            DispatchQueue.main.async { self.full[m.id] = text }
+            let text = try? self.desk.full(messageId: m.id)
+            DispatchQueue.main.async {
+                self.fetching.remove(m.id)
+                if let text { self.full[m.id] = text }
+            }
         }
     }
 
@@ -217,10 +222,12 @@ extension RadioModel {
         }
     }
 
-    @MainActor func setCalling(_ on: Bool) async {
+    /// Turn the call on or off. Turning it on needs the microphone: when it is not allowed the call stays off,
+    /// and he is told on the phone unless `tell` is false (the car tells him itself).
+    @MainActor func setCalling(_ on: Bool, tell: Bool = true) async {
         if on {
             if let missing = await voice.authorize() {
-                problem = missing
+                if tell { problem = missing }
                 return
             }
             voice.goOnDuty()
@@ -260,7 +267,8 @@ extension RadioModel {
         // `message`: he is looking at something of one agent's (a picture, say) and this is about that
         let target = message ?? replyingTo
         replyingTo = nil
-        desk.talk(re: target?.id, room: only == nil ? room : nil, agent: target == nil ? only : nil)
+        // who it is for is worked out by the core, as for anything he types
+        desk.talk(re: target?.id, room: room, agent: only)
     }
 
     /// He took back what he was saying: the microphone closes and nothing is sent. Returns what had been heard,

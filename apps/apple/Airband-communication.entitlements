@@ -4,5 +4,5 @@
   <key>aps-environment</key><string>$(AIRBAND_APS)</string>
   <key>com.apple.developer.usernotifications.communication</key><true/>
   <key>com.apple.developer.carplay-voice-based-conversation</key><true/>
-  <key>keychain-access-groups</key><array><string>$(AppIdentifierPrefix)dev.airband.shared</string></array>
+  <key>keychain-access-groups</key><array><string>$(AppIdentifierPrefix)dev.airband.shared</string><string>$(AppIdentifierPrefix)dev.airband.private</string></array>
 </dict></plist>

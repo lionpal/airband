@@ -138,9 +138,10 @@ impl Mouth {
     }
 
     /// Say `text` in the device's own voice, until it is over or `stop` says to leave off. Err, with why in words
-    /// for him, if not a sound was made: the voice stays the one he chose, and that is kept for him to see.
-    /// Sound is handed to the host about a quarter of a second at a time, so a slow moment in the making is not heard; a service that says when each word is spoken has that
-    /// passed on, for showing the words as they are said.
+    /// for him, if it did not all come out: nothing was made, or the voice broke off partway. The voice stays
+    /// the one he chose, and that is kept for him to see. Sound is handed to the host about a quarter of a
+    /// second at a time, so a slow moment in the making is not heard; a service that says when each word is
+    /// spoken has that passed on, for showing the words as they are said.
     pub(crate) fn say(&self, host: &dyn RadioHost, text: &str, stop: &dyn Fn() -> bool) -> Result<(), String> {
         use std::cell::RefCell;
         if matches!(self.using(), Some(Own::Host)) {
@@ -188,10 +189,16 @@ impl Mouth {
         if started {
             // the rest, and wait until it has all been heard
             host.play(rate, held, true);
+            // a voice that broke off partway was not heard whole: it is not counted as heard
+            if let Err(why) = made {
+                return fail(format!("The voice you chose stopped partway. {why}"));
+            }
             *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return Ok(());
         }
         fail(match made {
+            // a service's reason names it already; a model's is said as the voice not speaking
+            Err(why) if matches!(self.using(), Some(Own::Service(_))) => why,
             Err(why) => format!("The voice you chose did not speak: {why}"),
             Ok(_) => NO_SOUND.into(),
         })
@@ -234,5 +241,72 @@ mod tests {
         // different voices make different sound
         took.dedup();
         assert!(took.len() > 1);
+    }
+}
+
+#[cfg(test)]
+mod breaking_off {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::Mutex;
+
+    /// A host that keeps what it was told and how much sound it was handed.
+    #[derive(Default)]
+    struct Heard {
+        told: Mutex<Vec<String>>,
+        played: Mutex<usize>,
+    }
+    impl RadioHost for Heard {
+        fn told(&self, text: String) {
+            self.told.lock().unwrap().push(text);
+        }
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn unplaced(&self, _: crate::Outgoing, _: Option<String>, _: Vec<String>) {}
+        fn speak(&self, _: String) {}
+        fn listen(&self) -> Option<String> {
+            None
+        }
+        fn status(&self, _: crate::RadioStatus) {}
+        fn play(&self, _: u32, pcm: Vec<u8>, _: bool) {
+            *self.played.lock().unwrap() += pcm.len();
+        }
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn outbox(&self, _: Vec<crate::Outgoing>, _: Option<String>) {}
+        fn hearing(&self, _: String) {}
+        fn run_model(&self, _: String, _: String, _: crate::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_voice_that_breaks_off_partway_is_not_counted_as_heard() {
+        // a voice server that promises a second of sound, sends half of it, and hangs up
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut asked = [0u8; 4096];
+            let _ = s.read(&mut asked).unwrap();
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/pcm\r\nContent-Length: 48000\r\n\r\n").unwrap();
+            s.write_all(&[0u8; 24000]).unwrap();
+        });
+        let mut with = airband_core::providers::Use::of("local", "voice-server");
+        with.set.insert(crate::models::field::URL.into(), serde_json::json!(at));
+        with.set.insert(crate::models::field::RATE.into(), serde_json::json!("24000"));
+        let mouth = Mouth::default();
+        mouth.set(Some(Own::Service(with)));
+        let host = Heard::default();
+        let said = crate::voice::say_until(&host, &mouth, "Shop two is waiting.", &|| false);
+        server.join().unwrap();
+        // what came out was played, but it was not heard whole: it counts as not heard, and he is told
+        assert!(*host.played.lock().unwrap() > 0);
+        assert!(matches!(said, crate::voice::Said::Nothing(ref why) if why.starts_with("The voice you chose stopped partway")));
+        assert_eq!(host.told.lock().unwrap().len(), 1);
     }
 }

@@ -28,7 +28,19 @@ impl ReadMarks {
     }
     /// Keep them on the device. The words to tell him when they could not be kept.
     #[must_use]
-    pub(super) fn keep(&self) -> Option<String> {
+    pub(super) fn keep(&mut self) -> Option<String> {
+        // the file could not be read when the app opened: once it can be, what it holds is taken, with what
+        // was read since and a main computer chosen since kept over it
+        if let Some(Some(Some(found))) = self.keeper.read_again::<Option<ReadMarks>>() {
+            for (agent, at) in found.upto {
+                let mine = self.upto.entry(agent).or_insert(at);
+                *mine = (*mine).max(at);
+            }
+            self.since = self.since.min(found.since);
+            if self.main.is_none() {
+                self.main = found.main;
+            }
+        }
         crate::kept::told(self.keeper.save(self), "What you have read, and your main computer, are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
@@ -125,7 +137,7 @@ impl Desk {
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
             new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },
             tools: used,
-            cannot_reach: if away.is_empty() { "Can\u{2019}t reach your computer".to_string() } else { format!("Can\u{2019}t reach {}", away.join(", ")) },
+            cannot_reach: if away.is_empty() { crate::UNREACHED.to_string() } else { format!("Can\u{2019}t reach {}.", away.join(", ")) },
             colours: state.colours.all(),
             paired: !state.computers.is_empty(),
             online: state.computers.iter().any(|s| s.online),
@@ -136,6 +148,12 @@ impl Desk {
             feed,
             rooms,
             unread: unread_from.values().sum(),
+            several_computers: state.computers.len() > 1,
+            unread_elsewhere: {
+                // the team he is in: the one he picked, or the one of the agent he is looking at
+                let team = room.clone().or_else(|| agent.as_ref().and_then(|id| agents.iter().find(|a| a.id == *id)).map(|a| a.room.clone()));
+                unread_from.values().sum::<u32>() - team.and_then(|t| unread_in.get(t.as_str()).copied()).unwrap_or(0)
+            },
             quick,
             sending: sending(&state),
             stations: state.computers.iter().map(|s| DeskComputer { id: s.id().to_string(), name: state.computer_name(&s.id()) }).collect(),
@@ -170,7 +188,7 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     // what an agent is waiting on him for: its newest question still open
     let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
     for a in agents {
-        let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
+        let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, can_stop: a.held && a.state == AgentState::Working, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
         // what the team is doing is said in the name of whoever is doing it, without the team's own name
         let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
             Some(who) => format!("{who}: {d}"),
@@ -184,9 +202,10 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
                     r.state = a.state;
                 }
                 r.doing = r.doing.take().or(doing);
+                r.working |= a.state == AgentState::Working;
                 r.members.push(member);
             }
-            None => rooms.push(DeskRoom { id: a.room.clone(), name: a.group.clone(), state: a.state, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.room.as_str()).copied().unwrap_or(0), colour: state.colour(&a.room) }),
+            None => rooms.push(DeskRoom { id: a.room.clone(), name: a.group.clone(), state: a.state, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.room.as_str()).copied().unwrap_or(0), working: a.state == AgentState::Working, colour: state.colour(&a.room) }),
         }
     }
     rooms.sort_by(|a, b| a.name.cmp(&b.name));
@@ -194,12 +213,12 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     rooms
 }
 
-/// What is on its way: not yet sent, then sent and not yet back in the chat (for a quarter of a minute at most).
+/// What is on its way: not yet sent, then sent and not yet back in the chat (for [`super::LANDING`] at most).
 fn sending(state: &State) -> Vec<DeskOutgoing> {
     state
         .computers
         .iter()
-        .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+        .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < super::LANDING && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
         .map(|o| DeskOutgoing::from(&o))
         .collect()
 }

@@ -69,54 +69,51 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             return
         case NoticeButtons.typed: text = (response as? UNTextInputNotificationResponse)?.userText
         case let id:
-            // what the button stood for, read by the core from the id it made the button with
-            switch noticeTap(action: id) {
-            case .allow: (text, tapped) = (leaveWord(allow: true), .allow)
-            case .deny: (text, tapped) = (leaveWord(allow: false), .deny)
-            case .option(let index):
-                let options = info["options"] as? [String] ?? []
-                text = options.indices.contains(Int(index)) ? options[Int(index)] : nil
-                tapped = text == nil ? nil : .option(index: index)
-            case nil: text = nil
-            }
+            // what the button stood for, read by the core from the id it made the button with, and its words
+            let button = noticeButton(action: id, options: info["options"] as? [String] ?? [])
+            (text, tapped) = (button?.words, button?.tapped)
         }
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, let station = info["station"] as? String, let message = info["message"] as? String else { return done() }
-        // the system allows some seconds for this with the app behind the lock screen
-        let task = UIApplication.shared.beginBackgroundTask(withName: "answer", expirationHandler: nil)
-        let finished = DispatchSemaphore(value: 0)
-        let failure = Failure()
-        DispatchQueue.global(qos: .userInitiated).async {
-            // what became of it, with the words he is told, comes from the core
-            switch RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) {
-            case .sent: break
-            case .keptForLater(let why), .refused(let why), .notPaired(let why): failure.set(why)
-            }
-            finished.signal()
-        }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let name = called ?? "your agent"
-            // still going after a while: he is told it is still going, and later what became of it
-            if finished.wait(timeout: .now() + 20) == .timedOut {
-                Self.say(title: "Still sending to " + name, body: "“\(text)”. Open airband to check.", room: room, agent: agent)
-                finished.wait()
-            }
-            if let why = failure.get() { Self.say(title: "Not sent to " + name, body: "“\(text)”. \(why)", room: room, agent: agent) }
-            DispatchQueue.main.async {
+        let name = called ?? "your agent"
+        // the system allows some seconds for this with the app behind the lock screen. When they run out
+        // before the core has an answer, he is told it is still on its way, and the work is let go
+        let finish = Once()
+        var task = UIBackgroundTaskIdentifier.invalid
+        let end = {
+            finish.run {
                 done()
                 UIApplication.shared.endBackgroundTask(task)
             }
         }
+        task = UIApplication.shared.beginBackgroundTask(withName: "answer") {
+            Self.say(title: "Still sending to " + name, body: "\u{201C}\(text)\u{201D}. Open airband to check.", room: room, agent: agent)
+            end()
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            // what became of it, with the words he is told, comes from the core
+            switch RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) {
+            case .sent: break
+            case .keptForLater(let why): Self.say(title: "Waiting to send to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
+            case .refused(let why), .notPaired(let why): Self.say(title: "Not sent to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
+            }
+            DispatchQueue.main.async { end() }
+        }
     }
 
-    /// Why an answer did not go, set from one thread and read from another.
-    private final class Failure: @unchecked Sendable {
+    /// Something done once, whichever thread asks first.
+    private final class Once: @unchecked Sendable {
         private let lock = NSLock()
-        private var why: String?
-        func set(_ text: String) { lock.lock(); if why == nil { why = text }; lock.unlock() }
-        func get() -> String? { lock.lock(); defer { lock.unlock() }; return why }
+        private var done = false
+        func run(_ work: () -> Void) {
+            lock.lock()
+            let first = !done
+            done = true
+            lock.unlock()
+            if first { work() }
+        }
     }
 
-    /// Tell him, where he gave the answer, that it did not go. A tap opens the app on that agent.
+    /// Tell him, where he gave the answer, what became of it. A tap opens the app on that agent.
     private static func say(title: String, body: String, room: String, agent: String) {
         let content = UNMutableNotificationContent()
         content.title = title

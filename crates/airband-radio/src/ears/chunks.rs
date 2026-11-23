@@ -10,7 +10,7 @@ use serde_json::json;
 use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 
-pub(super) const LISTENER: Listener = Listener { is: Interface { name: "chunks", can: &[], told: &["stream", "pass", "auth"] }, wire: &WIRE, pass, once: true };
+pub(super) const LISTENER: Listener = Listener { is: Interface { name: "chunks", can: &[], told: &[crate::models::field::STREAM, crate::models::field::PASS, crate::models::field::AUTH] }, wire: &WIRE, pass, once: true };
 
 const WIRE: Wire = Wire { connect, audio: |_, bytes| chunk(bytes, false), end: |_| chunk(&[0u8; 3200], true), read, header: false, reopens: false };
 
@@ -20,14 +20,19 @@ fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) 
     pass_field(by, service, set, key, None, "token")
 }
 
+/// A language tag's primary subtag (BCP 47: the letters before the first hyphen), when it has one.
+fn primary_subtag(tag: &str) -> Option<&str> {
+    let primary = tag.split_once('-').map_or(tag, |(p, _)| p);
+    (primary.len() >= 2 && primary.chars().all(|c| c.is_ascii_alphabetic())).then_some(primary)
+}
+
 /// The pass goes in the address, with the model, the language and the names he is likely to say.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
     let model = grant.get(crate::models::field::MODEL);
     let mut query: Vec<(&str, &str)> = vec![("model_id", model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
-    // its language codes are two letters ("en"), where a setting may say "en-US"
-    let language = grant.get(crate::models::field::LANGUAGE);
-    if let Some(language) = language.split('-').next().filter(|l| !l.is_empty()) {
+    // its language codes are the primary subtag ("en") of the tag a setting gives ("en-US")
+    if let Some(language) = primary_subtag(grant.get(crate::models::field::LANGUAGE)) {
         query.push(("language_code", language));
     }
     // the names he is likely to say, so "shop two" is not heard as something else

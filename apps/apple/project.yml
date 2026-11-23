@@ -93,12 +93,10 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         # an iPad, and a Mac running the iPad app, turn and resize freely
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
-        NSMicrophoneUsageDescription: Airband listens for your reply after an agent speaks, and when you press Talk.
-        NSLocalNetworkUsageDescription: Airband talks straight to your computer when your phone is on the same network.
+        NSMicrophoneUsageDescription: airband listens when you press Talk, and for your reply after an agent speaks.
+        NSLocalNetworkUsageDescription: airband reaches your computer directly when they are on the same network.
         NSCameraUsageDescription: airband uses the camera to scan the pairing code your computer shows.
         NSPhotoLibraryUsageDescription: airband shows your newest photos so you can send one to an agent with one tap.
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
         CFBundleURLTypes:
           - CFBundleURLName: dev.airband.pair
             CFBundleURLSchemes: [airband]

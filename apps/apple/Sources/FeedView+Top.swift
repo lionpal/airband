@@ -59,7 +59,7 @@ extension FeedView {
         return nil
     }
     /// How many unread things are outside the team he is in: shown on the way back to all of them.
-    private var elsewhere: UInt32 { model.view.unread - min(model.view.unread, team?.unread ?? 0) }
+    private var elsewhere: UInt32 { model.view.unreadElsewhere }
     /// What is selected, as the id of its chip: for scrolling the row to it.
     var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
@@ -69,9 +69,6 @@ extension FeedView {
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
-            if subagents > 0 {
-                Text("+\(subagents)").accessibilityLabel(subagents == 1 ? "1 subagent" : "\(subagents) subagents").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Palette.dim : Palette.quiet)
-            }
             if !on { Unread(count: unread) }
         }
         .padding(.horizontal, 14).frame(minHeight: 40)
@@ -98,7 +95,7 @@ extension FeedView {
                 if let team {
                     // inside a team: the team itself, then its agents
                     Button { model.look(room: team.id) } label: {
-                        chip(team.name, on: model.only == nil, dot: team.state, working: team.anyWorking, colour: team.colour, unread: team.unread)
+                        chip(team.name, on: model.only == nil, dot: team.state, working: team.working, colour: team.colour, unread: team.unread)
                     }
                     .buttonStyle(.plain).id("team:" + team.id).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
@@ -117,7 +114,7 @@ extension FeedView {
                     Button {
                         model.look(room: on ? nil : room.id)
                     } label: {
-                        chip(room.name, on: on, dot: room.state, working: room.anyWorking, colour: room.colour, subagents: room.subagents)
+                        chip(room.name, on: on, dot: room.state, working: room.working, colour: room.colour, subagents: room.subagents)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(room.name), \(RadioModel.spoken(state: room.state))\(room.subagents > 0 ? ", \(room.subagents) subagents" : "")")
@@ -230,12 +227,3 @@ extension FeedView {
     }
 }
 
-extension DeskRoom {
-    /// Some agent in it is working, whatever the team's own state says.
-    var anyWorking: Bool { members.contains { $0.state == .working } }
-}
-
-extension DeskMember {
-    /// He can stop what it is doing now: it is at work, and run by its computer.
-    var canStop: Bool { held && state == .working }
-}

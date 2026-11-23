@@ -22,7 +22,8 @@ enum Keychain {
     /// The app's own group: only the app has it (the extension's Info.plist does not name one).
     static let privateGroup = Bundle.main.object(forInfoDictionaryKey: "AirbandKeychainPrivate") as? String
 
-    /// Which group an item lives in.
+    /// Which group an item lives in. A build that does not name the group has no place for it: nothing is
+    /// read from or written to another group in its stead.
     enum Place { case shared, appOnly }
     private static func named(_ place: Place) -> String? {
         let name = place == .shared ? group : privateGroup
@@ -33,8 +34,8 @@ enum Keychain {
     /// Returns whether it was kept.
     @discardableResult
     static func write(_ key: String, _ value: String, in place: Place) -> Bool {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
+        guard let name = named(place) else { return false }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecAttrAccessGroup as String: name]
         let fields: [String: Any] = [
             kSecValueData as String: Data(value.utf8),
             // readable with the screen locked, while driving; on this phone only
@@ -46,8 +47,8 @@ enum Keychain {
         return SecItemAdd(query.merging(fields) { $1 } as CFDictionary, nil) == errSecSuccess
     }
     static func read(_ key: String, in place: Place) -> KeychainRead<String> {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
-        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
+        guard let name = named(place) else { return .failed(errSecMissingEntitlement) }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true, kSecAttrAccessGroup as String: name]
         var out: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &out)
         if status == errSecItemNotFound { return .none }
@@ -139,19 +140,22 @@ enum NoticeButtons {
         let buttons = options.prefix(3).enumerated().map { UNNotificationAction(identifier: noticeOptionId(index: UInt32($0.offset)), title: $0.element, options: []) }
         return UNNotificationCategory(identifier: name(for: options), actions: buttons + [type], intentIdentifiers: [], options: [])
     }
-    /// Add these sets to the ones registered, keeping the others. Calls back once the system has them.
-    static func register(_ more: [UNNotificationCategory], then done: @escaping () -> Void = {}) {
+    /// Add these sets to the ones registered. Answer sets of questions no longer shown are let go; the rest are
+    /// kept. Calls back once the system has them, as read back from it. The app and its extension both
+    /// register: one that finds its sets gone (the other wrote over them) writes them again.
+    static func register(_ more: [UNNotificationCategory], then done: @escaping () -> Void = {}, tries: Int = 3) {
         let center = UNUserNotificationCenter.current()
+        let names = Set(more.map(\.identifier))
         center.getNotificationCategories { have in
-            let names = Set(more.map(\.identifier))
-            var kept = have.filter { !names.contains($0.identifier) }
-            if kept.count == have.count - names.count && names.allSatisfy({ noticeIsAnswers(name: $0) }) { return done() } // a question asked before
-            // old questions' answers are not kept for ever
-            let asked = kept.filter { noticeIsAnswers(name: $0.identifier) }
-            if asked.count > 48 { kept.subtract(asked.prefix(asked.count - 48)) }
-            center.setNotificationCategories(kept.union(more))
-            // the system takes a moment to have them; a notification shown before that has no buttons
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3, execute: done)
+            if names.isSubset(of: Set(have.map(\.identifier))) { return done() }
+            center.getDeliveredNotifications { shown in
+                // a question's answers are needed while its notification is up, and not after
+                let showing = Set(shown.map(\.request.content.categoryIdentifier))
+                let kept = have.filter { !names.contains($0.identifier) && (!noticeIsAnswers(name: $0.identifier) || showing.contains($0.identifier)) }
+                center.setNotificationCategories(kept.union(more))
+                guard tries > 0 else { return done() }
+                register(more, then: done, tries: tries - 1)
+            }
         }
     }
 }

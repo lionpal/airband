@@ -105,6 +105,32 @@ pub fn notice_tap(action: String) -> Option<Tapped> {
         _ => action.strip_prefix(OPTION).and_then(|n| n.parse().ok()).map(|index| Tapped::Option { index }),
     }
 }
+/// One button under a question: its words, and what it stands for.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AnswerButton {
+    pub words: String,
+    pub tapped: Tapped,
+}
+/// The buttons under a question, in order: Allow and Deny for a request for leave, else the answers it offered.
+/// The one rule, for the chat and for a notification.
+#[uniffi::export]
+pub fn answer_buttons(permission: bool, options: Vec<String>) -> Vec<AnswerButton> {
+    if permission {
+        return [Tapped::Allow, Tapped::Deny].into_iter().map(|tapped| AnswerButton { words: tapped.words(), tapped }).collect();
+    }
+    options.into_iter().enumerate().map(|(i, words)| AnswerButton { words, tapped: Tapped::Option { index: i as u32 } }).collect()
+}
+/// The button of a notification that was tapped, from the id it was made with and the answers the question
+/// offered: its words and what it stands for. Nothing for any other id, or an answer it did not offer.
+#[uniffi::export]
+pub fn notice_button(action: String, options: Vec<String>) -> Option<AnswerButton> {
+    let tapped = notice_tap(action)?;
+    let words = match &tapped {
+        Tapped::Allow | Tapped::Deny => tapped.words(),
+        Tapped::Option { index } => options.into_iter().nth(*index as usize)?,
+    };
+    Some(AnswerButton { words, tapped })
+}
 /// The name of the set of buttons for these answers: the same answers always get the same name.
 #[uniffi::export]
 pub fn notice_answers_name(options: Vec<String>) -> String {

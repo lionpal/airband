@@ -6,11 +6,11 @@ use super::{Made, Reach, Synth, Voicing};
 use airband_core::providers::{By, Interface, Job, Provider, Use};
 use std::time::Duration;
 
-pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "ssml", can: &[], told: &["url", "language", "auth", "rate"] }, make };
+pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "ssml", can: &[], told: &[crate::models::field::URL, crate::models::field::LANGUAGE, crate::models::field::AUTH, crate::models::field::RATE] }, make };
 
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
     let reach = Reach::of(voice, by, provider)?;
-    Ok(Box::new(Ssml { language: by.text("language").into(), voice: voice.get(Job::Voice, crate::models::field::VOICE), reach }))
+    Ok(Box::new(Ssml { language: by.text(crate::models::field::LANGUAGE).into(), voice: voice.get(Job::Voice, crate::models::field::VOICE), reach }))
 }
 
 struct Ssml {

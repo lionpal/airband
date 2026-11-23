@@ -19,7 +19,7 @@ struct AccountsView: View {
                     }
                 }
                 ForEach(model.accounts.filter { $0.note != nil }, id: \.station) { station in
-                    Text(model.accounts.count > 1 ? "\(station.name): \(station.note ?? "")" : station.note ?? "").font(.system(size: 14)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
+                    Text(model.view.severalComputers ? "\(station.name): \(station.note ?? "")" : station.note ?? "").font(.system(size: 14)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
                 }
                 if let problem = model.accountsProblem {
                     Text(problem).font(.system(size: 15)).foregroundStyle(Color.red).padding(.horizontal, 6)

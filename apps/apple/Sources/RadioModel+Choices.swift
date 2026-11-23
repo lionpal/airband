@@ -70,9 +70,10 @@ extension RadioModel {
                 try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
                 try? AVAudioSession.sharedInstance().setActive(true)
                 self.previewPlayer = player
+                // the row stops showing it as playing when the player says the clip is over
+                self.previewEnd.ended = { [weak self] in if self?.previewing == choice.name { self?.previewing = nil } }
+                player.delegate = self.previewEnd
                 player.play()
-                // the row stops showing it as playing when the clip is over
-                DispatchQueue.main.asyncAfter(deadline: .now() + player.duration + 0.2) { if self.previewing == choice.name { self.previewing = nil } }
             }
         }.resume()
     }

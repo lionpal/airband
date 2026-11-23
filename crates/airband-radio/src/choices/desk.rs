@@ -99,7 +99,11 @@ impl Desk {
                 host.changed();
             }
             // every computer it can reach is asked at once, each with what it needs: a key only where it has none
-            let per = fan_out(online, |radio| send_reads(&wanted, phone_key.as_deref(), radio));
+            let per = fan_out(online, |radio| match radio.reads_offered() {
+                // he is choosing now: nothing newer can be waiting
+                Ok(offered) => send_reads(&wanted, phone_key.as_deref(), radio, offered, || true).unwrap_or(Reach::Unreachable),
+                Err(e) => Reach::of(Err(e)),
+            });
             // every computer it reached said no: nothing changed anywhere, and he is told why
             if !per.is_empty() && per.values().all(|r| r.why_not().is_some()) {
                 let state = self.shared.state.lock().unwrap();
@@ -219,7 +223,7 @@ impl Desk {
     }
 
     /// He uses these coding tools, the one he uses most first. What can write his summaries follows from them.
-    /// Ids the catalogue does not have are left out; with none left, nothing changes.
+    /// Ids the catalogue does not have are left out; with none left, nothing changes, so one always stays.
     pub fn set_tools(&self, tools: Vec<String>) {
         let known: Vec<String> = tools.into_iter().filter(|t| airband_core::catalog::current().tools.iter().any(|k| k.id == *t)).collect();
         if !known.is_empty() {
@@ -232,29 +236,30 @@ impl Desk {
 
 }
 
-/// What one computer does with what is to write his summaries: it is asked once what it can read with, then
-/// sent the choice, with a key only where it has none of its own. When it takes it, its own account comes
-/// back, with what it reads now as it took it. A computer that could not say what it reads with is asked again
-/// later: nothing is decided about it from what it did not say.
-fn send_reads(wanted: &ReadsWanted, phone_key: Option<&str>, radio: &Radio) -> Reach<ReadsOffered> {
-    let mut offered = match radio.reads_offered() {
-        Ok(offered) => offered,
-        Err(e) => return Reach::of(Err(e)),
+/// What one computer does with what is to write his summaries, given what it said it can read with: sent the
+/// choice, with a key only where it has none of its own, unless `still` says the choice has changed since. When
+/// it takes it, its own account comes back, with what it reads now as it took it.
+fn send_reads(wanted: &ReadsWanted, phone_key: Option<&str>, radio: &Radio, mut offered: ReadsOffered, still: impl Fn() -> bool) -> Option<Reach<ReadsOffered>> {
+    let body = match wanted.body_for(phone_key, &offered) {
+        Ok(body) => body,
+        Err(why) => return Some(Reach::Skipped(why)),
     };
-    match wanted.body_for(phone_key, &offered) {
-        Ok(body) => Reach::of(radio.set_reads(&body)).map(|()| {
-            // it tried it with a real call before it said yes: that is what it reads with now, and it works
-            offered.now = Some(airband_core::radio::OfferName { provider: wanted.id.clone(), offer: wanted.offer.clone() });
-            offered.failed = None;
-            offered
-        }),
-        Err(why) => Reach::Skipped(why),
+    // a choice he made while it was being asked goes in its own round: this older one is not sent
+    if !still() {
+        return None;
     }
+    Some(Reach::of(radio.set_reads(&body)).map(|()| {
+        // it tried it with a real call before it said yes: that is what it reads with now, and it works
+        offered.now = Some(airband_core::radio::OfferName { provider: wanted.id.clone(), offer: wanted.offer.clone() });
+        offered.failed = None;
+        offered
+    }))
 }
 
 /// A computer can be reached, on its connection `epoch`: what waits to write his summaries is sent to it if it
-/// is owed it, and the main computer's word on what it can read with is kept. Blocks: called on a thread of its
-/// own, when it is reached and on each round while it is owed the choice.
+/// is owed it, and the main computer's word on what it can read with is kept. It is asked what it can read with
+/// once. One that could not say is asked again later: nothing is decided about it from what it did not say.
+/// Blocks: called on a thread of its own, when it is reached and on each round while it is owed the choice.
 pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_offered: bool) {
     let chooser = &shared.chooser;
     let (radio, is_main) = {
@@ -264,10 +269,15 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
         (computer.radio.clone(), is_main)
     };
     let owed = chooser.saved().reads.filter(|i| i.owed(station));
-    let offered = match owed {
-        Some(intent) => {
+    if owed.is_none() && !(ask_offered && is_main) {
+        return;
+    }
+    let asked = radio.reads_offered();
+    let offered = match (owed, asked) {
+        (Some(intent), Ok(offered)) => {
             let phone_key = kept_key(&*shared.host, &intent.wanted.id);
-            let reach = send_reads(&intent.wanted, phone_key.as_deref(), &radio);
+            let still = || chooser.saved().reads.is_some_and(|i| i.rev == intent.rev);
+            let Some(reach) = send_reads(&intent.wanted, phone_key.as_deref(), &radio, offered.clone(), still) else { return };
             // what changes is the choice that was sent: one he made meanwhile is left as it is
             let kept = chooser.change(|s| {
                 if let Some(now) = s.reads.as_mut().filter(|i| i.rev == intent.rev) {
@@ -278,18 +288,35 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
                 shared.host.note(e.said());
             }
             match reach {
-                Reach::Done(offered) => Some(offered),
-                _ if ask_offered && is_main => radio.reads_offered().ok(),
-                _ => None,
+                Reach::Done(after) => after,
+                _ => offered,
             }
         }
-        None if ask_offered && is_main => radio.reads_offered().ok(),
-        None => None,
+        (Some(intent), Err(e)) => {
+            let reach: Reach<ReadsOffered> = Reach::of(Err(e));
+            let kept = chooser.change(|s| {
+                if let Some(now) = s.reads.as_mut().filter(|i| i.rev == intent.rev) {
+                    now.record(station, &reach);
+                }
+            });
+            if let Err(e) = kept {
+                shared.host.note(e.said());
+            }
+            return;
+        }
+        (None, Ok(offered)) => offered,
+        // it could not say: nothing is decided from that, and it is asked again when it is reached
+        (None, Err(_)) => return,
     };
     // what can write summaries, and what does now, as the main computer says: another computer's word on it
-    // does not stand in for the main one's
+    // does not stand in for the main one's, and a computer no longer the main one, or on a connection since
+    // replaced, is not taken at its word
+    let still_main = || {
+        let mut state = shared.state.lock().unwrap();
+        state.main().is_some_and(|s| s.id() == *station) && state.live(station, epoch).is_some()
+    };
     if is_main
-        && let Some(offered) = offered
+        && still_main()
         && let Err(e) = chooser.change(|s| s.offered = Some(offered))
     {
         shared.host.note(e.said());
