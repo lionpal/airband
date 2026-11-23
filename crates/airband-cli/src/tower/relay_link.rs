@@ -281,6 +281,7 @@ impl Serve {
             self.refused(&call, "the relay", Refusal::told(wrong_clock()))
         } else {
             if !self.first_time(&call.id, now) {
+                // its first copy is being answered; an answer to this one would reach the radio in its place
                 return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
             }
             self.dispatch(&call, "the relay", true).await

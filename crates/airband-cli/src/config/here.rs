@@ -18,6 +18,11 @@ pub(crate) fn lan_addrs() -> Vec<std::net::Ipv4Addr> {
 /// network laid over the internet gives its machines. The tower listens on these besides the machine itself.
 /// Which product made the network is not known here and not asked.
 pub(crate) fn overlay_addrs() -> Vec<std::net::Ipv4Addr> {
+    // The end-to-end suites that prove the relay path turn these off, so a test machine on such a network still
+    // goes through the relay. Only a build with the `stand-ins` feature reads it; the airband he installs never does.
+    if cfg!(feature = "stand-ins") && crate::adapters::env("AIRBAND_STAND_IN_NO_PRIVATE_NETWORK").is_some() {
+        return Vec::new();
+    }
     if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()

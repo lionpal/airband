@@ -9,7 +9,7 @@ Each check names the audit-5 finding it covers (N24, A-5, ...), so a failure say
 phone keeps across a reconnect or a relaunch, and two computers at once, are tried in the phone core's own tests
 (crates/airband-radio/src/desk/tests/scenarios.rs), where the desk can be driven without a screen.
 """
-import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import json, os, shutil, signal, sqlite3, subprocess, sys, tempfile, time, urllib.request, urllib.error
 import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -141,26 +141,38 @@ try:
     check("N43: a report that timed out while the tower was slow, and that it then took, is in the chat once", times == 1, f"{times} times; report said: {late.stdout.strip()} {late.stderr.strip()}")
 
     print("Files of the tower's own that are damaged (A-5, N14)")
-    # something an agent made is kept in a file of the tower's own (its links), so there is one to damage
+    # the tower keeps its tables in its database; something an agent made (its links) puts one there to damage
     report("a1", shop, "made", "https://preview.example.com/build/1", "A preview")
     report("a1", shop, "said", "The preview is up.")
-    until(lambda: os.path.exists(os.path.join(home, ".airband", "links.json")), 10)
+    db = os.path.join(home, ".airband", "airband.db")
+    def kept_tables():
+        c = sqlite3.connect(db)
+        try: return sorted(k for (k,) in c.execute("select key from state where key not like '%.unreadable'"))
+        finally: c.close()
+    until(lambda: "links" in kept_tables(), 10)
     down(tower)
-    kept = sorted(os.path.relpath(os.path.join(d, f), os.path.join(home, ".airband")) for d, _, fs in os.walk(os.path.join(home, ".airband")) for f in fs if f.endswith(".json") and f != "config.json" and "spool" not in d)
-    check("the tower keeps some files of its own to try this on", kept, os.listdir(os.path.join(home, ".airband")))
-    for rel in kept:
-        path = os.path.join(home, ".airband", rel)
-        damaged = b'{"damaged by the test ' + os.urandom(4).hex().encode() + b'"'
-        open(path, "wb").write(damaged)
+    kept = kept_tables()
+    check("the tower keeps some tables of its own to try this on", "links" in kept, kept)
+    for key in kept:
+        damaged = '{"damaged by the test ' + os.urandom(4).hex() + '"'
+        c = sqlite3.connect(db); c.execute("update state set value = ? where key = ?", (damaged, key)); c.commit(); c.close()
         tower = up()
         alive = http("GET", "/v1/status", token=OWN)[0] == 200
         # something for it to write
-        report("a1", shop, "said", f"After {rel} was damaged.")
-        until(lambda: said_by("a1", f"After {rel}"), 8)
+        report("a1", shop, "said", f"After {key} was damaged.")
+        until(lambda: said_by("a1", f"After {key}"), 8)
         down(tower)
-        folder = os.path.dirname(path)
-        aside = any(open(os.path.join(folder, f), "rb").read() == damaged for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)))
-        check(f"A-5/N14: {rel} damaged: the tower still starts, and what was there is kept, never written over", alive and aside, f"started: {alive}, kept: {aside}")
+        c = sqlite3.connect(db); aside = c.execute("select value from state where key = ?", (key + ".unreadable",)).fetchone(); c.close()
+        check(f"A-5/N14: the kept {key} damaged: the tower still starts, and what was there is kept, never written over", alive and aside == (damaged,), f"started: {alive}, kept: {aside}")
+    # a database that cannot be read at all: nothing is started on top of it, and it is left as it was
+    good = {f: open(f, "rb").read() for f in (db, db + "-wal", db + "-shm") if os.path.exists(f)}
+    for f in good: os.remove(f)
+    open(db, "wb").write(b"damaged by the test, not a database at all" * 100)
+    try: refused = subprocess.run([BIN, "run"], env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired as e: refused = subprocess.CompletedProcess(e.cmd, 0, "", "it ran on, on a database it could not read")
+    check("A-5/N14: a database that does not read stops the tower, with a reason, and is left as it was",
+          refused.returncode != 0 and (refused.stderr or refused.stdout).strip() and open(db, "rb").read() == b"damaged by the test, not a database at all" * 100, (refused.returncode, (refused.stderr or refused.stdout)[-200:]))
+    for f, data in good.items(): open(f, "wb").write(data)
     tower = up()
 
     print("His settings damaged")

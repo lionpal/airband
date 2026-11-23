@@ -35,7 +35,9 @@ config = {"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "C
 if os.environ.get("AIRBAND_E2E_ADMISSION"):
     config["relay_admission"] = os.environ["AIRBAND_E2E_ADMISSION"]
 json.dump(config, open(os.path.join(home, ".airband", "config.json"), "w"))
-tower_env, phone_env = dict(os.environ, HOME=home), dict(os.environ, HOME=client)
+# a machine on a private network (100.64.0.0/10) would give the phone that address too, and it would go straight;
+# the stand-ins build is told to leave those out, so the relay path is what is proved here
+tower_env, phone_env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_NO_PRIVATE_NETWORK="1"), dict(os.environ, HOME=client)
 results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))

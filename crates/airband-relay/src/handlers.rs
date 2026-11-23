@@ -98,13 +98,14 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
 /// line for the next pull, while its radio still waits, instead of being lost with the connection.
 struct HandOver {
     sealed: Option<Bytes>,
+    len: u64,
     /// The request, to put back: (relay, channel, id, what was sealed). None once it has all been written.
     back: Option<(Arc<Relay>, String, String, Bytes)>,
 }
 
 impl HandOver {
     fn new(relay: Arc<Relay>, channel: String, id: String, sealed: Bytes) -> HandOver {
-        HandOver { sealed: Some(sealed.clone()), back: Some((relay, channel, id, sealed)) }
+        HandOver { sealed: Some(sealed.clone()), len: sealed.len() as u64, back: Some((relay, channel, id, sealed)) }
     }
 }
 
@@ -112,17 +113,15 @@ impl http_body::Body for HandOver {
     type Data = Bytes;
     type Error = std::convert::Infallible;
     fn poll_frame(mut self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
-        match self.sealed.take() {
-            Some(sealed) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(sealed)))),
-            // asked for more after the whole of it was taken to be written: handed over
-            None => {
-                self.back = None;
-                std::task::Poll::Ready(None)
-            }
-        }
+        // Taken to be written: handed over. The server stops at the stated length and drops the body without
+        // asking for more, so waiting for that second ask put every request back in line while its radio
+        // waited, and the tower was handed it again and again. Only a pull dropped before its body was read
+        // puts its request back.
+        self.back = None;
+        std::task::Poll::Ready(self.sealed.take().map(|sealed| Ok(http_body::Frame::data(sealed))))
     }
     fn size_hint(&self) -> http_body::SizeHint {
-        http_body::SizeHint::with_exact(self.back.as_ref().map_or(0, |(.., sealed)| sealed.len() as u64))
+        http_body::SizeHint::with_exact(self.len)
     }
 }
 
@@ -412,6 +411,29 @@ mod tests {
         let (status, body) = text(pull(State(relay.clone()), Path(keys.channel.clone()), tower).await).await;
         assert_eq!((status, body.as_str()), (200, "sealed"));
         assert!(relay.channels.lock().unwrap()[&keys.channel].queue.is_empty());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[tokio::test]
+    async fn a_request_read_to_its_stated_length_is_handed_over_though_nothing_more_is_asked() {
+        use http_body::Body as _;
+        let (relay, folder) = relay_in_a_folder(None);
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        assert_eq!(open_as(&relay, &keys, "").await, 201);
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        {
+            let mut channels = relay.channels.lock().unwrap();
+            let ch = channels.get_mut(&keys.channel).unwrap();
+            ch.waiting.insert("r1".into(), tx);
+            ch.queue.push_back(("r1".into(), Bytes::from_static(b"sealed")));
+        }
+        let auth = token(&keys.pull_token);
+        let mut body = pull(State(relay.clone()), Path(keys.channel.clone()), with(&[(auth.0, &auth.1)])).await.into_body();
+        // as the server writes it: the one frame, then the body dropped at its stated length, its radio still waiting
+        let frame = std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await.unwrap().unwrap().into_data().unwrap();
+        assert_eq!(&frame[..], b"sealed");
+        drop(body);
+        assert!(relay.channels.lock().unwrap()[&keys.channel].queue.is_empty(), "not put back in line to be handed again");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

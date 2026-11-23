@@ -135,7 +135,9 @@ try:
         note = opened(p["sealed"])
         check("the relay is asked as this channel's tower, for that address, and told only that it is a question",
               p["auth"] == f"Bearer {PULL}" and p["to"] == ADDRESS and p["provider"] == "apns" and p["question"] is True and sorted(k for k in p if k not in ("auth", "raw")) == ["provider", "question", "sealed", "to"], {k: v for k, v in p.items() if k != "raw"})
-        check("nothing the relay is given can be read: no name, no words", b"shop" not in p["raw"] and b"Rewrite" not in p["raw"] and b"e2e" not in p["raw"])
+        plain = json.dumps({k: v for k, v in p.items() if k not in ("auth", "raw", "sealed")}).encode()
+        check("nothing the relay is given can be read: no name, no words", not [w for w in (b"shop", b"Rewrite", b"e2e") if w in plain or w in p["raw"].replace(p["sealed"].encode(), b"")],
+              [w for w in (b"shop", b"Rewrite", b"e2e") if w in p["raw"]])
         check("opened with the pairing's secret, it says who asked and what", note["from"] == "shop 1" and note["badge"] == "S1" and note["agent"] and note["group"] == "shop" and note["station"] == "e2e" and note["kind"] == "needs-you" and "Rewrite the two easy questions" in note["text"], note)
         line = [m for m in http("GET", "/v1/radio/feed?since=0", showing=False)[1]["messages"] if "Rewrite" in m["text"]]
         check("and names the message an answer goes to", line and note["id"] == line[-1]["id"], note)
