@@ -66,6 +66,10 @@ fi
 
 echo "▸ Rust core, Swift module, Xcode project…"
 "$ROOT/scripts/build-apple.sh"
+# The archive links the core where that build put it (build-apple.sh reads CARGO_TARGET_DIR the same way), never a
+# copy left in the repository's target folder by an earlier build.
+RUST_TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
+case "$RUST_TARGET" in /*) ;; *) RUST_TARGET="$ROOT/$RUST_TARGET" ;; esac
 
 echo "▸ Apple's record of the app and its extension…"
 python3 "$ROOT/scripts/apple-ids.py"
@@ -118,7 +122,7 @@ echo "▸ Archiving…"
 rm -rf "$ARCHIVE"
 # the build's own status decides, not the filter on its output (pipefail is on; grep finding nothing is not a failure)
 xcodebuild -project "$APP/Airband.xcodeproj" -scheme Airband -configuration Release -destination 'generic/platform=iOS' \
-  -archivePath "$ARCHIVE" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" AIRBAND_WIDGETS_PROFILE="$WIDGETS_PROFILE" "${COMMUNICATION[@]}" \
+  -archivePath "$ARCHIVE" AIRBAND_RUST_TARGET="$RUST_TARGET" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" AIRBAND_WIDGETS_PROFILE="$WIDGETS_PROFILE" "${COMMUNICATION[@]}" \
   "CODE_SIGN_IDENTITY=$SIGN_AS" archive | { grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true; }
 [[ -d "$ARCHIVE" ]] || { echo "✗ no archive was made"; exit 1; }
 echo "✓ $ARCHIVE"
