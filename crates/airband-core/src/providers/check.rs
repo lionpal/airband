@@ -2,7 +2,8 @@
 //! into the address it is sent to.
 use super::*;
 
-/// The ways a key check is asked.
+/// The ways a key check is asked. Not [`crate::radio::wire::Method`], the methods of airband's own routes: a row
+/// may name only a request that reads, so no catalogue can have his key sent with a `DELETE`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Method {

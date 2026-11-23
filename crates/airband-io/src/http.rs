@@ -68,10 +68,6 @@ impl Status {
     pub fn as_u16(self) -> u16 {
         self.0
     }
-    /// 200 to 299.
-    pub fn is_success(self) -> bool {
-        (200..300).contains(&self.0)
-    }
 }
 
 impl std::fmt::Debug for Response {
@@ -322,7 +318,7 @@ mod tests {
     fn an_answer_is_read_through_this_modules_own_types_whatever_its_status() {
         let (at, served) = answering("HTTP/1.1 409 Conflict\r\ncontent-type: application/json\r\nx-airband-request: r1\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"n\": 7}   ");
         let mut res = Client::new(Duration::from_secs(5)).send(Ask::post(format!("{at}/v1/x")).header("authorization", "Bearer secret").json(&[1, 2])).unwrap();
-        assert_eq!((res.status().as_u16(), res.status().is_success()), (409, false));
+        assert_eq!(res.status().as_u16(), 409);
         assert_eq!((res.header("x-airband-request"), res.has_header("x-airband-kept"), res.header("nope")), (Some("r1"), false, None));
         assert_eq!(res.body_mut().read_json::<serde_json::Value>().unwrap()["n"], 7);
         let sent = served.join().unwrap();
