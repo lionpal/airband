@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn round_trips_and_refuses_a_kind_it_does_not_have() {
         let j = r#"{"schema":"airband.agent/1",
-            "agent":{"id":"a1","harness":"codex","cwd":"/x/shop","deliver":{"kind":"keys","terminal":"tmux","pane":"%3"},"meta":{"model":"gpt-5","branch":"fix/retry"}},
+            "agent":{"id":"a1","harness":"some-tool","cwd":"/x/shop","deliver":{"kind":"keys","terminal":"tmux","pane":"%3"},"meta":{"model":"gpt-5","branch":"fix/retry"}},
             "event":{"type":"said","text":"Done.","kind":"report"}}"#;
         let e: AgentEvent = serde_json::from_str(j).unwrap();
         assert_eq!(e.agent.deliver, Some(Deliver::Keys { terminal: "tmux".into(), pane: "%3".into() }));

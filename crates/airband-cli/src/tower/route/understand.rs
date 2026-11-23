@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn each_launchers_choices_are_listed_apart_and_never_merged_by_a_name_alike() {
         let offers = |models: &[(&str, &str)]| Offers { models: models.iter().map(|(id, name)| Choice { id: id.to_string(), name: name.to_string() }).collect(), ..Offers::default() };
-        let (a, b) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
+        let (a, b) = (LauncherId::new("some-tool"), LauncherId::new("held-some-tool"));
         let menus = vec![(a.clone(), offers(&[("gpt-6.2-sol", "6.2 Sol"), ("gpt-6-luna", "6 Luna")])), (b.clone(), offers(&[("sol-2", "6.2 Sol")]))];
         let listing = Listing::of(&menus, |m| &m.models);
         // each launcher's own, under a number of its own, and no launcher named to the model

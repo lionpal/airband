@@ -92,7 +92,7 @@ answers only.
 - No code: `airband report --id "$SESSION" --harness codex --terminal tmux --pane "$TMUX_PANE" said "$LAST_MESSAGE"`, from
   whatever the harness can run. `… permission "run \`$COMMAND\`"` waits for him and exits 0 for yes, 1 for no
   (his reason on standard output), 2 for no answer.
-- An adapter: a module in `crates/airband-cli/src/adapters/`, selected as `airband hook <harness>`.
+- An adapter: a folder of its own in `crates/airband-cli/src/adapters/tools/` beside the tool's row in `catalog/tools/`, registered by one line in that folder's `mod.rs`, selected as `airband hook <harness>`.
 
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.

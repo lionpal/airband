@@ -13,7 +13,7 @@ pub struct Launcher {
     /// In his own settings the name is the key it is written under, and this is filled in from that.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// The coding tool it starts, by that tool's id ("claude-code"): which adapter its agents report through,
+    /// The coding tool it starts, by that tool's id (its row's, in `catalog/tools/`): which adapter its agents report through,
     /// which launcher carries on an agent of that kind, and what he means when he asks for a tool by name. In a
     /// tool's own row it is that tool, and is filled in from the row.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -130,8 +130,8 @@ mod tests {
         let lines: Held = serde_json::from_str(r#"{"by":"lines","line":"{\"text\":{text}}"}"#).unwrap();
         assert!(matches!(lines, Held::Lines { ref line, stop: None, .. } if line.contains("{text}")));
         assert!(serde_json::from_str::<Held>(r#"{"line":"{text}"}"#).is_err());
-        let acp: Held = serde_json::from_str(r#"{"by":"acp","program":["opencode","acp"]}"#).unwrap();
-        assert_eq!(acp, Held::Acp { program: vec!["opencode".into(), "acp".into()], mode: None });
+        let acp: Held = serde_json::from_str(r#"{"by":"acp","program":["some-tool","acp"]}"#).unwrap();
+        assert_eq!(acp, Held::Acp { program: vec!["some-tool".into(), "acp".into()], mode: None });
         assert_eq!(serde_json::to_value(&acp).unwrap()["by"], "acp");
         // a kind this build has no driver for does not read, and says so
         assert!(serde_json::from_str::<Held>(r#"{"by":"telepathy"}"#).is_err());
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn a_rows_models_are_offered_by_name_with_the_tools_own_id() {
-        let row = Launcher { models: [("opus".to_string(), "claude-opus".to_string())].into(), efforts: vec!["high".into()], ..Launcher::default() };
-        assert_eq!(row.offers(), Offers { models: vec![Choice { id: "claude-opus".into(), name: "opus".into() }], efforts: vec![Choice { id: "high".into(), name: "high".into() }] });
+        let row = Launcher { models: [("big".to_string(), "model-big".to_string())].into(), efforts: vec!["high".into()], ..Launcher::default() };
+        assert_eq!(row.offers(), Offers { models: vec![Choice { id: "model-big".into(), name: "big".into() }], efforts: vec![Choice { id: "high".into(), name: "high".into() }] });
     }
 }

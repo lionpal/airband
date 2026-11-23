@@ -8,10 +8,10 @@ use std::io::Read;
 ///
 ///   airband report --id build-7 --harness my-tool --cwd . --terminal tmux --pane %3 said "Tests pass. Ship it?"
 ///   echo "long message" | airband report --id build-7 --harness my-tool said -
-///   airband report --id build-7 --harness codex show chart.png      (a picture for him, shown with what it says next)
-///   airband report --id build-7 --harness codex permission "run the production migration"   (waits for his yes or no)
-///   airband report --id build-7 --harness codex made https://example.com/preview/7 "Checkout preview"   (a card for it)
-///   airband report --id build-7 --harness codex signoff
+///   airband report --id build-7 --harness my-tool show chart.png      (a picture for him, shown with what it says next)
+///   airband report --id build-7 --harness my-tool permission "run the production migration"   (waits for his yes or no)
+///   airband report --id build-7 --harness my-tool made https://example.com/preview/7 "Checkout preview"   (a card for it)
+///   airband report --id build-7 --harness my-tool signoff
 ///
 /// `--meta key=value` (repeatable) records anything else about the agent: its model, a branch, a ticket.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {

@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn what_he_chose_while_the_file_could_not_be_read_is_kept_over_what_it_holds() {
         let pick = |id: &str| Pick { place: ChoicePlace::Phone, id: id.into(), offer: String::new(), set: BTreeMap::new(), voice: String::new() };
-        let mut found = Saved { ears: Some(pick("kept-ears")), voice: Some(pick("kept-voice")), tools: vec!["codex".into()], ..Saved::default() };
+        let mut found = Saved { ears: Some(pick("kept-ears")), voice: Some(pick("kept-voice")), tools: vec!["some-tool".into()], ..Saved::default() };
         let before = Saved { ears: Some(pick("usual")), voice: Some(pick("usual")), ..Saved::default() };
         let mut since = Saved { voice: Some(pick("chosen-since")), ..before.clone() };
         let mut touched = Touched::default();
@@ -227,6 +227,6 @@ mod tests {
         found.rejoin(since);
         assert_eq!(found.ears, Some(pick("kept-ears")), "a usual one put in at open replaced what he had chosen");
         assert_eq!(found.voice, Some(pick("chosen-since")));
-        assert_eq!(found.tools, ["codex"]);
+        assert_eq!(found.tools, ["some-tool"]);
     }
 }

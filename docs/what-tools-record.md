@@ -13,7 +13,7 @@ comes back (it is written twice). This is what Claude Code's own screen shows "P
     {"type":"pr-link","sessionId":"08613ff5-…","prNumber":194,"prUrl":"https://github.com/acme/shop/pull/194","prRepository":"acme/shop","timestamp":"2026-11-22T00:47:59.530Z"}
 
 The hook for the command itself (`PostToolUse`, tool `Bash`) has only the command's printed output, as text.
-airband reads the transcript line (`adapters/claude_code.rs`, `pull_requests`). There is no title in it, so the
+airband reads the transcript line (`adapters/tools/claude_code/transcript.rs`, `pull_requests`). There is no title in it, so the
 card is called by the repository and the number.
 
 A page it published: the `PostToolUse` hook for the `Artifact` tool carries the tool's answer.

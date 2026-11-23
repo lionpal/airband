@@ -2,20 +2,24 @@
 //! on this machine. An adapter never holds its harness up: it gives up on the tower after a second and a half,
 //! and keeps what the tower did not answer for when it is back (`tower_client`).
 //!
-//! To put another harness on the radio:
-//! - with no code, call `airband report` from whatever the harness can run (see `report.rs`);
-//! - or add a module here that implements [`Harness`] and a line in [`HARNESSES`]. A tool says only what it
-//!   has: one that reports through hooks says which (`hooks.rs` puts them in its file), one that is a server
-//!   to watch says how (`watch`), and either says how his words get into a session of its own (`deliver`),
-//!   which of its sessions are open now (`open`) and which folders it has worked in (`worked`).
-//!   Its row in `catalog/tools/` says what it is called and how the tower starts one. `claude_code.rs` is the
-//!   model for hooks, `opencode.rs` for a server.
-pub(crate) mod claude_accounts;
-pub(crate) mod claude_code;
-pub(crate) mod codex;
+//! To put another coding tool on the radio:
+//! - with no code, call `airband report` from whatever the tool can run (see `report.rs`);
+//! - or give it a row and a folder. Its row, one file in `catalog/tools/`, says what it is called, how the tower
+//!   starts one (a tool the tower holds through the Agent Client Protocol needs nothing more for that), and the
+//!   facts its code asks of it (`with`: its folder, its program, its files). Its folder, `tools/<tool>/`, holds
+//!   everything of that tool's: a `mod.rs` that implements [`Harness`], its account code, its tests and their
+//!   fixtures; a line in each of the two lists in `tools/mod.rs` registers it. Nothing outside the tool's
+//!   folder and its row names it. A tool says only what it has: one that reports through hooks says which
+//!   (`hooks.rs` puts them in its file and reads the parts every such tool shares), one that is a server to
+//!   watch says how (`watch`), and either says how his words get into a session of its own (`deliver`), which of
+//!   its sessions are open now (`open`) and which folders it has worked in (`worked`). Each folder's
+//!   `golden.rs` holds its adapter to what it made of real-shaped fixtures (`golden.rs` here).
 pub(crate) mod hooks;
-pub(crate) mod opencode;
 pub(crate) mod report;
+mod tools;
+#[cfg(test)]
+mod golden;
+use tools::HARNESSES;
 mod accounts;
 mod tower_client;
 pub(crate) use accounts::*;
@@ -207,8 +211,6 @@ pub(crate) fn called(tool: &str) -> (String, String) {
     airband_core::catalog::current().tools.iter().find(|t| t.id == tool).map(|t| (t.name.clone(), t.maker.clone())).unwrap_or_default()
 }
 
-/// Every coding tool with an adapter, by the id its row has. A new one is a module and a line here.
-static HARNESSES: &[&dyn Harness] = &[&claude_code::ClaudeCode, &codex::Codex, &opencode::OpenCode];
 
 fn harness(name: &str) -> Option<&'static dyn Harness> {
     HARNESSES.iter().copied().find(|h| h.name() == name)
@@ -477,31 +479,6 @@ mod held_tests {
         assert_eq!((agent.id.as_str(), agent.title.as_deref()), ("given", None));
         assert!(matches!(agent.deliver, Some(airband_core::agent::Deliver::Held)));
         test_env::clear();
-    }
-}
-
-#[cfg(test)]
-mod row_facts {
-    #[test]
-    fn every_row_fact_the_code_asks_a_built_in_tool_for_is_there() {
-        // the tool ids each adapter is written for, and what each asks of its row: an empty answer would be a
-        // made-up value (an empty home is his home folder itself)
-        let asked: &[(&str, &[&str])] = &[
-            ("claude-code", &["home", "home_env", "pid_env", "entry_env", "inbox_env", "inbox_token_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
-            ("codex", &["home", "home_env", "program", "control_socket", "hooks_file", "sessions"]),
-            ("opencode", &["home", "home_env", "service", "user", "state"]),
-        ];
-        for (tool, facts) in asked {
-            for fact in *facts {
-                assert!(!super::row_says(tool, fact).is_empty(), "the {tool} row says nothing for {fact}");
-            }
-        }
-        // a sign-in is started by the arguments the row lists, none written in the code
-        assert_eq!(super::claude_accounts::sign_in_args().unwrap(), ["auth", "login"]);
-        // Codex is handed words by the command its row gives, his words one whole word of it
-        let run = super::tool_row("codex").unwrap().command("deliver", &[("program", "codex"), ("session", "t1"), ("words", "--yes {session}")]);
-        assert_eq!(run.first().map(String::as_str), Some("codex"));
-        assert!(run.contains(&"t1".to_string()) && run.contains(&"--yes {session}".to_string()) && !run.iter().any(|w| w == "{words}"), "{run:?}");
     }
 }
 

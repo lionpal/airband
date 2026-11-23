@@ -1,0 +1,23 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-19T17:30:00.000Z"}
+{"type":"user","uuid":"a0","cwd":"/x/shop","timestamp":"2026-11-19T17:30:01.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"look at the cart"}}
+{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>","commandRun":{"command":"remote-control","args":"shop 2"}}
+{"type":"pr-link","sessionId":"s1","prNumber":193,"prUrl":"https://github.com/acme/shop/pull/193","prRepository":"acme/shop","timestamp":"2026-11-19T17:31:00.000Z"}
+{"type":"assistant","isSidechain":false,"effort":"medium","timestamp":"2026-11-19T17:32:00.000Z","message":{"model":"claude-opus-4-7","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/x/shop/cart.ts"}}]}}
+{"type":"user","timestamp":"2026-11-19T17:32:01.000Z","message":{"content":[{"type":"tool_result","content":"…"}]}}
+{"type":"user","uuid":"a1","timestamp":"2026-11-19T17:37:34.021Z","origin":{"kind":"human"},"message":{"role":"user","content":"ok so how do i get a qr code"}}
+{"type":"user","uuid":"a2","timestamp":"2026-11-19T17:38:00.000Z","origin":{"kind":"peer","from":"uds:/tmp/x.sock"},"message":{"role":"user","content":"Message from Charles, sent through Airband: a human said this"}}
+{"type":"user","uuid":"a3","timestamp":"2026-11-19T17:38:01.000Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}
+{"type":"user","uuid":"a4","timestamp":"2026-11-19T17:38:02.000Z","message":{"role":"user","content":"<command-name>/model</command-name>"}}
+{"type":"user","uuid":"a5","timestamp":"2026-11-19T17:38:03.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"a \"human\" wrote this file"}]}}
+{"type":"user","uuid":"a7","timestamp":"2026-11-19T17:38:04.000Z","promptSource":"sdk","message":{"role":"user","content":"given by whoever runs it"}}
+{"type":"user","uuid":"a8","timestamp":"2026-11-19T17:38:05.000Z","isSidechain":true,"origin":{"kind":"human"},"message":{"role":"user","content":"a subagent's"}}
+{"type":"assistant","isSidechain":false,"effort":"high","timestamp":"2026-11-19T17:39:00.000Z","message":{"model":"claude-fable-5-2","content":[{"type":"text","text":"Now the tests."},{"type":"tool_use","name":"Bash","input":{"command":"cd /work/warehouse && cargo test\nsecond line","description":"Run the tests"}}]}}
+{"type":"assistant","isSidechain":true,"effort":"low","timestamp":"2026-11-19T17:39:10.000Z","message":{"model":"claude-haiku-4-5-20251001","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/elsewhere/x"}}]}}
+{"type":"attachment","uuid":"a6","attachment":{"type":"queued_command","prompt":[{"type":"image","source":{"type":"base64","data":"aGVsbG8="}},{"type":"text","text":"Swiping on the pop-up should get rid of it."}],"source_uuid":"q6","origin":{"kind":"human"},"timestamp":"2026-11-19T17:40:46.000Z"}}
+{"type":"user","uuid":"a9","timestamp":"2026-11-19T17:40:50.000Z","origin":{"kind":"human"},"message":{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"aGVsbG8="}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-11-19T17:41:00.000Z","message":{"model":"claude-opus-4-7","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/warehouse/src/stock.rs"}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-11-19T17:41:30.000Z","message":{"model":"claude-opus-4-7","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/warehouse/src/stock.rs"}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-11-19T17:42:00.000Z","message":{"model":"claude-opus-4-7","content":[{"type":"tool_use","name":"WebFetch","input":{"url":"https://docs.stripe.com/refunds"}},{"type":"tool_use","name":"mcp__chrome-devtools__take_screenshot","input":{}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-11-19T17:42:30.000Z","message":{"model":"claude-opus-4-7","content":[{"type":"tool_use","name":"Agent","input":{"description":"Map the Northway columns","prompt":"…"}},{"type":"tool_use","name":"Grep","input":{"pattern":"charge_id"}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-11-19T17:43:00.000Z","message":{"model":"<synthetic>","content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[]}}]}}
+{"type":"user","timestamp":"2026-11-19T17:43:01.000Z","message":{"content":"it mentions \"tool_use\" in passing"}}

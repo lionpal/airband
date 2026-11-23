@@ -12,7 +12,7 @@
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
 #![expect(clippy::disallowed_macros, reason = "the tool's own request bodies")]
-use super::Tower;
+use crate::adapters::Tower;
 use airband_io::http::Ask;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::{Value, json};
@@ -23,7 +23,7 @@ use std::time::Duration;
 const NAME: &str = "opencode";
 /// What the tool is called, as its row has it.
 fn tool() -> String {
-    super::called(NAME).0
+    crate::adapters::called(NAME).0
 }
 /// A session that has not changed for this long is not on the radio. OpenCode's server keeps every session
 /// there has been and does not say which have a window open (it runs a session's turns itself, window or no
@@ -32,7 +32,7 @@ const QUIET: u64 = 2 * 3600 * 1000;
 
 /// Where OpenCode's server is and the password for it, when it is running.
 fn service() -> Option<(String, String)> {
-    let v: Value = serde_json::from_slice(&airband_io::files::read_bytes(&super::tool_home(NAME).join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()??).ok()?;
+    let v: Value = serde_json::from_slice(&airband_io::files::read_bytes(&crate::adapters::tool_home(NAME).join(crate::adapters::row_says(NAME, "state")).join(crate::adapters::row_says(NAME, "service"))).ok()??).ok()?;
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 
@@ -45,11 +45,11 @@ fn listed() -> Option<Value> {
     get("/api/session?limit=40")
 }
 fn auth(password: &str) -> String {
-    format!("Basic {}", airband_core::encode::base64(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
+    format!("Basic {}", airband_core::encode::base64(format!("{}:{password}", crate::adapters::row_says(NAME, "user")).as_bytes()))
 }
 fn get(path: &str) -> Option<Value> {
     let (url, password) = service()?;
-    super::taken(client().send(Ask::get(format!("{url}{path}")).header("authorization", auth(&password))))?.body_mut().read_json::<Value>().ok()
+    crate::adapters::taken(client().send(Ask::get(format!("{url}{path}")).header("authorization", auth(&password))))?.body_mut().read_json::<Value>().ok()
 }
 
 fn post(path: &str, body: Value) -> Option<u16> {
@@ -62,7 +62,7 @@ fn agent(id: &str, cwd: Option<&str>) -> Agent {
         cwd: cwd.map(String::from),
         // his words go to the session through the tool's own server (`deliver` below)
         deliver: Some(Deliver::Harness { name: NAME.into(), session: id.into() }),
-        ..super::agent_with(id, NAME)
+        ..crate::adapters::agent_with(id, NAME)
     }
 }
 
@@ -86,30 +86,30 @@ fn leave(request: &Value, cwd: Option<&str>) -> Option<PermissionAsk> {
     let (session, action) = (request["sessionID"].as_str()?, request["action"].as_str()?);
     let on: Vec<&str> = request["resources"].as_array()?.iter().filter_map(Value::as_str).collect();
     let what = match (action, on.as_slice()) {
-        ("shell", [command]) => super::hooks::to_run(NAME, command),
+        ("shell", [command]) => crate::adapters::hooks::to_run(NAME, command),
         // nothing named: its own word for what it wants to do, and nothing made up around it
         (_, []) => action.to_string(),
         _ => format!("{action}: {}", on.join(", ")),
     };
     // one too long to put in front of him whole is not asked on the phone: it stays on OpenCode's own screen
-    super::hooks::leave(agent(session, cwd), action, what, request, &format!(" The rest is on the screen of {} itself.", tool()), None)
+    crate::adapters::hooks::leave(agent(session, cwd), action, what, request, &format!(" The rest is on the screen of {} itself.", tool()), None)
 }
 
 /// Put one of a session's requests to him and send his answer back. Runs for as long as he takes.
-fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<Mutex<super::Asking>>) {
+fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<Mutex<crate::adapters::Asking>>) {
     let Some(id) = request["id"].as_str().map(String::from) else { return };
     let Some(ask) = leave(&request, cwd.as_deref()) else {
-        asked.lock().unwrap().over(&id, &id, Some(&super::Answer::Unanswered));
+        asked.lock().unwrap().over(&id, &id, Some(&crate::adapters::Answer::Unanswered));
         return;
     };
     // it can be answered on OpenCode's own screen meanwhile: then it is no longer in the list, and the question
     // is taken back from the phone
     let still = || get(&format!("/api/session/{session}/permission")).is_none_or(|list| list["data"].as_array().is_some_and(|l| l.iter().any(|r| r["id"] == id.as_str())));
-    let answer = super::ask_him_while(&ask, Some(&still));
+    let answer = crate::adapters::ask_him_while(&ask, Some(&still));
     // his answer counts once OpenCode has taken it; one it did not take is put to him again
     let given = match &answer {
-        super::Answer::Said(allow, reason) => {
-            let message = if *allow { Value::Null } else { super::hooks::said_no(reason).into() };
+        crate::adapters::Answer::Said(allow, reason) => {
+            let message = if *allow { Value::Null } else { crate::adapters::hooks::said_no(reason).into() };
             post(&format!("/api/session/{session}/permission/{id}/reply"), json!({ "decision": if *allow { "once" } else { "reject" }, "message": message })).is_some_and(|status| (200..300).contains(&status))
         }
         _ => true,
@@ -133,20 +133,20 @@ fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
 type Clocks = (Option<u64>, Option<u64>);
 
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
-fn open() -> Option<Vec<super::Open>> {
+fn open() -> Option<Vec<crate::adapters::Open>> {
     let list = listed()?;
-    Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), // idle only when its own clocks say so: one with no idle time is not taken to be idle
+    Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(crate::adapters::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), // idle only when its own clocks say so: one with no idle time is not taken to be idle
         idle: s["time"]["idle"].as_u64().is_some_and(|idle| s["time"]["busy"].as_u64().is_none_or(|busy| idle >= busy)) })).collect())
 }
 
 /// The folders OpenCode has had sessions in, as its server lists them. Nothing when it is not running.
-fn worked() -> Vec<super::Worked> {
+fn worked() -> Vec<crate::adapters::Worked> {
     get("/api/session?limit=200").map(|list| worked_of(&list)).unwrap_or_default()
 }
-fn worked_of(list: &Value) -> Vec<super::Worked> {
+fn worked_of(list: &Value) -> Vec<crate::adapters::Worked> {
     // one that does not say when it was last worked in is left out, never given a time made up for it
-    let found = list["data"].as_array().into_iter().flatten().filter_map(|s| Some(super::Worked { folder: s["location"]["directory"].as_str().filter(|d| !d.is_empty())?.to_string(), at: s["time"]["updated"].as_u64()? }));
-    super::newest(found)
+    let found = list["data"].as_array().into_iter().flatten().filter_map(|s| Some(crate::adapters::Worked { folder: s["location"]["directory"].as_str().filter(|d| !d.is_empty())?.to_string(), at: s["time"]["updated"].as_u64()? }));
+    crate::adapters::newest(found)
 }
 
 /// What a session is marked as told when it is first seen, by its own clocks: on the first look, everything (it was
@@ -168,7 +168,7 @@ fn watch(tower: Tower) {
     // each session seen: when it was last busy and last idle, by OpenCode's own clock, as far as the tower has
     // been told. Something the tower did not take is not marked, and is told again on the next look.
     let mut seen: HashMap<String, Clocks> = HashMap::new();
-    let asked: Arc<Mutex<super::Asking>> = Default::default();
+    let asked: Arc<Mutex<crate::adapters::Asking>> = Default::default();
     let mut first = true;
     loop {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
@@ -250,7 +250,7 @@ fn put_away(session: &str) -> Result<(), String> {
 
 pub(crate) struct OpenCode;
 
-impl super::Harness for OpenCode {
+impl crate::adapters::Harness for OpenCode {
     fn name(&self) -> &'static str {
         NAME
     }
@@ -260,7 +260,7 @@ impl super::Harness for OpenCode {
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)
     }
-    fn open(&self) -> Option<Vec<super::Open>> {
+    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
         open()
     }
     fn put_away(&self, session: &str) -> Option<Result<(), String>> {
@@ -269,7 +269,7 @@ impl super::Harness for OpenCode {
     fn puts_away(&self) -> bool {
         true
     }
-    fn worked(&self) -> Vec<super::Worked> {
+    fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked()
     }
 }
@@ -329,7 +329,7 @@ mod tests {
         // where it has worked: every folder, by its latest session, whether or not that one is still on the radio
         let mut worked = worked_of(&sessions);
         worked.sort_by(|a, b| a.folder.cmp(&b.folder));
-        assert_eq!(worked, [super::super::Worked { folder: "/x/garden".into(), at: 7 * hour }, super::super::Worked { folder: "/x/once".into(), at: 10 * hour }, super::super::Worked { folder: "/x/shop".into(), at: 10 * hour }]);
+        assert_eq!(worked, [crate::adapters::Worked { folder: "/x/garden".into(), at: 7 * hour }, crate::adapters::Worked { folder: "/x/once".into(), at: 10 * hour }, crate::adapters::Worked { folder: "/x/shop".into(), at: 10 * hour }]);
     }
 
     #[test]
@@ -344,3 +344,8 @@ mod tests {
         assert_eq!(leave(&json!({ "id": "per_3", "sessionID": "ses_1", "action": "webfetch", "resources": [] }), None).unwrap().what, "webfetch");
     }
 }
+
+#[cfg(test)]
+mod golden;
+#[cfg(test)]
+mod row;

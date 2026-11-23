@@ -50,7 +50,7 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
     if !super::file_safe(session) {
         return None;
     }
-    let path = super::super::claude_accounts::dir().join(format!("{session}.{note}"));
+    let path = super::accounts::dir().join(format!("{session}.{note}"));
     // a note that cannot be read is set aside and started again; one that cannot even be moved is left as it is,
     // and this transcript is not read until it can be
     let (note, keeper, loaded) = airband_io::kept::Keeper::open::<serde_json::Map<String, Value>>(Some(path));
@@ -154,10 +154,10 @@ pub(super) fn remote_control_line(line: &[u8]) -> Option<String> {
 /// latest step, and the model and effort its latest answer was made with. A command or a subagent comes with a
 /// description Claude wrote for it ("Run the payments tests"); for the rest, a few plain words. Reads at most
 /// the last 96 KB of the file, so it is quick however long the session.
-pub(crate) fn glance(agent: &Agent) -> super::super::Glance {
-    let Some(tail) = tail_of(agent, 96 * 1024) else { return super::super::Glance::default() };
+pub(crate) fn glance(agent: &Agent) -> crate::adapters::Glance {
+    let Some(tail) = tail_of(agent, 96 * 1024) else { return crate::adapters::Glance::default() };
     let (model, effort) = engine_in(&tail).unzip();
-    super::super::Glance { doing: step_in(&tail), model, effort: effort.flatten() }
+    crate::adapters::Glance { doing: step_in(&tail), model, effort: effort.flatten() }
 }
 
 /// The end of a session's transcript: at most this many bytes of it.
@@ -173,7 +173,7 @@ pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
 /// hundreds of kilobytes. The file is read a line at a time and only his own lines are kept, so this costs the
 /// memory of one line however much there is to go through. Whole lines only: one still being written is left
 /// for the next call.
-pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
+pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<crate::adapters::Told>, u64) {
     let read = || {
         let path = std::path::Path::new(agent.meta.get("transcript")?.as_str()?);
         let size = airband_io::files::metadata(path).ok()?.len();
@@ -197,7 +197,7 @@ pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
 
 /// His own prompts in a piece of a transcript, oldest first: one that started a turn, and one he sent while the
 /// session was working. Claude Code marks who each prompt came from; only "human" is him at the keyboard.
-pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
+pub(super) fn told_in(piece: &str) -> Vec<crate::adapters::Told> {
     let words = |content: &Value| -> Option<String> {
         let text = match content {
             Value::String(s) => s.clone(),
@@ -238,7 +238,7 @@ pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
                 return None;
             }
             let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(airband_core::clock::parse_rfc3339)?;
-            Some(super::super::Told { id: id.to_string(), at, text, images: if his { images } else { Vec::new() }, his })
+            Some(crate::adapters::Told { id: id.to_string(), at, text, images: if his { images } else { Vec::new() }, his })
         })
         .collect()
 }
@@ -274,7 +274,7 @@ pub(super) fn touched_in(tail: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for (_, name, input) in tool_uses(tail).iter().rev() {
         // what each of its tools touches is the row's to say: one it says nothing of touches nothing
-        let what = super::super::hooks::fill(&super::super::hooks::tool_use(HARNESS, name)["touches"], input).map(|t| airband_core::prose::clip(t.trim(), 160));
+        let what = crate::adapters::hooks::fill(&crate::adapters::hooks::tool_use(HARNESS, name)["touches"], input).map(|t| airband_core::prose::clip(t.trim(), 160));
         if let Some(what) = what.filter(|w| !w.is_empty() && !found.contains(w)) {
             found.push(what);
         }
@@ -302,7 +302,7 @@ pub(super) fn engine_in(tail: &str) -> Option<(String, Option<String>)> {
 /// row does not have is shown as it is written. Nothing for what the row lists as no model at all: the value
 /// Claude Code writes on a line it made itself.
 pub(super) fn model_name(id: &str) -> Option<String> {
-    let row = super::super::tool_row(HARNESS)?;
+    let row = crate::adapters::tool_row(HARNESS)?;
     if row.with.get("not_models").and_then(Value::as_array).is_some_and(|none| none.iter().any(|n| n.as_str() == Some(id))) {
         return None;
     }
@@ -337,18 +337,18 @@ pub(super) fn steps_in(tail: &str, since: u64) -> Vec<String> {
 pub(super) fn step(tool: &str, input: &Value) -> Option<String> {
     let text = |k: &str| input[k].as_str().map(str::trim).filter(|t| !t.is_empty());
     // what the row says of this tool of Claude Code's own
-    let row = super::super::hooks::tool_use(HARNESS, tool);
+    let row = crate::adapters::hooks::tool_use(HARNESS, tool);
     let said = if row["bookkeeping"].as_bool() == Some(true) {
         // bookkeeping of its own, not a step in the work: keep looking further back
         return None;
     } else if let Some(said) = text("description") {
         said.to_string()
     } else if !row.is_null() {
-        super::super::hooks::fill(&row["doing"], input)?
+        crate::adapters::hooks::fill(&row["doing"], input)?
     } else {
         // a tool from a server, named by Claude Code as server and tool with its row's mark between: the
         // tool's own name, as words ("take screenshot")
-        let mark = super::super::row_says(HARNESS, "server_tool");
+        let mark = crate::adapters::row_says(HARNESS, "server_tool");
         let own = if mark.is_empty() { tool } else { tool.rsplit(mark.as_str()).next().unwrap_or(tool) };
         own.replace(['_', '-'], " ")
     };

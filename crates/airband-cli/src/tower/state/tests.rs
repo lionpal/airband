@@ -29,7 +29,7 @@ fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() 
     let (shop, back, other_shop) = (folder("shop"), folder("back-office"), folder("elsewhere/shop"));
     let mut inner = Inner::default();
     joins(&mut inner, &agent("a", &shop, None));
-    inner.worked = vec![(back.clone(), vec!["codex".into()], 9), (other_shop.clone(), vec!["claude-code".into()], 7), (shop.clone(), vec!["claude-code".into(), "codex".into()], 5)];
+    inner.worked = vec![(back.clone(), vec!["some-tool".into()], 9), (other_shop.clone(), vec!["other-tool".into()], 7), (shop.clone(), vec!["other-tool".into(), "some-tool".into()], 5)];
     let recent = inner.recent();
     let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team.is_some(), r.at)).collect();
     // the folder with a team carries that team's id
@@ -44,14 +44,14 @@ fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() 
     assert_eq!(launchable.get("back office"), Some(&back));
     assert_eq!(inner.teams.len(), 1);
     // a team no tool has a record of is still listed, last
-    inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
+    inner.worked = vec![(back.clone(), vec!["some-tool".into()], 9)];
     assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team.is_some(), r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
     let _ = std::fs::remove_dir_all(&here);
 }
 
 #[test]
 fn two_recent_folders_that_would_be_called_alike_are_both_places_to_start_in() {
-    let inner = Inner { worked: vec![("/a/x/shop".into(), vec!["codex".into()], 9), ("/b/y/shop".into(), vec!["codex".into()], 7)], ..Inner::default() };
+    let inner = Inner { worked: vec![("/a/x/shop".into(), vec!["some-tool".into()], 9), ("/b/y/shop".into(), vec!["some-tool".into()], 7)], ..Inner::default() };
     let folders: Vec<String> = inner.launchable().into_iter().map(|p| p.folder).collect();
     assert_eq!(folders, ["/a/x/shop", "/b/y/shop"]);
 }

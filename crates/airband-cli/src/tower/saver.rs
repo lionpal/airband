@@ -232,12 +232,12 @@ mod tests {
         {
             let mut inner = app.change();
             inner.check_in(&agent("a")).unwrap();
-            inner.tools = vec!["claude-code".into()];
+            inner.tools = vec!["other-tool".into()];
         }
         app.flush();
         let (saved, _) = app.store.load(10).unwrap();
         assert_eq!(saved.sessions.len(), 1);
-        assert_eq!(saved.tools, ["claude-code"]);
+        assert_eq!(saved.tools, ["other-tool"]);
         assert_eq!(saved.teams.len(), 1, "the agent's folder's team");
     }
 }

@@ -25,7 +25,7 @@ pub struct AttachmentPart {
 pub struct Account {
     /// What to pass back to switch to it. Means something only to the adapter that listed it.
     pub id: String,
-    /// The harness it belongs to ("claude-code").
+    /// The harness it belongs to, by its row's id.
     pub harness: String,
     /// What to show him: usually the email it signs in with, or a key's last four characters. Only to show:
     /// two computers' accounts are the same one by [`Account::identity`], never by this.

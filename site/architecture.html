@@ -183,8 +183,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0 0; }
     <tr><th>To add</th><th>You write</th></tr>
     <tr><td>A model for summaries, a voice, or a listening service that speaks a protocol airband already knows</td><td>One file in <code>catalog/providers/</code>: its address, how the key is presented, how to test a key, what it costs</td></tr>
     <tr><td>A model that runs on the phone</td><td>One file in <code>catalog/models/</code>: its files, sizes and checksums, which engine runs it</td></tr>
-    <tr><td>A coding tool that already speaks the Agent Client Protocol</td><td>One file in <code>catalog/tools/</code>: how to start it</td></tr>
-    <tr><td>A coding tool with its own way of reporting</td><td>That file, plus one module in <code>crates/airband-cli/src/adapters/</code></td></tr>
+    <tr><td>A coding tool</td><td>One file in <code>catalog/tools/</code> (what it is called, how to start it), one folder in <code>crates/airband-cli/src/adapters/tools/</code> with everything of that tool&apos;s (its adapter, its accounts, its tests), and one line that registers it. For a tool that already speaks the Agent Client Protocol the adapter says nothing but its name</td></tr>
     <tr><td>A kind of thing an agent makes that should show as a card (a pull request, a published page)</td><td>One file in <code>catalog/links/</code> for what it is called, and a few lines in the tool&apos;s adapter that read the tool&apos;s own record of it. A script can also call <code>airband report made</code></td></tr>
     <tr><td>Anything else that should report to you</td><td>No code: call <code>airband report</code> from a script</td></tr>
   </table>

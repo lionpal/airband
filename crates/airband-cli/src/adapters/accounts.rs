@@ -175,7 +175,7 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A tower that takes the connection and never answers.
@@ -196,60 +196,15 @@ mod tests {
     }
 
     /// A throwaway folder for one test: his home and the tool's own, with nothing of his in it.
-    fn folder() -> std::path::PathBuf {
+    pub(crate) fn folder() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("airband-identity-{}", config::random_hex(4)));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
-    fn looking<'a>(home: &std::path::Path, env: &'a dyn Fn(&str) -> Option<String>, keychain: &'a dyn Fn(&str) -> Option<String>) -> Looking<'a> {
+    pub(crate) fn looking<'a>(home: &std::path::Path, env: &'a dyn Fn(&str) -> Option<String>, keychain: &'a dyn Fn(&str) -> Option<String>) -> Looking<'a> {
         Looking { tool_home: home.to_path_buf(), user_home: home.to_path_buf(), env, keychain }
     }
-    const NOTHING: &dyn Fn(&str) -> Option<String> = &|_| None;
-
-    #[test]
-    fn a_signed_in_account_is_known_by_the_id_its_tool_wrote_and_a_key_by_its_fingerprint() {
-        let home = folder();
-        // nothing there: nothing known, never a guess
-        assert_eq!(identity_of("claude-code", &looking(&home, NOTHING, NOTHING)), AccountIdentity::None);
-        // a key in the tool's environment, with no account record: its fingerprint, and its last four to show
-        let env = |k: &str| (k == "ANTHROPIC_API_KEY").then(|| "fake-key-0000-wxyz".to_string());
-        assert_eq!(identity_of("claude-code", &looking(&home, &env, NOTHING)), AccountIdentity::of_key("anthropic", "fake-key-0000-wxyz"));
-        // the account record wins over the key: the first source that gives anything
-        std::fs::write(home.join(".claude.json"), r#"{"oauthAccount":{"accountUuid":"person-1","organizationUuid":"org-1","emailAddress":"x"}}"#).unwrap();
-        assert_eq!(identity_of("claude-code", &looking(&home, &env, NOTHING)), AccountIdentity::Id { id: "person-1".into(), org: Some("org-1".into()) });
-        // a saved copy of that record is read the same way
-        let saved = serde_json::json!({ "email": "x", "oauthAccount": { "accountUuid": "person-2", "organizationUuid": "org-1" } });
-        assert_eq!(identity_in_copy("claude-code", ".claude.json", &saved), AccountIdentity::Id { id: "person-2".into(), org: Some("org-1".into()) });
-        assert_eq!(identity_in_copy("claude-code", "another.json", &saved), AccountIdentity::None, "only sources in a file of that name");
-        let _ = std::fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn an_id_inside_a_token_is_read_from_its_payload_and_the_person_is_told_from_the_workspace() {
-        let home = folder();
-        let auth = serde_json::json!({ "https://api.openai.com/auth": { "chatgpt_user_id": "person-1", "chatgpt_account_id": "workspace-1" } });
-        let token = format!("head.{}.sig", airband_core::encode::base64_url(auth.to_string().as_bytes()));
-        std::fs::write(home.join("auth.json"), serde_json::json!({ "tokens": { "id_token": token } }).to_string()).unwrap();
-        assert_eq!(identity_of("codex", &looking(&home, NOTHING, NOTHING)), AccountIdentity::Id { id: "person-1".into(), org: Some("workspace-1".into()) });
-        // signed in with a key instead: the key in the same file
-        std::fs::write(home.join("auth.json"), r#"{"OPENAI_API_KEY":"fake-openai-1234"}"#).unwrap();
-        assert_eq!(identity_of("codex", &looking(&home, NOTHING, NOTHING)), AccountIdentity::of_key("openai", "fake-openai-1234"));
-        let _ = std::fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn a_table_of_credentials_gives_its_one_key_by_its_rows_provider_and_nothing_when_it_holds_several() {
-        let home = folder();
-        let db_path = home.join(".local/share/opencode/opencode.db");
-        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-        let db = rusqlite::Connection::open(&db_path).unwrap();
-        db.execute_batch("CREATE TABLE credential (id TEXT, integration_id TEXT, value TEXT);").unwrap();
-        db.execute("INSERT INTO credential VALUES ('c1', 'provider-a', ?1)", [r#"{"type":"key","key":"fake-a-5678"}"#]).unwrap();
-        assert_eq!(identity_of("opencode", &looking(&home, NOTHING, NOTHING)), AccountIdentity::of_key("provider-a", "fake-a-5678"));
-        db.execute("INSERT INTO credential VALUES ('c2', 'provider-b', ?1)", [r#"{"type":"key","key":"fake-b-9999"}"#]).unwrap();
-        assert_eq!(identity_of("opencode", &looking(&home, NOTHING, NOTHING)), AccountIdentity::None, "two keys and nothing says which is in use");
-        let _ = std::fs::remove_dir_all(home);
-    }
+    pub(crate) const NOTHING: &dyn Fn(&str) -> Option<String> = &|_| None;
 
     #[test]
     fn a_keychain_source_reads_only_through_the_keychain_it_is_given() {

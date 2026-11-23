@@ -491,10 +491,10 @@ mod tests {
     #[test]
     fn a_kept_table_that_cannot_be_read_is_set_aside_alone() {
         let (s, path) = store("one-table");
-        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], ..Batch::default() }).unwrap();
+        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["some-tool"]"#.into())], ..Batch::default() }).unwrap();
         let (saved, _) = s.load(10).unwrap();
         assert!(saved.teams.is_empty(), "the unreadable table starts empty");
-        assert_eq!(saved.tools, ["codex"], "the others are read");
+        assert_eq!(saved.tools, ["some-tool"], "the others are read");
         let aside: String = s.db.lock().unwrap().query_row("select value from state where key = 'teams.unreadable'", [], |r| r.get(0)).unwrap();
         assert_eq!(aside, "not json");
         let _ = std::fs::remove_file(path);

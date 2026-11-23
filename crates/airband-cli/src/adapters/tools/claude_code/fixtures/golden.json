@@ -1,0 +1,1045 @@
+{
+  "reported": [
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "checkin"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "working"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": false,
+            "what": "map the columns"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": true,
+            "what": "map the columns"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": false,
+            "what": ""
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "<tmp>/work",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "picture",
+            "path": "<tmp>/work/shot.PNG",
+            "shown": true
+          }
+        },
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "<tmp>/work",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "picture",
+            "path": "<tmp>/work/notes.md",
+            "shown": true
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "made",
+            "address": "https://claude.ai/artifact/abc123",
+            "title": "Refund plan",
+            "kind": "claude-artifact"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "made",
+            "address": "https://claude.ai/artifact/abc124",
+            "kind": "claude-artifact"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "notice",
+            "text": "Claude is waiting for your input"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "made",
+            "address": "https://github.com/acme/shop/pull/194",
+            "title": "acme/shop #194",
+            "kind": "pull-request"
+          }
+        },
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Done."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Again.",
+            "turn": "turn-3"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "signoff"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "run `npm run deploy`",
+        "detail": "Bash\n{\n  \"command\": \"npm run deploy\",\n  \"description\": \"Deploy\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "write the file /x/shop/.env",
+        "detail": "Write\n{\n  \"file_path\": \"/x/shop/.env\",\n  \"content\": \"…\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "edit the file /x/shop/a.ipynb",
+        "detail": "Edit\n{\n  \"notebook_path\": \"/x/shop/a.ipynb\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "read the file /x/shop/secret",
+        "detail": "Read\n{\n  \"file_path\": \"/x/shop/secret\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "fetch https://example.com/x",
+        "detail": "WebFetch\n{\n  \"url\": \"https://example.com/x\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "search the web for \"refund rules\"",
+        "detail": "WebSearch\n{\n  \"query\": \"refund rules\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "mcp__db__drop {\"table\":\"orders\"}",
+        "detail": "mcp__db__drop\n{\n  \"table\": \"orders\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "Grep {\"pattern\":\"x\",\"description\":\"its own words\"}",
+        "detail": "Grep\n{\n  \"pattern\": \"x\",\n  \"description\": \"its own words\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "AskUserQuestion {\"questions\":[{\"question\":\" Free space on which disk? \",\"options\":[{\"label\":\"The NAS\"},{\"label\":\" \"},{\"label\":\"The internal disk\"}]}]}",
+        "detail": "AskUserQuestion\n{\n  \"questions\": [\n    {\n      \"question\": \" Free space on which disk? \",\n      \"options\": [\n        {\n          \"label\": \"The NAS\"\n        },\n        {\n          \"label\": \" \"\n        },\n        {\n          \"label\": \"The internal disk\"\n        }\n      ]\n    }\n  ]\n}",
+        "question": {
+          "text": "Free space on which disk?",
+          "choices": [
+            "The NAS",
+            "The internal disk"
+          ]
+        }
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: \\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: use staging\\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: \\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "AskUserQuestion {\"questions\":[{\"question\":\"First?\",\"options\":[{\"label\":\"a\"}]},{\"question\":\"Second?\"}]}",
+        "detail": "AskUserQuestion\n{\n  \"questions\": [\n    {\n      \"question\": \"First?\",\n      \"options\": [\n        {\n          \"label\": \"a\"\n        }\n      ]\n    },\n    {\n      \"question\": \"Second?\"\n    }\n  ]\n}",
+        "question": {
+          "text": "First?\n\nSecond?"
+        }
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: \\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: use staging\\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He answered this from his phone. His answer: \\nTake that as his answer to the question and carry on. Do not ask it again.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "AskUserQuestion {\"questions\":[]}",
+        "detail": "AskUserQuestion\n{\n  \"questions\": []\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "title": "shop 2",
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "run `ls`",
+        "detail": "Bash\n{\n  \"command\": \"ls\",\n  \"big\": \"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n\n(The first 6,000 of 7034 characters. The rest is at the keyboard.)"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "name": "barn one",
+            "title": "shop removals",
+            "pid": 77,
+            "deliver": {
+              "kind": "socket",
+              "path": "/tmp/cc/77.sock",
+              "token": "tok-77"
+            },
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Named."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "s1",
+          "harness": "claude-code",
+          "cwd": "/x/shop",
+          "name": "barn one",
+          "title": "shop removals",
+          "pid": 77,
+          "deliver": {
+            "kind": "socket",
+            "path": "/tmp/cc/77.sock",
+            "token": "tok-77"
+          },
+          "meta": {
+            "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+          }
+        },
+        "what": "run `ls`",
+        "detail": "Bash\n{\n  \"command\": \"ls\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "pid": 78,
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Not named."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Headless, asked to hear."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "s1",
+            "harness": "claude-code",
+            "cwd": "/x/shop",
+            "title": "shop 2",
+            "meta": {
+              "transcript": "<tmp>/home/.claude/projects/-x-shop/s1.jsonl"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Held."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    }
+  ],
+  "installed": {
+    "path": "<tmp>/home/.claude/settings.json",
+    "changed": [
+      true,
+      false
+    ],
+    "file": {
+      "model": "x",
+      "hooks": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "afplay ding.aiff"
+              }
+            ]
+          },
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "Notification": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "SessionEnd": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "PostToolUse": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ],
+            "matcher": "Agent|Task|SendUserFile|Artifact"
+          }
+        ],
+        "PreToolUse": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 5
+              }
+            ],
+            "matcher": "Agent|Task"
+          }
+        ],
+        "PermissionRequest": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook claude-code --put-there-by-airband",
+                "timeout": 900
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "told": [
+      "Claude Code now reports to airband (set in <tmp>/home/.claude/settings.json).",
+      "Claude Code now reports to airband (set in <tmp>/home/.claude/settings.json)."
+    ],
+    "after_uninstall": {
+      "model": "x",
+      "hooks": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "afplay ding.aiff"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "looked": {
+    "glance": {
+      "doing": "Searching for charge_id",
+      "model": "Opus 4.7",
+      "effort": null
+    },
+    "touched": [
+      "/work/warehouse/src/stock.rs",
+      "cd /work/warehouse && cargo test",
+      "/x/shop/cart.ts"
+    ],
+    "steps": [
+      "Reading cart.ts",
+      "Run the tests",
+      "Editing stock.rs",
+      "Reading docs.stripe.com",
+      "take screenshot",
+      "Map the Northway columns",
+      "Searching for charge_id"
+    ],
+    "steps_since": [
+      "Run the tests",
+      "Editing stock.rs",
+      "Reading docs.stripe.com",
+      "take screenshot",
+      "Map the Northway columns",
+      "Searching for charge_id"
+    ],
+    "told": [
+      {
+        "id": "a0",
+        "at": 1795109401000,
+        "text": "look at the cart",
+        "images": [],
+        "his": true
+      },
+      {
+        "id": "a1",
+        "at": 1795109854021,
+        "text": "ok so how do i get a qr code",
+        "images": [],
+        "his": true
+      },
+      {
+        "id": "a2",
+        "at": 1795109880000,
+        "text": "Message from Charles, sent through Airband: a human said this",
+        "images": [],
+        "his": false
+      },
+      {
+        "id": "a7",
+        "at": 1795109884000,
+        "text": "given by whoever runs it",
+        "images": [],
+        "his": false
+      },
+      {
+        "id": "q6",
+        "at": 1795110046000,
+        "text": "Swiping on the pop-up should get rid of it.",
+        "images": [],
+        "his": true
+      },
+      {
+        "id": "a9",
+        "at": 1795110050000,
+        "text": "",
+        "images": [
+          [
+            104,
+            101,
+            108,
+            108,
+            111
+          ]
+        ],
+        "his": true
+      }
+    ],
+    "at": 4719,
+    "told_again": 0,
+    "at_again": 4719,
+    "no_transcript": {
+      "doing": null,
+      "model": null,
+      "effort": null
+    }
+  },
+  "worked": [
+    {
+      "folder": "/x/barn",
+      "at": 1500000
+    },
+    {
+      "folder": "/x/garden",
+      "at": 1000000
+    },
+    {
+      "folder": "/x/shop",
+      "at": 2000000
+    }
+  ],
+  "accounts": true,
+  "puts_away": false,
+  "deliver": {
+    "Err": "claude-code sessions cannot be reached this way."
+  },
+  "put_away": {
+    "Err": "Only an agent airband runs can be ended from here."
+  }
+}
