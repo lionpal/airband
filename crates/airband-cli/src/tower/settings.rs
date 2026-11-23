@@ -29,9 +29,11 @@ struct Now {
 }
 
 impl Settings {
-    /// The settings the tower started with, read with their keys.
+    /// The settings the tower started with, read with their keys. Which version of the file they came from is
+    /// not known here: a stamp taken now could be of a file another process (`airband pair`) wrote since they
+    /// were read, and its change would never be read. So none is kept, and the first look reads the file again.
     pub(crate) fn new(cfg: Config) -> Settings {
-        Settings { now: RwLock::new(Now { cfg: Arc::new(cfg), stamp: config::stamp_of(&config::file()), unread: None, file: Some(config::file()) }), failed: Mutex::new(None) }
+        Settings { now: RwLock::new(Now { cfg: Arc::new(cfg), stamp: None, unread: None, file: Some(config::file()) }), failed: Mutex::new(None) }
     }
 
     /// The settings now: the file's, when it has changed since they were last read and could be read with its
@@ -179,6 +181,23 @@ mod tests {
         assert_eq!(config::read_from(&file).unwrap().unwrap().name, "Changed");
         assert!(!config::file().exists(), "the settings of the home were not written");
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A pairing written by `airband pair` between the tower reading its settings and keeping them is read,
+    /// never taken as the version the tower already has.
+    #[test]
+    fn a_pairing_written_while_the_tower_starts_is_served() {
+        let home = std::env::temp_dir().join(format!("airband-start-home-{}", config::random_hex(4)));
+        config::tests_home::set(home.clone());
+        crate::vault::tests_folder::set(home.clone());
+        std::fs::create_dir_all(config::dir()).unwrap();
+        write(&config::file(), r#"{"token":"own","radio_token":"radio","pairings":[]}"#, 60);
+        let read_at_start = config::read_from(&config::file()).unwrap().unwrap();
+        // `airband pair`, from another process, before the tower has kept what it read
+        write(&config::file(), r#"{"token":"own","radio_token":"radio","pairings":[{"name":"test","secret":"00"}]}"#, 0);
+        let settings = Settings::new(read_at_start);
+        assert_eq!(settings.current().pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["test"]);
         let _ = std::fs::remove_dir_all(&home);
     }
 
