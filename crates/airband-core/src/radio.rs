@@ -106,7 +106,7 @@ pub struct Unheard {
     pub why: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Utterance {
     pub text: String,
     /// Random, the same on every retry of this utterance: the tower takes each id once, and tells what came
@@ -146,6 +146,25 @@ pub struct Utterance {
     pub answers: Option<crate::ids::QuestionId>,
 }
 
+/// His words, and the label of the button he tapped, are left out of its debug form: their length only.
+impl std::fmt::Debug for Utterance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::Withheld;
+        f.debug_struct("Utterance")
+            .field("text", &Withheld(&self.text))
+            .field("id", &self.id)
+            .field("re", &self.re)
+            .field("scope", &self.scope)
+            .field("label", &self.label.as_deref().map(Withheld))
+            .field("attachments", &self.attachments)
+            .field("others", &self.others)
+            .field("to", &self.to)
+            .field("act", &self.act)
+            .field("answers", &self.answers)
+            .finish()
+    }
+}
+
 /// Something he did with a button.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -162,7 +181,7 @@ pub enum Act {
 }
 
 /// A new agent to start: where, with what, and on what. Each is an id from a list the tower gave.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
     /// The team it joins, by the team's id on that computer.
     pub team: crate::ids::TeamId,
@@ -176,6 +195,13 @@ pub struct Launch {
     /// What it should do, in his words. Empty for one that waits for his first message.
     #[serde(default)]
     pub task: String,
+}
+
+/// The task is in his words: its debug form says how long it is, never what it says.
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launch").field("team", &self.team).field("tool", &self.tool).field("model", &self.model).field("effort", &self.effort).field("task", &crate::redact::Withheld(&self.task)).finish()
+    }
 }
 
 /// Where something he said stands with the tower.

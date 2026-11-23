@@ -74,6 +74,34 @@ impl<K: std::hash::Hash + Eq + Clone> Limiter<K> {
     }
 }
 
+/// One limit and the key a request is counted under in it, for [`all_or_none`].
+pub(super) trait Counted {
+    fn room(&mut self, now: Instant) -> bool;
+    fn take(&mut self, now: Instant) -> bool;
+}
+
+impl<K: std::hash::Hash + Eq + Clone> Counted for (&mut Limiter<K>, &K) {
+    fn room(&mut self, now: Instant) -> bool {
+        self.0.room(self.1, now)
+    }
+    fn take(&mut self, now: Instant) -> bool {
+        self.0.allow(self.1, now)
+    }
+}
+
+/// A request that is counted against several limits at once is taken by all of them or by none: the one way
+/// limits are put together here. Nothing is counted unless every one has room; the place of the first that has
+/// none, if one has none.
+pub(super) fn all_or_none(limits: &mut [&mut dyn Counted], now: Instant) -> Result<(), usize> {
+    if let Some(full) = limits.iter_mut().position(|l| !l.room(now)) {
+        return Err(full);
+    }
+    for l in limits.iter_mut() {
+        l.take(now);
+    }
+    Ok(())
+}
+
 /// The two things a radio asks of the relay.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Asks {
@@ -139,5 +167,20 @@ mod tests {
         }
         assert!(!limit.allow(&k("one more"), t0) && limit.allow(&k("7"), t0) && !limit.allow(&k("7"), t0));
         assert!(limit.allow(&k("one more"), t0 + Duration::from_secs(61)));
+    }
+
+    #[test]
+    fn a_request_one_limit_turns_away_is_counted_by_none_of_the_others() {
+        // B-8: the relay-wide hour refusing used up the address's day all the same
+        let (mut address, mut everyone, t0) = (Limiter::<String>::new(2, 86_400), Limiter::<()>::new(1, 3600), Instant::now());
+        let here = "a".to_string();
+        assert_eq!(all_or_none(&mut [&mut (&mut address, &here), &mut (&mut everyone, &())], t0), Ok(()));
+        for _ in 0..50 {
+            assert_eq!(all_or_none(&mut [&mut (&mut address, &here), &mut (&mut everyone, &())], t0), Err(1));
+        }
+        // the hour starts again: the address still has the one it did not use
+        let later = t0 + Duration::from_secs(3600);
+        assert_eq!(all_or_none(&mut [&mut (&mut address, &here), &mut (&mut everyone, &())], later), Ok(()));
+        assert_eq!(all_or_none(&mut [&mut (&mut address, &here), &mut (&mut everyone, &())], later + Duration::from_secs(3600)), Err(0));
     }
 }

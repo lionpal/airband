@@ -213,12 +213,15 @@ struct Serve {
 /// not, a panic included, the pulls stop saying the tower is answering for it.
 struct Answering {
     pulling: Arc<Mutex<Pulling>>,
-    id: String,
+    /// The handing of a kept message this work answers for; nothing for a radio's request.
+    handing: Option<airband_core::relay::Handing>,
 }
 
 impl Drop for Answering {
     fn drop(&mut self) {
-        self.pulling.lock().unwrap_or_else(|e| e.into_inner()).answered(&self.id);
+        if let Some(handing) = &self.handing {
+            self.pulling.lock().unwrap_or_else(|e| e.into_inner()).answered(handing);
+        }
     }
 }
 
@@ -228,6 +231,7 @@ fn refused_pull(relay: &str, why: PullRefused) -> String {
         PullRefused::OtherVersion { older: Side::Tower } => format!("{relay} needs a newer airband than this computer has: update airband here"),
         PullRefused::OtherVersion { older: Side::Relay } => format!("this computer's airband is newer than {relay}: update the relay"),
         PullRefused::AnotherTower => format!("another computer is serving this pairing through {relay}; stop airband there, or pair this computer again on its own"),
+        PullRefused::AskAgain => format!("{relay} let another computer's pull go to see whether it is still there; asking again"),
         PullRefused::Unknown => format!("{relay} refused this computer's pull for a reason this airband does not know: update airband here"),
     }
 }
@@ -267,7 +271,10 @@ impl Serve {
             }
             if !open {
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
-                let mut req = Ask::put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
+                // and which tower this is and what it still answers for, so the relay neither kicks another
+                // computer's pull for it nor hands again what is still being answered
+                let said = self.pulling.lock().unwrap().headers();
+                let mut req = Ask::put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token)).headers(said);
                 // the admission key as the settings hold it now: a new one is used without a restart
                 if let Some(a) = &self.app.cfg().relay_admission {
                     req = req.header(ADMISSION_HEADER, a);
@@ -275,7 +282,7 @@ impl Serve {
                 match agent.send(req).map(|r| RelaySaid::of(r.status().as_u16())) {
                     Ok(RelaySaid::Done | RelaySaid::Nothing) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
-                        // opened again, the relay hands again whatever it had handed: nothing is in this tower's hands
+                        // opened again, the relay hands again whatever it had handed and is not still answered for
                         self.pulling.lock().unwrap().reopened();
                         (open, wait, told) = (true, 1, false);
                     }
@@ -316,8 +323,8 @@ impl Serve {
                         match res.body_mut().read_to_vec() {
                             // read whole: the next pull says it was got, and it is answered for from here
                             Ok(sealed) => {
-                                self.pulling.lock().unwrap().handed(&id, kept);
-                                self.answer_apart(id, kept, sealed);
+                                let handing = self.pulling.lock().unwrap().handed(&id, kept);
+                                self.answer_apart(id, kept, sealed, handing);
                             }
                             // one cut off on the way is not named as got, so the relay hands it over again
                             Err(e) => log(format!("a request for \"{}\" was cut off on the way ({e}); the relay hands it over again", self.name)),
@@ -336,6 +343,11 @@ impl Serve {
                     // A refused pull told the relay nothing, so what it got is said again on the next
                     RelaySaid::OtherVersion | RelaySaid::Refused => {
                         let why = res.body_mut().read_json::<PullRefused>().unwrap_or(PullRefused::Unknown);
+                        // asked to ask again: nothing for him, and no pause beyond the shortest
+                        if why == PullRefused::AskAgain {
+                            nap(&mut 1);
+                            continue;
+                        }
                         if !told_refused.contains(&why) {
                             log(refused_pull(&relay, why));
                             told_refused.push(why);
@@ -386,8 +398,8 @@ impl Serve {
 
     /// Answer a request on a task of its own (`next` is held for 25 s, and other requests must get through
     /// meanwhile). However the task ends, a panic included, its guard tells the pulls it is no longer answered for.
-    fn answer_apart(&self, request_id: String, kept: bool, sealed: Vec<u8>) {
-        let guard = Answering { pulling: self.pulling.clone(), id: request_id.clone() };
+    fn answer_apart(&self, request_id: String, kept: bool, sealed: Vec<u8>, handing: Option<airband_core::relay::Handing>) {
+        let guard = Answering { pulling: self.pulling.clone(), handing };
         let me = self.clone();
         drop(self.handle.spawn(async move {
             let _answering = guard;
@@ -396,7 +408,18 @@ impl Serve {
     }
 
     async fn answer(self, request_id: String, kept: bool, sealed: Vec<u8>) {
-        let Some(call) = self.keys.open_call(&sealed) else {
+        let call = match self.keys.open_request(&sealed) {
+            Some(Ok(call)) => Some(call),
+            // opened with this pairing's key, in a version this tower cannot read: answered so, not dropped
+            Some(Err(unread)) => {
+                let no = Refusal::OtherVersion { speaks: airband_core::radio::SCHEMA.into() };
+                let sealed = self.keys.seal_answer_for_relay(&Answer { id: unread.id, status: no.status(), body: serde_json::to_value(&no).unwrap_or_default() });
+                self.send_back(&request_id, kept, Some(sealed)).await;
+                return;
+            }
+            None => None,
+        };
+        let Some(call) = call else {
             log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
@@ -671,10 +694,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_work_on_a_kept_message_that_panics_still_ends_its_answering() {
         let pulling: Arc<Mutex<Pulling>> = Default::default();
-        pulling.lock().unwrap().handed("k1", true);
+        let handing = pulling.lock().unwrap().handed("k1", true);
         let answering = |p: &Arc<Mutex<Pulling>>| p.lock().unwrap().headers().into_iter().find(|(k, _)| *k == airband_core::relay::ANSWERING_HEADER).map(|(_, v)| v);
         assert_eq!(answering(&pulling).as_deref(), Some("k1"));
-        let guard = Answering { pulling: pulling.clone(), id: "k1".into() };
+        let guard = Answering { pulling: pulling.clone(), handing };
         let died = tokio::spawn(async move {
             let _answering = guard;
             panic!("the work on it died");

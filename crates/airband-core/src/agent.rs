@@ -180,7 +180,7 @@ pub struct PermissionState {
     pub wait_seconds: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
     /// The agent exists. Any other event also checks it in.
@@ -256,6 +256,19 @@ pub enum Event {
     Signoff,
     #[serde(other)]
     Unknown,
+}
+
+/// What it wrote and what it needs him for are words from his session: their debug form says how long they
+/// are, never what they say. Every other kind is shown as it goes on the wire.
+impl std::fmt::Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::Withheld;
+        match self {
+            Event::Said { text, kind, turn } => f.debug_struct("Said").field("text", &Withheld(text)).field("kind", kind).field("turn", turn).finish(),
+            Event::Notice { text } => f.debug_struct("Notice").field("text", &Withheld(text)).finish(),
+            other => f.write_str(&serde_json::to_string(other).unwrap_or_default()),
+        }
+    }
 }
 
 #[cfg(test)]

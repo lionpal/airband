@@ -59,12 +59,23 @@ pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
     let mut to: Vec<usize> = Vec::new();
     // what is left is a slice of what he wrote, never his words split and joined again: his line breaks,
     // indents and spacing reach the agent as they were
-    let mut rest = text.trim_start();
+    let mut rest = from_its_line(text);
     loop {
-        let word = rest.split(char::is_whitespace).next().unwrap_or_default();
+        let at = rest.trim_start();
+        let word = at.split(char::is_whitespace).next().unwrap_or_default();
         let Some(hit) = Some(word).filter(|w| w.starts_with('@')).and_then(|w| tagged(w, live)) else { break };
         hit.into_iter().for_each(|i| if !to.contains(&i) { to.push(i) });
-        rest = rest[word.len()..].trim_start();
+        rest = from_its_line(&at[word.len()..]);
     }
     Parsed { to, rest: rest.trim_end().to_string() }
+}
+
+/// `text` from where his words start: the space before them on their own line goes, and blank lines before
+/// them, but a line that starts after a line break keeps its indentation ("@shop2\n    fn x()" is "    fn x()").
+fn from_its_line(text: &str) -> &str {
+    let words = text.trim_start();
+    match text[..text.len() - words.len()].rfind('\n') {
+        Some(newline) => &text[newline + 1..],
+        None => words,
+    }
 }

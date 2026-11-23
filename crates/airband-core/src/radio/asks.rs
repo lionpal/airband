@@ -21,7 +21,7 @@ pub struct AttachmentPart {
 
 /// One login a harness on this computer can run under: a subscription or plan with its own allowance. The tower
 /// never sends anything secret about it, only what to call it and how much of it is used.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Account {
     /// What to pass back to switch to it. Means something only to the adapter that listed it.
     pub id: String,
@@ -42,6 +42,13 @@ pub struct Account {
     /// Why it cannot be used or checked, in words for him. Nothing when all is well.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+}
+
+/// The label is usually his email: its debug form says whether there is one, never what it is.
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account").field("id", &self.id).field("harness", &self.harness).field("label", &crate::redact::Shown(&self.label)).field("identity", &self.identity).field("live", &self.live).field("limits", &self.limits).field("problem", &self.problem).finish()
+    }
 }
 
 /// One allowance of an account: how much is used and when it starts again.
