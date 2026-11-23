@@ -192,8 +192,9 @@ read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, li
   now. A message with `his` set is something he said: through a radio, or typed to an agent at its own keyboard
   (with any pictures he pasted), which the tower adds with the time he typed it. So a radio orders messages by
   `at`.
-- `kind` is `needs-you`, `report`, `fyi` or `stalled`; a client shows a kind it does not know as a report.
-  `stalled` means the agent said what it would do next and stopped, with nothing asked.
+- `kind` is `needs-you`, `report`, `fyi`, `stalled` or `unjudged`; a client shows a kind it does not know as a
+  report. `stalled` means the agent said what it would do next and stopped, with nothing asked. `unjudged` means
+  no model read it: it is shown as the agent wrote it, marked so.
 - `text` is one sentence, or up to about 90 words when the message answers something he asked to have
   investigated or leaves him several things to do. The news comes first and a question last, and what was
   shipped keeps its number. A note on the way from an agent long at work is an `fyi` message. Keys and tokens
@@ -312,8 +313,9 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/4` call with the time
-and a random id. The tower answers 409 to one more than two minutes off its clock, drops one it has answered
+Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/4` call with
+the time, a random id, and where the radio stands as it makes it (`presence`: on a call or not, showing the chat
+or not). The tower answers 409 to one more than two minutes off its clock, drops one it has answered
 before, answers 426 (`other_version`) to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
 `{ id, status, body }`, and the phone refuses one that is not to its own request.
 
@@ -363,7 +365,7 @@ to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
 message" or "A question for you"), which is what shows if the phone cannot open it. The relay and the push

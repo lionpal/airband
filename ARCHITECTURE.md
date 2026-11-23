@@ -52,7 +52,7 @@ The compiler keeps some of them, so they cannot drift:
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, keeping pairing links and a speech key of his own safe | Decide order, routing, retries, or what counts as waiting or done |
 | The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist; handing a sealed notification to a push service; the homepage's waiting list | Hold a pairing key or read a message |
-| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push that changes the relay | |
+| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push that changes what the relay is built from, as cargo says (`scripts/relay-sources.py`) | |
 
 ## Where a new thing goes
 
@@ -76,9 +76,9 @@ The compiler keeps some of them, so they cannot drift:
 | Something else a button can tell the tower (mute, today) | A `Control` in `airband-core/src/routing/tags.rs` and its arm in `tower/route.rs`. A radio's button sends it as `Act::Control`, never as words. | Two files |
 | Another client (Android, Windows, a watch, a car) | A host: implement `DeskHost` (fourteen calls: four for raw audio, `changed`, `status`, `note`, `hearing`, `words`, `watching`, `device`, `run_model`, `secret`, `keep_secret`) over the bindings `crates/uniffi-bindgen` generates, draw `Desk.view()`, and keep the links. The Swift one is `apps/apple/Sources/RadioModel.swift`. `terminal.rs` is a single-computer host on `RadioHost`. | A new folder under `apps/` |
 | Another transport to the tower (a local socket) | A variant of `Route` in `airband-radio/src/link.rs` | One file |
-| Another push service (Android's, a desktop's) | A struct beside `Apns` in `airband-relay/src/push.rs` and an arm in `Push::send`. The client opens the notification with `open_notice` and reports its address with `Desk.set_push`. | One file, and the client |
+| Another push service (Android's, a desktop's) | A variant of `PushService` in `airband-core/src/relay/push.rs`, a struct beside `Apns` in `airband-relay/src/push.rs` and an arm in `Push::send`. The client opens the notification with `open_notice` and reports its address with `Desk.set_push`. | Two files, and the client |
 | Something else a client can ask | An `Endpoint` in `airband-core/src/radio/wire.rs` (its path, method, query, body and answer), its handler in `tower/http/`, a method on `Radio` | Three files |
-| Another place to keep relay data | A variant of `Store` in `airband-relay/src/store.rs` | One file |
+| Another place to keep relay data | A type that implements `ChannelStore` in `airband-relay/src/store/` (beside `folder.rs`, `postgres.rs`, `dynamo_store.rs`), chosen in `airband-relay/src/store.rs`; `Store` is a `Box<dyn ChannelStore>` | Two files |
 
 If a change does not fit a row, it is probably a new protocol field. Add the field as optional, default it, and
 old peers keep working.
@@ -202,7 +202,7 @@ one), and a copy with the same number and other rows is logged.
 
 A way of calling a service is code and cannot arrive in a catalogue. A row names an interface and tells it
 what it needs: `"by": { "interface": "<name>", "with": { … } }`. The code for each is in a table where the job
-is done, looked up by that name: `READERS` in `tower/judge.rs`, `VOICES` in `airband-radio/src/voices.rs`,
+is done, looked up by that name: `READERS` in `tower/judge/models.rs`, `VOICES` in `airband-radio/src/voices.rs`,
 `LISTENERS` in `airband-radio/src/ears.rs` and `UPLOADS` in `airband-radio/src/hears.rs`. Nothing else lists
 interfaces. A program lists and calls only the offers it has the code for, so an old build reads a new
 catalogue and shows what it can use. An offer can also say what its interface must be able to do (`needs`); a
@@ -229,7 +229,7 @@ The interfaces, and what adding one touches:
 
 | Job | Interface (`by.interface`) | A new provider is | A new interface is |
 |---|---|---|---|
-| Reading | `chat`: OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row | a function and a line of `READERS` in `tower/judge.rs`; a tower release |
+| Reading | `chat`: OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row | a function and a line of `READERS` in `tower/judge/models.rs`; a tower release |
 | Reading | `command`: a program on his computer, prompt on standard input, answer on standard output | a row with its arguments, compiled in | |
 | Reading | `on-this-computer`: a model the tower fetches and runs itself | a row naming the model and the program that runs it, compiled in | |
 | Speaking | `speech`: OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row | a file under `airband-radio/src/voices/` and a line of `VOICES`; an app release |

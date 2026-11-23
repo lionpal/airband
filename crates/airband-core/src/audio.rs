@@ -79,7 +79,8 @@ impl Endpointer {
     }
 }
 
-/// Raw little-endian 16-bit PCM bytes to samples. An odd trailing byte is left for the next call.
+/// Raw little-endian 16-bit PCM bytes to samples. An odd trailing byte is not in what comes back: a caller that
+/// reads sound in pieces keeps it and puts it in front of the next piece.
 pub fn samples(bytes: &[u8]) -> Vec<i16> {
     bytes.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
 }
