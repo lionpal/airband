@@ -1,5 +1,5 @@
 {
-  "why": "Every DynamoDB permission the relay's role is given: what the relay's own code asks for (crates/airband-relay/src/dynamo.rs, Op::needs), checked by its test that_role_is_given_every_permission_the_relay_asks_for.",
+  "why": "Every DynamoDB permission the relay's role is given: what the relay's own code asks for (the operations! table in crates/airband-relay/src/dynamo.rs, from which the operations it sends are made), checked by its test that_role_is_given_every_permission_the_relay_asks_for. infra/cdk.mjs gives the role exactly these, read from this file.",
   "actions": [
     "dynamodb:ConditionCheckItem",
     "dynamodb:DeleteItem",

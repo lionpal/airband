@@ -53,6 +53,10 @@ impl Channel {
 }
 
 impl Channel {
+    /// Has its tower pulled lately ([`AIRBAND_GONE`])? A radio's call waits for it only then.
+    pub(super) fn pulling(&self) -> bool {
+        self.last_pull.is_some_and(|t| t.elapsed() <= AIRBAND_GONE)
+    }
     /// Is a kept message to be handed to the tower now? The count of keeps seen so far, when it is: there may be
     /// one, and none is in the tower's hands.
     pub(super) fn kept_due(&self) -> Option<u64> {
@@ -193,7 +197,7 @@ impl Relay {
         if status == wanted {
             return;
         }
-        let (in_flight, has_held, pulling) = self.channels.lock().unwrap().get(channel).map(|ch| (ch.waiting.len(), ch.has_held, ch.last_pull.is_some_and(|t| t.elapsed() <= AIRBAND_GONE))).unwrap_or_default();
+        let (in_flight, has_held, pulling) = self.channels.lock().unwrap().get(channel).map(|ch| (ch.waiting.len(), ch.has_held, ch.pulling())).unwrap_or_default();
         eprintln!("{}", failed_line(route, channel, status.as_u16(), began.elapsed(), bytes, (in_flight, has_held, pulling)));
     }
 

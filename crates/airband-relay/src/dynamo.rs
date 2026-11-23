@@ -10,50 +10,50 @@ use ring::{digest, hmac};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// One DynamoDB operation the relay sends: the only ones it may, so the role it runs as can be given exactly
-/// what they need ([`Op::needs`], kept in `infra/relay-dynamodb.json`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Op {
-    GetItem,
-    PutItem,
-    UpdateItem,
-    DeleteItem,
-    Query,
-    Scan,
-    TransactWriteItems,
+/// The DynamoDB operations the relay sends, each with the permissions it needs, in one place: the enum the
+/// relay sends by ([`Dynamo::call`] takes nothing else) and the list its role is given are made from this one
+/// table, and the test holds `infra/relay-dynamodb.json`, which the stack reads (`infra/cdk.mjs`), to it.
+macro_rules! operations {
+    ($($op:ident => [$($needs:literal),+];)+) => {
+        /// One DynamoDB operation the relay sends: the only ones it may.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) enum Op {
+            $($op,)+
+        }
+
+        impl Op {
+            /// Every one of them.
+            #[cfg(test)]
+            pub(crate) const ALL: &[Op] = &[$(Op::$op,)+];
+
+            /// Its name in DynamoDB's API.
+            fn name(self) -> &'static str {
+                match self {
+                    $(Op::$op => stringify!($op),)+
+                }
+            }
+
+            /// The permissions it needs.
+            #[cfg(test)]
+            pub(crate) fn needs(self) -> &'static [&'static str] {
+                match self {
+                    $(Op::$op => &[$($needs),+],)+
+                }
+            }
+        }
+    };
 }
 
-impl Op {
-    #[cfg(test)]
-    pub(crate) const ALL: [Op; 7] = [Op::GetItem, Op::PutItem, Op::UpdateItem, Op::DeleteItem, Op::Query, Op::Scan, Op::TransactWriteItems];
-
-    /// Its name in DynamoDB's API.
-    fn name(self) -> &'static str {
-        match self {
-            Op::GetItem => "GetItem",
-            Op::PutItem => "PutItem",
-            Op::UpdateItem => "UpdateItem",
-            Op::DeleteItem => "DeleteItem",
-            Op::Query => "Query",
-            Op::Scan => "Scan",
-            Op::TransactWriteItems => "TransactWriteItems",
-        }
-    }
-
-    /// The permissions it needs. A transaction is checked against each of its parts' own permissions, not one
-    /// of its own; the relay's transactions put, update, delete and check a condition.
-    #[cfg(test)]
-    pub(crate) fn needs(self) -> &'static [&'static str] {
-        match self {
-            Op::GetItem => &["dynamodb:GetItem"],
-            Op::PutItem => &["dynamodb:PutItem"],
-            Op::UpdateItem => &["dynamodb:UpdateItem"],
-            Op::DeleteItem => &["dynamodb:DeleteItem"],
-            Op::Query => &["dynamodb:Query"],
-            Op::Scan => &["dynamodb:Scan"],
-            Op::TransactWriteItems => &["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"],
-        }
-    }
+operations! {
+    GetItem => ["dynamodb:GetItem"];
+    PutItem => ["dynamodb:PutItem"];
+    UpdateItem => ["dynamodb:UpdateItem"];
+    DeleteItem => ["dynamodb:DeleteItem"];
+    Query => ["dynamodb:Query"];
+    Scan => ["dynamodb:Scan"];
+    // a transaction is checked against each of its parts' own permissions, not one of its own; the relay's
+    // transactions put, update, delete and check a condition
+    TransactWriteItems => ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"];
 }
 
 pub(crate) struct Dynamo {
@@ -293,6 +293,16 @@ mod tests {
         // exactly what is needed: a permission too few refuses the relay, one too many is more than it should have
         assert_eq!(sorted, needed);
         assert!(needed.contains(&"dynamodb:ConditionCheckItem"));
+        // and each is sent under the name DynamoDB knows it by
+        assert_eq!(Op::TransactWriteItems.name(), "TransactWriteItems");
+        assert_eq!(Op::ALL.len(), 7);
+    }
+    #[test]
+    fn the_stack_gives_the_role_what_that_file_lists() {
+        // the list is real only if the stack reads it: infra/cdk.mjs gives the role its actions from the file
+        let stack = include_str!("../../../infra/cdk.mjs");
+        assert!(stack.contains("actions: JSON.parse(readFileSync(join(HERE, 'relay-dynamodb.json'), 'utf8')).actions"), "the stack no longer reads infra/relay-dynamodb.json");
+        assert!(!stack.contains("'dynamodb:"), "the stack names a DynamoDB permission of its own");
     }
     use super::*;
 

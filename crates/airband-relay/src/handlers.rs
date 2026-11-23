@@ -39,23 +39,29 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
     }
     // durable first: a channel the relay would forget on restart is worse than a slow answer. What is on record
     // decides whose it is, so two towers opening one name at once, here or on two relays, are told the same.
+    // an open that opened nothing does not count against the address's new pairings: a tower that keeps
+    // asking (the store is down, the channel was closed, or it is another's) must not lock its own address out
+    // of pairing again
+    let opened_nothing = || {
+        let mut limits = relay.limits.lock().unwrap();
+        limits.opened_by_address.give_back(&caller(&headers));
+        limits.opened.give_back(&());
+    };
     let on_record = match relay.store.add(&channel, &hash, radio).await {
         Err(e) => {
+            opened_nothing();
             eprintln!("airband-relay: could not save a new channel: {}", state::masked(&e, &channel));
             return say(StatusCode::SERVICE_UNAVAILABLE, "the relay could not save the channel; try again");
         }
-        // its tower closed it when the phone was unpaired: only a new pairing (a new channel) opens again. It
-        // opened nothing, so it does not count against the address's new pairings: a tower that keeps asking
-        // must not lock its own address out of pairing again
+        // its tower closed it when the phone was unpaired: only a new pairing (a new channel) opens again
         Ok(store::Added::Closed) => {
-            let mut limits = relay.limits.lock().unwrap();
-            limits.opened_by_address.give_back(&caller(&headers));
-            limits.opened.give_back(&());
+            opened_nothing();
             return say(StatusCode::GONE, "that pairing was ended; pair again");
         }
         Ok(store::Added::Open(saved)) => saved,
     };
     if !same(&on_record.pull_hash, &hash) {
+        opened_nothing();
         return another_tower();
     }
     relay.channels.lock().unwrap().entry(channel).or_insert_with(|| Channel::from(on_record));
@@ -263,7 +269,7 @@ pub(super) async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap
     let answer = {
         let mut channels = relay.channels.lock().unwrap();
         let Some(ch) = channels.get_mut(channel) else { return not_the_radio() };
-        if ch.last_pull.is_none_or(|t| t.elapsed() > AIRBAND_GONE) {
+        if !ch.pulling() {
             return say(StatusCode::SERVICE_UNAVAILABLE, "the tower is not connected to the relay");
         }
         // what he says must arrive in the order he said it: while older words are still being handed over, new
@@ -443,6 +449,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_store_that_cannot_save_a_new_channel_never_uses_up_the_addresss_new_pairings() {
+        let (relay, folder) = relay_in_a_folder(None);
+        std::fs::write(folder.join("channels.json"), b"{broken").unwrap();
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        for _ in 0..OPENED_AN_ADDRESS_A_DAY * 2 {
+            assert_eq!(open_as(&relay, &keys, "").await, 503);
+        }
+        std::fs::remove_file(folder.join("channels.json")).unwrap();
+        assert_eq!(open_as(&relay, &keys, "").await, 201);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[tokio::test]
     async fn two_towers_opening_one_channel_are_told_whose_it_is_by_the_record() {
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
@@ -450,6 +469,11 @@ mod tests {
         relay.store.add(&keys.channel, &token_hash("another tower"), "r").await.unwrap();
         assert_eq!(open_as(&relay, &keys, "").await, 403);
         assert!(!relay.channels.lock().unwrap().contains_key(&keys.channel));
+        // refused as often as it asks, it never uses up its address's new pairings
+        for _ in 0..OPENED_AN_ADDRESS_A_DAY * 2 {
+            assert_eq!(open_as(&relay, &keys, "").await, 403);
+        }
+        assert_eq!(open_as(&relay, &Keys::derive(&airband_core::relay::new_secret()).unwrap(), "").await, 201);
         let _ = std::fs::remove_dir_all(&folder);
     }
 
