@@ -41,11 +41,7 @@ impl<T: Serialize + DeserializeOwned + Default> Foreign<T> {
 
 /// What the file holds now: none when it is not there.
 fn now(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match std::fs::read(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{} cannot be read ({e}), so nothing was changed", path.display())),
-        Ok(bytes) => Ok(Some(bytes)),
-    }
+    crate::files::read_bytes(path).map_err(|e| format!("{} cannot be read ({e}), so nothing was changed", path.display()))
 }
 
 #[cfg(test)]

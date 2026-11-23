@@ -27,11 +27,14 @@ agent, and the shape of a credential.
 The compiler keeps some of them, so they cannot drift:
 - `clippy.toml` refuses the raw file calls that read or write a file's contents or make and remove files
   (`std::fs::write`, `read`, `read_to_string`, `rename`, `remove_file`, `create_dir`, `create_dir_all`,
-  `read_dir`, `remove_dir_all`, `File::open`, `File::create`, `OpenOptions`), the HTTP client's `get`, `post`,
-  `put`, `patch` and `delete`, and hand-built JSON (`serde_json::json!`). Files and the network go through
-  `airband-io`; our own bodies are typed. A module that is an edge by nature (another tool's files or protocol, a
-  service's request body, a download, the relay's folder store) says so at its top with
-  `#![expect(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either. Not
+  `read_dir`, `remove_dir_all`, `File::open`, `File::create`, `OpenOptions`), every way into the HTTP library
+  (its request functions and methods for each verb, `run`, making a client or its configuration, sending a
+  request built elsewhere through it) and holding its client, configuration, body or error type, and hand-built
+  JSON (`serde_json::json!`). Files go through `airband_io::files` and the network through `airband_io::http`,
+  whose `Client`, `Ask`, `Response`, `Body` and `Error` are its own, so the library is named nowhere else; our
+  own bodies are typed. Inside `airband-io` too only those two modules say they may. A module that is an edge by
+  nature (another tool's files or protocol, a service's request body, a download, the relay's folder store) says
+  so at its top with `#![expect(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either. Not
   refused: reading a file's facts (`metadata`, `canonicalize`), setting its permissions (`set_permissions`), and
   the one `fs::copy` with which `airband install` copies itself.
 - `clippy::let_underscore_must_use` is on in every crate that is ours (not `uniffi-bindgen`, which only runs the

@@ -8,9 +8,9 @@
 //! - [`catalog`]: the published catalogue, fetched and kept
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
-#![cfg_attr(test, allow(clippy::disallowed_macros, clippy::let_underscore_must_use))]
-// this crate is where files and the network are reached, for every other crate
-#![expect(clippy::disallowed_methods, reason = "this crate is the one place files and the network are reached")]
+#![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
+// this crate is where files and the network are reached, for every other crate: each module that does says so
+// at its top, so a module of this crate is held to the same rules as any other
 pub mod catalog;
 pub mod files;
 pub mod foreign;

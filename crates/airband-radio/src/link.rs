@@ -96,7 +96,7 @@ pub(crate) struct Link {
 /// What a failed send came to: nothing answered, or it took too long.
 fn unsent(e: &crate::net::Error, way: Way) -> LinkError {
     match e {
-        crate::net::Error::Timeout(_) => LinkError::TimedOut(way),
+        crate::net::Error::TimedOut => LinkError::TimedOut(way),
         _ => LinkError::Unreachable(way),
     }
 }

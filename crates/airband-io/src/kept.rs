@@ -219,7 +219,7 @@ fn load<T: DeserializeOwned>(path: &Path) -> (Option<T>, Loaded, Option<ReadOnly
     };
     let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let aside = file.with_file_name(format!("{name}.unreadable-{}", airband_core::encode::random_hex(4)));
-    match std::fs::rename(&file, &aside) {
+    match crate::files::move_to(&file, &aside) {
         Ok(()) => (None, Loaded::SetAside { why: format!("{why}; it was kept as {}", aside.display()) }, None),
         Err(e) => {
             let why = format!("{why}; it could not be moved aside ({e}) and is left as it is");
@@ -239,7 +239,7 @@ fn brief(e: &std::io::Error) -> bool {
 }
 
 fn read_trying(path: &Path) -> std::io::Result<Vec<u8>> {
-    trying(|| std::fs::read(path))
+    trying(|| crate::files::read_bytes(path)?.ok_or_else(|| std::io::ErrorKind::NotFound.into()))
 }
 
 /// `bytes`, with a brief failure tried twice more, a moment apart.

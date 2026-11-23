@@ -29,6 +29,28 @@ disallowed-methods = [
   { path = "ureq::delete", reason = "reach the network through airband_io::http" },
   { path = "ureq::patch", reason = "reach the network through airband_io::http" },
   { path = "ureq::head", reason = "reach the network through airband_io::http" },
+  { path = "ureq::options", reason = "reach the network through airband_io::http" },
+  { path = "ureq::connect", reason = "reach the network through airband_io::http" },
+  { path = "ureq::trace", reason = "reach the network through airband_io::http" },
+  { path = "ureq::run", reason = "reach the network through airband_io::http" },
+  { path = "ureq::agent", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::Agent::options", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::connect", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::trace", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::run", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::with_parts", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::Agent::configure_request", reason = "reach the network through airband_io::http" },
+  { path = "ureq::config::Config::builder", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::config::Config::new_agent", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::RequestExt::with_default_agent", reason = "reach the network through airband_io::http" },
+  { path = "ureq::RequestExt::with_agent", reason = "reach the network through airband_io::http" },
+]
+# a client, or what it is made from, held anywhere but airband_io::http
+disallowed-types = [
+  { path = "ureq::Agent", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::config::Config", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::Body", reason = "read an answer through airband_io::http::Body" },
+  { path = "ureq::Error", reason = "a request's failure is airband_io::http::Error" },
 ]
 disallowed-macros = [
   { path = "serde_json::json", reason = "wire and file bodies are typed; build them from their types" },

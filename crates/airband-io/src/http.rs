@@ -1,10 +1,134 @@
 //! The HTTP client everything uses. A name is found the way the system finds it, and no other way: nothing is
 //! asked of a resolver he did not choose.
+//!
+//! Everything a caller holds is this module's own: [`Client`], [`Ask`], [`Response`], [`Body`] and [`Error`].
+//! The library underneath is named nowhere else, so it can be changed here alone.
+#![expect(clippy::disallowed_methods, clippy::disallowed_types, reason = "the one place the HTTP library is called")]
 use airband_core::providers::Answering;
 use std::time::Duration;
 
-pub use ureq::Error;
-pub type Response = ureq::http::Response<ureq::Body>;
+/// Why a request came to nothing: never an HTTP status, which is an answer ([`Response::status`]).
+#[derive(Debug)]
+pub enum Error {
+    /// Nothing answered there: the name was not found, or no connection could be made (refused, no route).
+    NotThere,
+    /// It took longer than the client waits.
+    TimedOut,
+    /// The connection broke after it was made, or the request could not be written to it.
+    Broken(String),
+    /// What came back could not be read as asked: cut short, too large, or not the JSON expected.
+    Unreadable(String),
+    /// A typed body could not be written as JSON.
+    NotWritten(String),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NotThere => f.write_str("nothing answered there"),
+            Error::TimedOut => f.write_str("it did not answer in time"),
+            Error::Broken(why) => write!(f, "the connection broke: {why}"),
+            Error::Unreadable(why) => write!(f, "the answer could not be read: {why}"),
+            Error::NotWritten(why) => write!(f, "the request could not be written: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl Error {
+    /// The library's error, as one of ours. Every way of reaching nothing is [`Error::NotThere`], so no caller
+    /// reads the library's kinds.
+    fn of(e: ureq::Error) -> Error {
+        use std::io::ErrorKind;
+        match e {
+            ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => Error::NotThere,
+            ureq::Error::Io(io) if matches!(io.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound | ErrorKind::AddrNotAvailable | ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable) => Error::NotThere,
+            ureq::Error::Timeout(_) => Error::TimedOut,
+            ureq::Error::Io(io) if io.kind() == ErrorKind::TimedOut => Error::TimedOut,
+            ureq::Error::Json(e) => Error::Unreadable(e.to_string()),
+            ureq::Error::BodyExceedsLimit(_) | ureq::Error::BodyStalled => Error::Unreadable(e.to_string()),
+            other => Error::Broken(other.to_string()),
+        }
+    }
+}
+
+/// What a request got back: its status, its headers and its body, whatever the status.
+pub struct Response {
+    status: u16,
+    headers: ureq::http::HeaderMap,
+    body: Body,
+}
+
+/// An HTTP status, as a service answered it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Status(u16);
+
+impl Status {
+    pub fn as_u16(self) -> u16 {
+        self.0
+    }
+    /// 200 to 299.
+    pub fn is_success(self) -> bool {
+        (200..300).contains(&self.0)
+    }
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Response").field("status", &self.status).finish_non_exhaustive()
+    }
+}
+
+impl Response {
+    fn of(res: ureq::http::Response<ureq::Body>) -> Response {
+        let (parts, body) = res.into_parts();
+        Response { status: parts.status.as_u16(), headers: parts.headers, body: Body(body) }
+    }
+    pub fn status(&self) -> Status {
+        Status(self.status)
+    }
+    /// The header of this name, when it is there and is text.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+    /// Whether a header of this name is there at all.
+    pub fn has_header(&self, name: &str) -> bool {
+        self.headers.contains_key(name)
+    }
+    pub fn body_mut(&mut self) -> &mut Body {
+        &mut self.body
+    }
+    pub fn into_body(self) -> Body {
+        self.body
+    }
+}
+
+/// What came back after the status and headers, read once, in one of these ways.
+pub struct Body(ureq::Body);
+
+impl Body {
+    /// Read whole, as JSON of this type.
+    pub fn read_json<T: serde::de::DeserializeOwned>(&mut self) -> Result<T, Error> {
+        self.0.read_json().map_err(Error::of)
+    }
+    /// Read whole, as bytes (up to the library's limit, 10 MB).
+    pub fn read_to_vec(&mut self) -> Result<Vec<u8>, Error> {
+        self.0.read_to_vec().map_err(Error::of)
+    }
+    /// Read whole, as text.
+    pub fn read_to_string(&mut self) -> Result<String, Error> {
+        self.0.read_to_string().map_err(Error::of)
+    }
+    /// Read as it comes, with no limit: for a download or a stream.
+    pub fn as_reader(&mut self) -> impl std::io::Read + '_ {
+        self.0.as_reader()
+    }
+    /// The same, owning the body.
+    pub fn into_reader(self) -> impl std::io::Read + Send + 'static {
+        self.0.into_reader()
+    }
+}
 
 /// The way out to the network: what gives up when, and every HTTP status taken as an answer and not an error.
 /// Requests go out only through [`Client::send`], so each is made one way, here.
@@ -32,6 +156,9 @@ impl Client {
     pub fn send(&self, ask: Ask) -> Result<Response, Error> {
         let Ask { verb, url, headers, body } = ask;
         let body = body?;
+        self.sent(verb, &url, &headers, body).map(Response::of).map_err(Error::of)
+    }
+    fn sent(&self, verb: Verb, url: &str, headers: &[(String, String)], body: Option<Vec<u8>>) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         macro_rules! with_body {
             ($req:expr) => {{
                 let req = headers.iter().fold($req, |r, (k, v)| r.header(k.as_str(), v.as_str()));
@@ -47,11 +174,11 @@ impl Client {
             };
         }
         match verb {
-            Verb::Get => without_body!(self.agent.get(&url)),
-            Verb::Delete => without_body!(self.agent.delete(&url)),
-            Verb::Post => with_body!(self.agent.post(&url)),
-            Verb::Put => with_body!(self.agent.put(&url)),
-            Verb::Patch => with_body!(self.agent.patch(&url)),
+            Verb::Get => without_body!(self.agent.get(url)),
+            Verb::Delete => without_body!(self.agent.delete(url)),
+            Verb::Post => with_body!(self.agent.post(url)),
+            Verb::Put => with_body!(self.agent.put(url)),
+            Verb::Patch => with_body!(self.agent.patch(url)),
         }
     }
 }
@@ -77,14 +204,22 @@ impl From<airband_core::radio::wire::Method> for Verb {
     }
 }
 
-/// One request, made before it is sent: where, how, with which headers and what body.
-#[derive(Debug)]
+/// One request, made before it is sent: where, how, with which headers and what body. Its debug form names the
+/// headers and never their values, which can be a key.
 pub struct Ask {
     verb: Verb,
     url: String,
     headers: Vec<(String, String)>,
     /// The bytes to send, none for an empty body; an error when a typed body could not be written.
     body: Result<Option<Vec<u8>>, Error>,
+}
+
+impl std::fmt::Debug for Ask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let named: Vec<&str> = self.headers.iter().map(|(k, _)| k.as_str()).collect();
+        let body = self.body.as_ref().map(|b| b.as_ref().map(Vec::len));
+        f.debug_struct("Ask").field("verb", &self.verb).field("url", &self.url.split_once('?').map_or(self.url.as_str(), |(at, _)| at)).field("headers", &named).field("body_bytes", &body).finish()
+    }
 }
 
 impl Ask {
@@ -117,7 +252,7 @@ impl Ask {
     }
     /// `body` as JSON.
     pub fn json<T: serde::Serialize + ?Sized>(self, body: &T) -> Ask {
-        let bytes = serde_json::to_vec(body).map(Some).map_err(Error::Json);
+        let bytes = serde_json::to_vec(body).map(Some).map_err(|e| Error::NotWritten(e.to_string()));
         Ask { body: bytes, ..self }.header("content-type", "application/json; charset=utf-8")
     }
     /// These bytes, as they are, of `kind` (a content type).
@@ -161,4 +296,55 @@ pub fn call<E: airband_core::radio::wire::Endpoint>(client: &Client, base: &str,
         200 => res.body_mut().read_json::<E::Answer>().map_or(Said::Trouble(status), Said::Took),
         _ => res.body_mut().read_json::<Refusal>().map_or(Said::Trouble(status), Said::No),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    /// A server on this machine that answers one request with `answer` (a whole HTTP response) and hands back
+    /// what it was sent.
+    fn answering(answer: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = format!("http://{}", listener.local_addr().unwrap());
+        let served = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut got = vec![0u8; 4096];
+            let n = conn.read(&mut got).unwrap();
+            conn.write_all(answer.as_bytes()).unwrap();
+            String::from_utf8_lossy(&got[..n]).to_string()
+        });
+        (at, served)
+    }
+
+    #[test]
+    fn an_answer_is_read_through_this_modules_own_types_whatever_its_status() {
+        let (at, served) = answering("HTTP/1.1 409 Conflict\r\ncontent-type: application/json\r\nx-airband-request: r1\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"n\": 7}   ");
+        let mut res = Client::new(Duration::from_secs(5)).send(Ask::post(format!("{at}/v1/x")).header("authorization", "Bearer secret").json(&[1, 2])).unwrap();
+        assert_eq!((res.status().as_u16(), res.status().is_success()), (409, false));
+        assert_eq!((res.header("x-airband-request"), res.has_header("x-airband-kept"), res.header("nope")), (Some("r1"), false, None));
+        assert_eq!(res.body_mut().read_json::<serde_json::Value>().unwrap()["n"], 7);
+        let sent = served.join().unwrap();
+        assert!(sent.starts_with("POST /v1/x ") && sent.contains("authorization: Bearer secret") && sent.ends_with("[1,2]"), "{sent}");
+    }
+
+    #[test]
+    fn a_place_where_nothing_listens_is_not_there_and_an_unreadable_answer_says_so() {
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        assert!(matches!(Client::new(Duration::from_secs(5)).send(Ask::get(format!("http://{free}/"))), Err(Error::NotThere)));
+        let (at, _served) = answering("HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nnot j");
+        let mut res = Client::new(Duration::from_secs(5)).send(Ask::get(at)).unwrap();
+        assert!(matches!(res.body_mut().read_json::<serde_json::Value>(), Err(Error::Unreadable(_))));
+    }
+
+    #[test]
+    fn a_request_written_out_for_debugging_names_its_headers_and_never_their_values() {
+        let ask = Ask::post("https://example.test/v1/a?key=k-123").header("authorization", "Bearer sk-secret").bytes("text/plain", b"his words".to_vec());
+        let shown = format!("{ask:?}");
+        assert!(shown.contains("authorization") && shown.contains("/v1/a"), "{shown}");
+        for secret in ["sk-secret", "k-123", "his words"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
+    }
 }

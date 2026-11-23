@@ -37,16 +37,16 @@ impl Fetch for Published {
 /// what is worth a line in a log. `speaks` says whether this program has the code for an offer.
 pub fn load_kept(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
     let at = dir.join(KEPT);
-    let (doc, sig) = (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig")));
-    let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let (doc, sig) = (crate::files::read_bytes(&at), crate::files::read_text(&at.with_extension("json.sig")));
     match (doc, sig) {
-        (Ok(doc), Ok(sig)) => match accept(&doc, &sig) {
+        (Ok(Some(doc)), Ok(Some(sig))) => match accept(&doc, &sig) {
             Ok(taken) => news(&taken, speaks),
             Err(why) => vec![format!("catalogue: the copy kept here was not used ({why})")],
         },
         // none kept yet: nothing to say
-        (Err(a), Err(b)) if absent(&a) && absent(&b) => Vec::new(),
+        (Ok(None), Ok(None)) => Vec::new(),
         (Err(e), _) | (_, Err(e)) => vec![format!("catalogue: the copy kept here could not be read, so the one built in is used ({e})")],
+        (Ok(_), Ok(_)) => vec!["catalogue: the copy kept here has no signature beside it (or a signature and no copy), so the one built in is used".to_string()],
     }
 }
 

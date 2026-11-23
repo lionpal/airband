@@ -4,6 +4,7 @@
 //! another name beside it and takes its name once it is whole and on the disk. A write that is cut short (the
 //! app is killed, the disk fills, the power goes) leaves the old file as it was, and nothing ever reads half
 //! of one. This is the one place that is done.
+#![expect(clippy::disallowed_methods, reason = "the one place a file is read, written, moved or removed")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

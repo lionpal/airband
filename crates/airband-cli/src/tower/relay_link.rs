@@ -269,12 +269,12 @@ impl Serve {
                     RelaySaid::Done => {
                         wait = 1;
                         // a request with no id could never be answered: the relay has broken its side of the contract
-                        let Some(id) = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).map(String::from) else {
+                        let Some(id) = res.header(REQUEST_HEADER).map(String::from) else {
                             log(format!("{relay} handed over a request for \"{}\" with no id; it cannot be answered", self.name));
                             continue;
                         };
                         // the relay says outright when it had been keeping this one; nothing is read from the id
-                        let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
+                        let kept = res.has_header(airband_core::relay::KEPT_HEADER);
                         // read or not, it is answered for from here: the next pull says it was got
                         got = Some(id.clone());
                         let me = self.clone();
