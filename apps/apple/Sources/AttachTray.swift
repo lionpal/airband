@@ -21,8 +21,11 @@ struct Tray: View {
                     ForEach(model.tray) { item in
                         TrayThumb(item: item, upload: model.view.uploads.first { $0.id == item.attachment })
                             .transition(.scale(scale: 0.6).combined(with: .opacity))
-                            // a video opens to be watched and trimmed
-                            .onTapGesture { if item.source != nil { trimming = item } }
+                            // one that did not go says why; a video opens to be watched and trimmed
+                            .onTapGesture {
+                                if let why = item.why ?? model.view.uploads.first(where: { $0.id == item.attachment })?.why { model.problem = why }
+                                if item.source != nil { trimming = item }
+                            }
                             .accessibilityAddTraits(item.source != nil ? .isButton : [])
                             .accessibilityHint(item.source != nil ? "Watch and trim" : "")
                     }

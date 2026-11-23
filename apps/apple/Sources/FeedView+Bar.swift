@@ -24,7 +24,7 @@ extension FeedView {
     /// The agent it will go to, by id: the one that wrote the message he picked, or the one he is looking at.
     private var aimedAgent: String? {
         // a message he picked says who, even when that is nobody: the agent he is looking at does not stand in
-        if let re = model.replyingTo { return re.agent.flatMap { $0.isEmpty ? nil : $0 } }
+        if let re = model.replyingTo { return re.agent.flatMap(\.orNone) }
         return model.only
     }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
@@ -87,7 +87,7 @@ extension FeedView {
                 .lineLimit(1...4).focused($typing).font(.system(size: 17))
                 .padding(.horizontal, 20).frame(minHeight: 54)
                 .frosted(RoundedRectangle(cornerRadius: 27), strength: 0.8)
-            let empty = draft.trimmingCharacters(in: .whitespaces).isEmpty
+            let empty = draft.isBlank
             Button {
                 if empty {
                     typing = false

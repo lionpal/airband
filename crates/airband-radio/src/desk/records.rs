@@ -58,7 +58,7 @@ pub struct DeskMember {
     pub question: String,
     /// The message that asked it, to answer or to have read out. Empty when it is not waiting.
     pub question_id: String,
-    /// The coding tool it is: `claude-code`, `codex`, `opencode`. A host shows that tool's mark.
+    /// The coding tool it is, by the id its row in the catalogue gives. A host shows that tool's mark.
     pub harness: String,
     /// What that tool is called, from the catalogue; empty for a tool it does not list.
     pub tool_name: String,
@@ -192,6 +192,8 @@ pub struct DeskUpload {
     pub sent: u64,
     pub total: u64,
     pub state: UploadState,
+    /// Why it did not get there, in words for him, when it failed.
+    pub why: Option<String>,
 }
 /// How far a file he attached has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -271,7 +273,7 @@ pub struct DeskComputer {
 }
 
 /// One of his messages on its way, as a host shows it.
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Clone, PartialEq, uniffi::Record)]
 pub struct DeskOutgoing {
     /// Its id: what [`Desk::send_again`] and [`Desk::discard_unsent`] are given.
     pub id: String,

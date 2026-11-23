@@ -73,7 +73,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             let button = noticeButton(action: id, options: info["options"] as? [String] ?? [])
             (text, tapped) = (button?.words, button?.tapped)
         }
-        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, let station = info["station"] as? String, let message = info["message"] as? String else { return done() }
+        guard let text = text?.trimmed, !text.isEmpty, let station = info["station"] as? String, let message = info["message"] as? String else { return done() }
         let name = called ?? "your agent"
         // the system allows some seconds for this with the app behind the lock screen. When they run out
         // before the core has an answer, he is told it is still on its way, and the work is let go
@@ -85,16 +85,19 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
                 UIApplication.shared.endBackgroundTask(task)
             }
         }
+        // one notice for this answer: what is said later replaces what was said before it
+        let notice = "answer-" + message
         task = UIApplication.shared.beginBackgroundTask(withName: "answer") {
-            Self.say(title: "Still sending to " + name, body: "\u{201C}\(text)\u{201D}. Open airband to check.", room: room, agent: agent)
+            Self.say(notice, title: "Still sending to " + name, body: "\u{201C}\(text)\u{201D}. Open airband to check.", room: room, agent: agent)
             end()
         }
         DispatchQueue.global(qos: .userInitiated).async {
             // what became of it, with the words he is told, comes from the core
             switch RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) {
-            case .sent: break
-            case .keptForLater(let why): Self.say(title: "Waiting to send to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
-            case .refused(let why), .notPaired(let why): Self.say(title: "Not sent to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
+            // it went: a "still sending" said meanwhile is taken back
+            case .sent: UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notice])
+            case .keptForLater(let why): Self.say(notice, title: "Waiting to send to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
+            case .refused(let why), .notPaired(let why): Self.say(notice, title: "Not sent to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
             }
             DispatchQueue.main.async { end() }
         }
@@ -114,13 +117,14 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     }
 
     /// Tell him, where he gave the answer, what became of it. A tap opens the app on that agent.
-    private static func say(title: String, body: String, room: String, agent: String) {
+    /// `notice` names it: a later one of the same name takes its place.
+    private static func say(_ notice: String, title: String, body: String, room: String, agent: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
         content.categoryIdentifier = NoticeButtons.failed
         content.userInfo = ["room": room, "agent": agent]
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: notice, content: content, trigger: nil))
     }
 }

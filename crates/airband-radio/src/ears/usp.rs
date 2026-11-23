@@ -76,7 +76,9 @@ fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String>
     }
 }
 
-/// The service's token for a key: asked for with nothing in the request, and the answer is the token itself.
-fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    pass_whole(by, service, set, key)
+/// The service's token for a key: asked for with nothing in the request, and the answer is the token itself,
+/// a signed token that says when it ends.
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<Ticket, String> {
+    let token = pass_whole(by, service, set, key)?;
+    Ok(Ticket { until: signed_until(&token), token })
 }

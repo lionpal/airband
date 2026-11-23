@@ -60,22 +60,22 @@ extension RadioModel {
             return
         }
         previewing = choice.name
-        guard let url = URL(string: choice.preview) else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            DispatchQueue.main.async {
-                guard self.previewing == choice.name, let data, let player = try? AVAudioPlayer(data: data) else {
-                    if self.previewing == choice.name { self.previewing = nil }
-                    return
-                }
-                try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                try? AVAudioSession.sharedInstance().setActive(true)
-                self.previewPlayer = player
-                // the row stops showing it as playing when the player says the clip is over
-                self.previewEnd.ended = { [weak self] in if self?.previewing == choice.name { self?.previewing = nil } }
-                player.delegate = self.previewEnd
-                player.play()
+        // fetched by the core, the one way to the network
+        ask("The sample could not be fetched.", { try self.desk.voicePreview(preview: choice.preview) }) { data, wrong in
+            guard self.previewing == choice.name else { return }
+            guard let data, let player = try? AVAudioPlayer(data: data) else {
+                self.previewing = nil
+                self.problem = wrong ?? "The sample could not be played."
+                return
             }
-        }.resume()
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
+            self.previewPlayer = player
+            // the row stops showing it as playing when the player says the clip is over
+            self.previewEnd.ended = { [weak self] in if self?.previewing == choice.name { self?.previewing = nil } }
+            player.delegate = self.previewEnd
+            player.play()
+        }
     }
 
     /// Say a sentence in the chosen voice, so he hears what he picked.

@@ -16,10 +16,12 @@ const WIRE: Wire = Wire { connect, audio, end: |_| Message::text(json!({ "realti
 /// The service's short-lived token: asked for with how long it is to last, good for twenty minutes and for
 /// any number of connections in that time, so one fetched ahead is still good when he opens the microphone,
 /// and again if a connection drops.
-fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let until = airband_core::clock::rfc3339(now_ms() + 20 * 60 * 1000);
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<Ticket, String> {
+    let ends = now_ms() + 20 * 60 * 1000;
+    let until = airband_core::clock::rfc3339(ends);
     let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
-    pass_field(by, service, set, key, Some(body), "name")
+    // it ends when it was asked to: that is when a new one is fetched ahead
+    Ok(Ticket { token: pass_field(by, service, set, key, Some(body), "name")?, until: Some(ends) })
 }
 
 /// The pass goes in the address; the model, the language and the names to expect go in the first message.

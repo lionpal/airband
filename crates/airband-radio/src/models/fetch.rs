@@ -36,7 +36,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
         let part = path.with_extension("part");
         let mut res = client.send(crate::net::Ask::get(format!("{}/{to}", m.base))).map_err(|_| told("Could not reach the download. Check the connection and try again."))?;
         if res.status().as_u16() != 200 {
-            return Err(told("The download is not there."));
+            return Err(told(&not_fetched(res.status().as_u16())));
         }
         let mut file = std::fs::File::create(&part).map_err(|_| told("Could not write the model to this device."))?;
         let mut body = res.body_mut().as_reader();
@@ -77,3 +77,25 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     Ok(())
 }
 
+
+/// What he is told when the download answered with something other than the file, by what it answered.
+fn not_fetched(status: u16) -> String {
+    match status {
+        404 | 410 => "The download is not there.".into(),
+        429 => "The download was being asked for too often. Try again in a while.".into(),
+        500..=599 => format!("The place the download comes from ran into trouble ({status}). Try again later."),
+        _ => format!("The download could not be fetched ({status})."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_download_that_fails_is_told_by_what_it_answered() {
+        // (audit 9, B-35)
+        assert_eq!(super::not_fetched(404), "The download is not there.");
+        assert!(super::not_fetched(503).contains("trouble (503)"));
+        assert!(super::not_fetched(429).contains("too often"));
+        assert!(super::not_fetched(403).contains("(403)"));
+    }
+}

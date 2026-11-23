@@ -123,6 +123,52 @@ fn a_computer_that_refuses_this_phone_is_told_by_what_it_said_and_the_others_are
 }
 
 #[test]
+fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes_and_then_is() {
+    // (audit 9, B-2): a refusal for good is not asked again every 300 ms; his asking afresh is a new try
+    let refusing = Arc::new(FakeTower::default());
+    refusing.refuses::<at::Feed>(426, &airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() });
+    let desk = desk_with(vec![(link(1), refusing.clone())]);
+    desk.set_links(vec![link(1)]);
+    let refused = || desk.shared.state.lock().unwrap().computers.iter().any(|s| s.refused.is_some());
+    for _ in 0..300 {
+        if refused() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let was_refused = refused();
+    thread::sleep(Duration::from_millis(700));
+    let once = refusing.asked_on::<at::Feed>();
+    // what needs the computer says what it said, not that it is out of reach (audit 9, B-37)
+    let folders = desk.station_radio(&StationId::new(""));
+    desk.reconnect();
+    let mut again = once;
+    for _ in 0..300 {
+        again = refusing.asked_on::<at::Feed>();
+        if again > once {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    desk.stop();
+    assert!(was_refused);
+    assert_eq!(once, 1, "a computer that refused this phone was asked again with nothing changed");
+    assert_eq!(again, 2, "asking afresh did not ask it again");
+    assert!(matches!(folders, Err(RadioError::Told { reason }) if reason.contains("another version")));
+}
+
+#[test]
+fn one_computer_paired_by_two_links_is_two_entries_with_names_of_their_own() {
+    // (audit 9, B-6): made at once with one secret, through the relay and straight on its network
+    let secret = "ab".repeat(32);
+    let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link();
+    let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link();
+    assert_ne!(station_id(&relay), station_id(&near));
+    // the relay link keeps the name a notification from that computer gives
+    assert_eq!(station_id(&relay).to_string(), Keys::derive(&"ab".repeat(32)).unwrap().channel);
+}
+
+#[test]
 fn a_team_that_has_gone_is_let_go_of_and_one_just_made_stays_open_until_its_first_agent() {
     let desk = desk_with(vec![(link(1), tower("studio"))]);
     desk.set_links(vec![link(1)]);

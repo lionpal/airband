@@ -68,10 +68,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                 o.now.clone(),
                 o.offers
                     .iter()
-                    .map(|r| {
-                        let asks = r.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect();
-                        (Service { kind: r.provider.clone(), offer: r.offer.clone(), name: r.label.clone(), more: !r.preferred, free: r.free, login: r.login.clone(), price: r.price.clone(), voices: Vec::new(), about: r.about.clone(), key: r.key, key_name: r.key_name.clone(), keys_at: r.keys_at.clone(), asks, usual_voice: String::new() }, r.has_key)
-                    })
+                    .map(|r| (Service::from(r), r.has_key))
                     .collect(),
             ),
             None => (None, crate::services::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),

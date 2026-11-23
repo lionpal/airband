@@ -16,8 +16,9 @@ const WIRE: Wire = Wire { connect, audio: |_, bytes| chunk(bytes, false), end: |
 
 /// The service's token: asked for with nothing in the request, good for a quarter of an hour and for one
 /// connection.
-fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    pass_field(by, service, set, key, None, "token")
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<Ticket, String> {
+    // good for one connection: never kept, so when it ends is not needed
+    Ok(Ticket { token: pass_field(by, service, set, key, None, "token")?, until: None })
 }
 
 /// A language tag's primary subtag (BCP 47: the letters before the first hyphen), when it has one.

@@ -330,6 +330,9 @@ impl State {
 }
 pub(crate) struct Shared {
     pub(crate) state: Mutex<State>,
+    /// Told whenever a computer's connection is replaced or let go: a connection waiting on a refusal for a
+    /// fact (he paired again, he asked for it afresh) looks again then ([`follow`]).
+    pub(crate) moved: Condvar,
     floor: Floor,
     pub(crate) host: Arc<dyn DeskHost>,
     /// What he chose to read, listen and speak with.
@@ -355,30 +358,21 @@ impl Desk {
     /// A desk with no computers, keeping what it keeps in `data_dir`.
     pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
         let chooser = crate::choices::Chooser::open(data_dir, host.device());
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: data_dir.into() }
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: data_dir.into() }
     }
 }
-/// A short name that is the same every launch for the same bytes: not a secret and not a check, only a name.
-/// `from` is where it starts; each use keeps its own, so the names already on his phone stay the same.
-pub(crate) fn same_name(from: u64, bytes: &[u8]) -> String {
-    let h = bytes.iter().fold(from, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
-    format!("{h:x}")
-}
-/// The pass for the live listening service he chose is fetched before he first needs it, and again now and
-/// then, so opening the microphone never waits on it: once for the device, whichever computers are paired
-/// (audit 6, C-B5). It ends with the desk.
+/// The pass for the live listening service he chose is fetched before he first needs it, and again when the
+/// pass itself says it ends, so opening the microphone never waits on it: once for the device, whichever
+/// computers are paired (audit 6, C-B5). With no pass kept (nothing to fetch ahead, or none could be had) it
+/// waits for him to choose again. It ends with the desk.
 fn warm_passes(shared: std::sync::Weak<Shared>) {
     thread::spawn(move || {
-        while let Some(ears) = shared.upgrade().map(|s| crate::ears::Ears::new(s.senses.clone())) {
-            ears.warm();
-            drop(ears);
-            thread::sleep(Duration::from_secs(240));
+        while let Some(senses) = shared.upgrade().map(|s| s.senses.clone()) {
+            let turn = senses.ears.turn();
+            let until = crate::ears::Ears::new(senses.clone()).warm();
+            senses.ears.wait_past(turn, until);
         }
     });
-}
-/// A folder name that is the same every launch for the same link.
-fn folder(link: &str) -> String {
-    same_name(1469598103934665603, link.as_bytes())
 }
 #[uniffi::export]
 impl Desk {
@@ -395,7 +389,7 @@ impl Desk {
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
-        let desk = Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir });
+        let desk = Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir });
         warm_passes(Arc::downgrade(&desk.shared));
         desk
     }
@@ -472,6 +466,7 @@ impl Desk {
             state.computers = kept;
             (taken, was)
         };
+        self.shared.moved.notify_all();
         gone.iter().for_each(|s| s.radio.stop());
         for (id, epoch, radio) in started {
             let shared = self.shared.clone();
@@ -519,7 +514,8 @@ impl Desk {
             let plan = plan.into_iter().map(|(id, link, kept)| { state.epochs += 1; (id, link, state.epochs, kept) }).collect();
             (state.calling, plan)
         };
-        self.shared.floor.clear();
+        // a computer asked afresh gives up the floor; one that keeps its connection keeps the floor it has
+        self.shared.floor.clear_for(&ids);
         for (id, link, epoch, kept) in plan {
             let Ok(radio) = self.connect(&link, Some(kept)) else { continue };
             radio.set_call_mode(calling);
@@ -532,6 +528,7 @@ impl Desk {
                 computer.epoch = epoch;
                 std::mem::replace(&mut computer.radio, radio.clone())
             };
+            self.shared.moved.notify_all();
             old.stop();
             let shared = self.shared.clone();
             thread::spawn(move || follow(shared, radio, id, epoch));
@@ -544,9 +541,11 @@ impl Desk {
         let mut state = self.shared.state.lock().unwrap();
         state.epochs += 1;
         state.computers.drain(..).for_each(|s| s.radio.stop());
+        self.shared.moved.notify_all();
     }
     /// The computer called this. With no name it is the one computer he has; with several he has to say
-    /// which, and none is picked for him.
+    /// which, and none is picked for him. One that refuses this phone is refused with what it said; one that
+    /// is not answering is out of reach.
     fn station_radio(&self, computer: &StationId) -> Result<Arc<Radio>, RadioError> {
         self.station_of(computer).map(|(radio, _)| radio)
     }
@@ -560,6 +559,10 @@ impl Desk {
         };
         // a computer this phone does not have is gone; one it has that is not answering is out of reach
         let found = found.ok_or_else(|| crate::choices::told(UNPAIRED))?;
+        // one that answered and will not talk to this phone says what he is to do, not that it is out of reach
+        if let Some(why) = &found.refused {
+            return Err(crate::choices::told(why));
+        }
         if !found.online {
             return Err(RadioError::Offline);
         }
@@ -572,9 +575,10 @@ impl Desk {
     fn agent_radio(&self, agent: &str) -> Result<Arc<Radio>, RadioError> {
         self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or_else(|| RadioError::gone("agent"))
     }
-    /// The computer's radio that a message still waiting to go, or given up on, belongs to: what each keeps
-    /// on this device says, so it is known from launch.
-    fn sender_of(&self, id: &str) -> Option<Arc<Radio>> {
-        self.shared.state.lock().unwrap().computers.iter().find(|s| s.radio.unsent().iter().any(|o| o.id == id)).map(|s| s.radio.clone())
+    /// The radios of the computers that a message still waiting to go, or given up on, belongs to: what each
+    /// keeps on this device says, so it is known from launch. Several for words sent to several computers at
+    /// once under one id.
+    fn senders_of(&self, id: &str) -> Vec<Arc<Radio>> {
+        self.shared.state.lock().unwrap().computers.iter().filter(|s| s.radio.unsent().iter().any(|o| o.id == id)).map(|s| s.radio.clone()).collect()
     }
 }

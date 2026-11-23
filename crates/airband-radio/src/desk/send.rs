@@ -114,18 +114,27 @@ impl Desk {
         self.shared.host.changed();
     }
     /// Try again a message that was not sent ([`Outgoing::failed`]). It goes after anything else still waiting.
+    /// Words sent to several computers at once are one line: each copy given up on is tried again.
     pub fn send_again(&self, id: String) {
-        if let Some(radio) = self.sender_of(&id) {
+        for radio in self.senders_of(&id) {
             radio.send_again(&id);
         }
     }
-    /// Let go of a message that was not sent. Returns its words, for putting back where he types.
+    /// Let go of a message that was not sent (every copy given up on, for words sent to several computers).
+    /// Returns its words, for putting back where he types.
     pub fn discard_unsent(&self, id: String) -> Option<String> {
-        self.sender_of(&id).and_then(|radio| radio.discard(&id)).map(|o| o.label.unwrap_or(o.text))
+        self.senders_of(&id).into_iter().filter_map(|radio| radio.discard(&id)).last().map(|o| o.label.unwrap_or(o.text))
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
+    /// Words sent to several computers at once are taken back from each.
     pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
-        self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.unsend(message_id)
+        let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().computers.iter().filter(|s| s.messages.iter().any(|m| m.id == message_id)).map(|s| s.radio.clone()).collect();
+        if radios.is_empty() {
+            return Err(RadioError::gone("message"));
+        }
+        // each is asked, whatever the others answer
+        let answers: Vec<Result<(), RadioError>> = radios.iter().map(|radio| radio.unsend(message_id.clone())).collect();
+        answers.into_iter().collect()
     }
 }
 
@@ -151,10 +160,17 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         state.asking = None;
         // tags are the one thing he types that addresses: `@shop2`, `@all`, read as the tower reads them; words
         // that only start with an @ ("@home is broken") address nobody
-        let tagged = tags_someone(&state, &text).is_some();
+        let tagging = tagged_on(&state, &text);
+        let tagged = !tagging.is_empty();
         let re = re.filter(|_| !tagged);
         if let Some(id) = &re {
             state.answered.insert(id.clone());
+        }
+        // a tag that names agents on several computers (`@all`, a team on two of them) goes to each of them
+        if tagging.len() > 1 {
+            drop(state);
+            to_each(shared, &tagging, text, label);
+            return;
         }
         // looking at one agent, with nobody tagged and no message picked: it is for that agent
         let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
@@ -237,13 +253,38 @@ fn others(state: &State, pick: &StationId, room: Option<&str>) -> Vec<airband_co
         })
         .collect()
 }
-/// The first computer that has someone his words tag, read the way the tower reads tags. Nothing when they tag
-/// nobody.
-fn tags_someone(state: &State, text: &str) -> Option<StationId> {
-    state.computers.iter().find(|s| {
+/// Every computer that has someone his words tag, read the way the tower reads tags, in his list's order.
+/// Nothing when they tag nobody.
+fn tagged_on(state: &State, text: &str) -> Vec<StationId> {
+    state.computers.iter().filter(|s| {
         let live: Vec<Callsign> = s.agents.iter().map(|a| a.parts()).collect();
         !parse_utterance(text, &live).to.is_empty()
-    }).map(Computer::id)
+    }).map(Computer::id).collect()
+}
+/// Words whose tags name agents on each of these computers: each of them is sent them, and its tower reads
+/// the tags for its own agents. Files he attached go with the copy to the computer they are on; when that is
+/// none of these, they stay there for the next thing he sends to it, and he is told.
+fn to_each(shared: &Arc<Shared>, computers: &[StationId], text: String, label: Option<String>) {
+    let (radios, stranded) = {
+        let mut state = shared.state.lock().unwrap();
+        let files = files_at(&state);
+        if let Some(at) = files.as_ref().filter(|at| computers.contains(at)) {
+            state.files_went(&at.clone(), &[]);
+        }
+        let stranded = files.filter(|at| !computers.contains(at)).map(|at| state.computer_name(&at));
+        let radios: Vec<Arc<Radio>> = computers.iter().filter_map(|id| state.computer(id).map(|s| s.radio.clone())).collect();
+        (radios, stranded)
+    };
+    // One line of his, under one id, sent to each: the chat shows it once whichever computers have it. Each
+    // copy takes its own: the files that reached that computer, the question it last asked him back.
+    let line = Outgoing { label, ..Outgoing::of(text) };
+    for radio in radios {
+        radio.queue_as(line.clone(), Carry::Answer);
+    }
+    if let Some(name) = stranded {
+        shared.host.note(format!("The files you attached are on {name}. They go with the next thing you send there."));
+    }
+    shared.host.changed();
 }
 /// Which computer a message of his goes to, by its id.
 pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> Option<StationId> {
@@ -251,9 +292,12 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
     if let Some(s) = re.and_then(|id| state.owner(id)) {
         return Some(s.id());
     }
-    // the computer that has whoever he tagged: read the tags the way the tower will
-    if let Some(i) = tags_someone(state, text) {
-        return Some(i);
+    // the computer that has whoever he tagged, read the way the tower will, when that is one computer. Tags
+    // on several are sent to each (`to_each`): none of them is picked here
+    match tagged_on(state, text).as_slice() {
+        [] => {}
+        [only] => return Some(only.clone()),
+        _ => return None,
     }
     if let Some(s) = agent.and_then(|id| state.with_agent(id)) {
         return Some(s.id());

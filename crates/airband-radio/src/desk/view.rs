@@ -229,13 +229,22 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
 }
 
 /// What is on its way: not yet sent, then sent and not yet back in the chat (for [`super::LANDING`] at most).
+/// Words sent to several computers at once (a tag on agents of each) are one line under one id: shown once,
+/// and not at all once the chat has them from one of those computers, unless a copy was given up on, which
+/// is shown so he can send it again or let it go.
 fn sending(state: &State) -> Vec<DeskOutgoing> {
-    state
-        .computers
-        .iter()
-        .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < super::LANDING && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
-        .map(|o| DeskOutgoing::from(&o))
-        .collect()
+    let in_chat = |id: &str| state.computers.iter().any(|s| s.messages.iter().any(|m| m.id == id));
+    let mut shown: Vec<Outgoing> = Vec::new();
+    let waiting = state.computers.iter().flat_map(|s| s.radio.unsent().into_iter().chain(s.landing.iter().filter(|(_, at)| at.elapsed() < super::LANDING).map(|(o, _)| o.clone())));
+    for o in waiting.filter(|o| o.failed.is_some() || !in_chat(&o.id)) {
+        match shown.iter_mut().find(|have| have.id == o.id) {
+            // the copy given up on is the one he has to act on
+            Some(have) if have.failed.is_none() && o.failed.is_some() => *have = o,
+            Some(_) => {}
+            None => shown.push(o),
+        }
+    }
+    shown.iter().map(DeskOutgoing::from).collect()
 }
 
 /// What he is told of the computers that cannot be talked to: each that refuses this phone by what it said,

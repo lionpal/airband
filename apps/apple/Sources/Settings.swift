@@ -75,7 +75,7 @@ struct SetupView: View {
                     Button { scanning = true } label: { Label("Scan code", systemImage: "qrcode.viewfinder").font(.body.weight(.semibold)) }
                     // the other way in, for a link sent to the phone: smaller, under the scan
                     Button("Paste a link instead") {
-                        if model.pair(with: UIPasteboard.general.string ?? "") == nil { dismiss() }
+                        if model.pairPasted() == nil { dismiss() }
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     if model.paired {

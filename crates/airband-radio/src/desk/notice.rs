@@ -3,7 +3,7 @@ use super::*;
 
 /// What a notification says once this device has opened it: everything a host needs to show it and to send an
 /// answer to it, with the app running or not.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenedNotice {
     /// The computer it came from, for [`Desk::answer_now`].
     pub station: String,
@@ -134,7 +134,7 @@ pub fn notice_button(action: String, options: Vec<String>) -> Option<AnswerButto
 /// The name of the set of buttons for these answers: the same answers always get the same name.
 #[uniffi::export]
 pub fn notice_answers_name(options: Vec<String>) -> String {
-    format!("{ANSWERS}{}", crate::desk::same_name(0xcbf2_9ce4_8422_2325, options.join("\u{1}").as_bytes()))
+    format!("{ANSWERS}{}", super::same_name(0xcbf2_9ce4_8422_2325, options.join("\u{1}").as_bytes()))
 }
 /// The set of buttons is one made for a question's answers ([`notice_answers_name`]): one of those the host
 /// lets go of once there are many.

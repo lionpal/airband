@@ -65,7 +65,7 @@ pub(crate) fn by_upload(with: &Use) -> bool {
 /// What was said in a recording, by the service `with` names. `phrases` are names he is likely to say. Empty
 /// when nothing was said. Blocks. Err says why not, in words for him.
 pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, String> {
-    let (provider, offer) = with.offer(Job::Ears).ok_or(crate::ears::UNKNOWN_SERVICE)?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or_else(crate::ears::unknown_service)?;
     let by = upload(&offer).ok_or_else(crate::ears::cannot_listen)?;
     (by.hear)(with, &provider, &offer.by, wav, phrases)
 }

@@ -19,8 +19,6 @@ use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 
 pub(crate) const RATE: u32 = 16000;
-/// A pass is asked for again after this long (the shortest-lived of them lasts ten minutes).
-const PASS_LIFE: Duration = Duration::from_secs(300);
 
 mod bidi;
 mod chunks;
@@ -29,7 +27,9 @@ mod pass;
 pub(crate) use pass::*;
 
 /// What he is told when the listening service he chose is not one this build knows.
-pub(crate) const UNKNOWN_SERVICE: &str = "This version of airband does not know that listening service.";
+pub(crate) fn unknown_service() -> String {
+    crate::senses::Cannot::UnknownService(crate::senses::Sense::Listening).told()
+}
 /// What he is told when what he chose to listen with is a service this build cannot listen through this way:
 /// the one wording ([`crate::senses::Cannot::ServiceNotUsed`]).
 pub(crate) fn cannot_listen() -> String {
@@ -38,10 +38,12 @@ pub(crate) fn cannot_listen() -> String {
 /// What he is told when the live listening service or the line to it failed before anything was heard.
 const SERVICE_UNREACHED: &str = "The listening service you chose could not be reached. Nothing else listened in its place.";
 /// Said when he opens the microphone with nothing chosen to listen with.
-pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
+pub(crate) fn nothing_chosen() -> String {
+    crate::senses::Cannot::NothingChosen(crate::senses::Sense::Listening).told()
+}
 
 /// How a dialect gets its pass: from the row, the service's name, his settings and his key.
-type AskPass = fn(&By, &Provider, &BTreeMap<String, String>, &str) -> Result<String, String>;
+type AskPass = fn(&By, &Provider, &BTreeMap<String, String>, &str) -> Result<Ticket, String>;
 
 /// A live listening dialect: how one service is listened with while he talks. Each is a file under `ears/`
 /// and a line of [`LISTENERS`].
@@ -92,6 +94,9 @@ pub(crate) struct Chosen {
     /// The names he is likely to say: his agents and their projects, as the chat last listed them, and the
     /// words of the trade the catalogue lists. For a recogniser that can be told what to expect.
     phrases: Mutex<Vec<String>>,
+    /// Goes up each time he chooses again, with `moved` told: the warmer of passes looks again then.
+    turn: Mutex<u64>,
+    moved: std::sync::Condvar,
 }
 
 impl Chosen {
@@ -103,6 +108,26 @@ impl Chosen {
     pub(crate) fn set(&self, own: Option<Own>) {
         *self.using.lock().unwrap_or_else(|e| e.into_inner()) = own;
         *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.turn.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.moved.notify_all();
+    }
+
+    /// Which choice this is: it changes each time he chooses again.
+    pub(crate) fn turn(&self) -> u64 {
+        *self.turn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Wait until he chooses again after `turn`, or until `until` (ms) when it is given: the two facts a
+    /// pass fetched ahead waits on.
+    pub(crate) fn wait_past(&self, turn: u64, until: Option<u64>) {
+        let mut now = self.turn.lock().unwrap_or_else(|e| e.into_inner());
+        while *now == turn {
+            match until.map(|u| u.saturating_sub(now_ms())) {
+                Some(0) => return,
+                Some(ms) => now = self.moved.wait_timeout(now, Duration::from_millis(ms)).unwrap_or_else(|e| e.into_inner()).0,
+                None => now = self.moved.wait(now).unwrap_or_else(|e| e.into_inner()),
+            }
+        }
     }
 
     /// The model to listen with, from that folder: the one already in use when it is the same.
@@ -125,7 +150,7 @@ impl Chosen {
     /// what he chose cannot be used. Nothing when something can.
     pub(crate) fn cannot(&self) -> Option<String> {
         match self.using() {
-            None => Some(NOTHING_CHOSEN.into()),
+            None => Some(nothing_chosen()),
             Some(Own::Cannot(why)) => Some(why.told()),
             Some(_) => None,
         }
@@ -153,16 +178,16 @@ impl Chosen {
 /// way one is asked for. The dialect comes with it, so whoever asked knows whether it may be kept. Err says
 /// why not, in words for him.
 pub(crate) fn pass_for(with: &Use, phrases: Vec<String>) -> Result<(Pass, &'static Listener), String> {
-    let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or_else(unknown_service)?;
     let l = live(&offer).ok_or_else(cannot_listen)?;
     let set = with.settings(Job::Ears);
-    let token = (l.pass)(&offer.by, &provider, &set, &with.key)?;
-    Ok((Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() }, l))
+    let Ticket { token, until } = (l.pass)(&offer.by, &provider, &set, &with.key)?;
+    Ok((Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone(), until }, l))
 }
 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
-    let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or_else(unknown_service)?;
     match live(&offer) {
         Some(l) => (l.pass)(&offer.by, &provider, &with.settings(Job::Ears), &with.key).map(|_| ()),
         None => crate::hears::check(with),
@@ -197,9 +222,9 @@ enum Mic {
 /// serves them all while it is good.
 #[derive(Default)]
 pub(crate) struct Passes {
-    /// The last pass, when, and what he had chosen it for (the service, its settings and his key): one is good
-    /// for a few minutes, and only for that.
-    pass: Mutex<Option<(Pass, Instant, Use)>>,
+    /// The last pass and what he had chosen it for (the service, its settings and his key): it is good until
+    /// the moment it says it ends ([`Pass::until`]), and only for that.
+    pass: Mutex<Option<(Pass, Use)>>,
     /// Held while a pass is looked for and asked for, so radios that want one at once ask the service once.
     asking: Mutex<()>,
 }
@@ -218,7 +243,8 @@ impl Ears {
     /// The pass kept for exactly this choice, while it is still good. One good for a single connection is
     /// never kept.
     fn kept(&self, with: &Use) -> Option<Pass> {
-        self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(_, when, made)| made == with && when.elapsed() < PASS_LIFE).map(|(p, _, _)| p)
+        let now = now_ms();
+        self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(p, made)| made == with && p.until.is_some_and(|until| now < until)).map(|(p, _)| p)
     }
     fn forget(&self) {
         *self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -226,7 +252,7 @@ impl Ears {
 
     fn way(&self) -> Way {
         match self.chosen.ears.using() {
-            None => Way::Nothing(NOTHING_CHOSEN.into()),
+            None => Way::Nothing(nothing_chosen()),
             Some(Own::Model(held)) => Way::Mic(Mic::Model(held)),
             Some(Own::Cannot(why)) => Way::Nothing(why.told()),
             Some(Own::Host) => Way::Host,
@@ -241,15 +267,16 @@ impl Ears {
     /// A pass for the live service he chose: the one kept for that choice while it is good, or a new one,
     /// asked for now. Err says why there is none, in words for him.
     fn pass(&self) -> Result<Pass, String> {
-        let Some(Own::Service(with)) = self.chosen.ears.using() else { return Err(NOTHING_CHOSEN.into()) };
+        let Some(Own::Service(with)) = self.chosen.ears.using() else { return Err(nothing_chosen()) };
         let phrases = self.chosen.ears.phrases.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _asking = self.chosen.passes.asking.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pass) = self.kept(&with) {
             return Ok(Pass { phrases, ..pass });
         }
         let (pass, l) = pass_for(&with, phrases)?;
-        if !l.once {
-            *self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()) = Some((pass.clone(), Instant::now(), with.clone()));
+        // one that does not say when it ends is not kept: how long it lasts would be a guess
+        if !l.once && pass.until.is_some() {
+            *self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()) = Some((pass.clone(), with.clone()));
         }
         Ok(pass)
     }
@@ -257,13 +284,15 @@ impl Ears {
     /// Ask for the pass now, so it is there before he next opens the microphone. Nothing is asked of anyone
     /// when what he chose needs no pass.
     /// A pass good for one connection only is never asked for ahead: it would be spent for nothing.
-    pub(crate) fn warm(&self) {
-        if let Way::Mic(Mic::Live { with }) = self.way()
-            && !with.once
-        {
-            // a pass that cannot be had now is asked for again when he opens the microphone, and he is told then
-            self.pass().ok();
+    /// Returns when the pass now kept ends, as it says itself: when a new one is to be asked for ahead.
+    /// Nothing when none is kept: a pass that cannot be had now is asked for again when he opens the
+    /// microphone, and he is told then.
+    pub(crate) fn warm(&self) -> Option<u64> {
+        let Way::Mic(Mic::Live { with }) = self.way() else { return None };
+        if with.once {
+            return None;
         }
+        self.pass().ok().and(self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|(p, _)| p.until))
     }
 
     /// Open the microphone and listen. The microphone opens first, at once: the pass for the listening service
@@ -459,8 +488,14 @@ mod tests {
         let ears = Ears::new(Arc::new(Senses::default()));
         let (a, b) = (scribe("a"), scribe("b"));
         let by = a.offer(Job::Ears).unwrap().1.by.clone();
-        *ears.chosen.passes.pass.lock().unwrap() = Some((Pass { dialect: "usp".into(), token: "t".into(), set: BTreeMap::new(), phrases: Vec::new(), by }, Instant::now(), a.clone()));
+        let pass = |until| Pass { dialect: "usp".into(), token: "t".into(), set: BTreeMap::new(), phrases: Vec::new(), by: by.clone(), until };
+        *ears.chosen.passes.pass.lock().unwrap() = Some((pass(Some(now_ms() + 60_000)), a.clone()));
         assert!(ears.kept(&a).is_some());
         assert!(ears.kept(&b).is_none());
+        // past the moment the pass itself says it ends it is not used, however recently it was had (audit 9, B-32)
+        *ears.chosen.passes.pass.lock().unwrap() = Some((pass(Some(now_ms() - 1)), a.clone()));
+        assert!(ears.kept(&a).is_none());
+        *ears.chosen.passes.pass.lock().unwrap() = Some((pass(None), a.clone()));
+        assert!(ears.kept(&a).is_none());
     }
 }

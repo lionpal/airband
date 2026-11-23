@@ -12,6 +12,7 @@ mod ssml;
 mod timed_stream;
 mod speech;
 use airband_core::providers::Answering;
+use crate::senses::{Cannot, Sense};
 
 /// A voice service.
 pub(crate) trait Synth: Send + Sync {
@@ -58,6 +59,14 @@ pub(crate) fn rate_of(given: Option<u64>) -> Result<u32, String> {
         Some(r) => u32::try_from(r).ok().filter(|r| RATES.contains(r)).ok_or_else(|| format!("{r} is not a rate a voice can be played at. It is a number like 24000.")),
     }
 }
+/// The rate a row gives: a rate written as anything but a number (`"24000"`) is told as written, not as one
+/// that is missing (audit 9, B-34).
+fn rate_in(given: Option<&serde_json::Value>) -> Result<u32, String> {
+    match given {
+        Some(v) if v.as_u64().is_none() => Err(format!("{v} is not a rate a voice can be played at. It is a number like 24000.")),
+        given => rate_of(given.and_then(serde_json::Value::as_u64)),
+    }
+}
 
 /// What he is told when a voice service's answer holds something this build cannot read.
 fn unreadable(service: &Answering) -> String {
@@ -81,7 +90,7 @@ impl Reach {
     fn of(voice: &Use, by: &By, provider: &Provider) -> Result<Reach, String> {
         let url = airband_core::providers::fill(by.text(crate::models::field::URL), &|field| voice.get(Job::Voice, field))?;
         let auth = key_header(by, &voice.key)?;
-        let rate = rate_of(by.with.get(crate::models::field::RATE).and_then(serde_json::Value::as_u64))?;
+        let rate = rate_in(by.with.get(crate::models::field::RATE))?;
         let headers = by.with.get(crate::models::field::HEADERS).and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
         Ok(Reach { url, auth, headers, rate, service: Answering::of(provider) })
     }
@@ -109,10 +118,10 @@ pub fn speaks(offer: &Offer) -> bool {
 /// The voice a setting names, through whichever interface its row says. Err says why not, in words for him.
 pub(crate) fn synth(voice: &Use) -> Made {
     if voice.is_none() {
-        return Err(crate::voice::NOTHING_CHOSEN.into());
+        return Err(crate::voice::nothing_chosen());
     }
-    let (provider, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
-    let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;
+    let (provider, offer) = voice.offer(Job::Voice).ok_or_else(|| Cannot::UnknownService(Sense::Voice).told())?;
+    let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or_else(|| Cannot::ServiceNotUsed(Sense::Voice).told())?;
     (voicing.make)(voice, &offer.by, &provider)
 }
 
@@ -170,5 +179,9 @@ mod tests {
         // a rate that is not one is said, not replaced with a guess
         let odd = Use { kind: "local".into(), offer: "voice-server".into(), key: String::new(), set: [("rate".to_string(), serde_json::json!("fast"))].into_iter().collect() };
         assert!(synth(&odd).is_err_and(|why| why.contains("rate")));
+        // a rate the row writes as text is told as written, not as missing (audit 9, B-34)
+        assert_eq!(rate_in(Some(&serde_json::json!("24000"))), Err("\"24000\" is not a rate a voice can be played at. It is a number like 24000.".into()));
+        assert_eq!(rate_in(Some(&serde_json::json!(24000))), Ok(24000));
+        assert!(rate_in(None).is_err_and(|why| why.contains("does not say")));
     }
 }

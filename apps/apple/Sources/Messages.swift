@@ -232,7 +232,7 @@ struct Mine: View {
             if latest, !m.queued, !m.to.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: m.seen > 0 ? "checkmark.circle.fill" : "checkmark").font(.system(size: 10, weight: .bold))
-                    Text(m.seen > 0 ? "read " + Date(timeIntervalSince1970: Double(m.seen) / 1000).formatted(date: .omitted, time: .shortened) : "delivered")
+                    Text(m.seen > 0 ? "read " + Date(ms: m.seen).formatted(date: .omitted, time: .shortened) : "delivered")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(m.seen > 0 ? Palette.signal.opacity(0.85) : Palette.dim)

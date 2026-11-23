@@ -17,6 +17,8 @@ pub(crate) struct FakeTower {
     pub(crate) asked: Mutex<Vec<(String, String)>>,
     /// While set it answers nothing at all, as a computer that is off.
     pub(crate) away: std::sync::atomic::AtomicBool,
+    /// Answers given once each, in order, before what `answers` scripts: a tower whose answer changes.
+    turns: Mutex<HashMap<(String, &'static str), std::collections::VecDeque<Scripted>>>,
 }
 
 impl FakeTower {
@@ -27,6 +29,11 @@ impl FakeTower {
     /// `E` is refused, with this status and refusal.
     pub(crate) fn refuses<E: Endpoint>(&self, status: u16, refusal: &Refusal) -> &Self {
         self.script::<E>(status, serde_json::to_value(refusal).expect("a refusal writes as JSON"))
+    }
+    /// `E` first answers `first` once, and from then on what it is scripted to.
+    pub(crate) fn first<E: Endpoint>(&self, first: &E::Answer) -> &Self {
+        self.turns.lock().unwrap().entry((E::METHOD.to_string(), E::PATH)).or_default().push_back((200, serde_json::to_value(first).expect("an answer writes as JSON")));
+        self
     }
     fn script<E: Endpoint>(&self, status: u16, body: Value) -> &Self {
         self.answers.lock().unwrap().insert((E::METHOD.to_string(), E::PATH), (status, body));
@@ -52,6 +59,9 @@ impl Transport for FakeTower {
             return Err(LinkError::Unreachable(Way::Paired));
         }
         self.asked.lock().unwrap().push((method.to_string(), path.to_string()));
+        if let Some(turn) = self.turns.lock().unwrap().iter_mut().find(|((m, p), _)| *m == method.to_string() && fits(p, path)).and_then(|(_, t)| t.pop_front()) {
+            return Ok(turn);
+        }
         let answers = self.answers.lock().unwrap();
         let found = answers.iter().find(|((m, p), _)| *m == method.to_string() && fits(p, path)).map(|(_, a)| a.clone());
         // a long wait the stand-in has nothing for: a moment's pause, as the real one holds it open
@@ -68,6 +78,6 @@ impl Desk {
     pub(crate) fn through(data_dir: &str, host: Arc<dyn DeskHost>, towers: impl Fn(&str) -> Arc<FakeTower> + Send + Sync + 'static) -> Desk {
         let chooser = crate::choices::Chooser::open(data_dir, host.device());
         let dial: Dial = Arc::new(move |link: &str| towers(link) as Arc<dyn Transport>);
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: Some(dial) }), data_dir: data_dir.into() }
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: Some(dial) }), data_dir: data_dir.into() }
     }
 }

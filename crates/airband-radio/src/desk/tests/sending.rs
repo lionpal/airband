@@ -56,11 +56,105 @@ fn a_notification_answer_goes_only_to_the_computer_it_came_from() {
 #[test]
 fn words_waiting_for_files_go_once_no_file_is_still_on_its_way() {
     let mut state = State::default();
-    let upload = |state: UploadState| Upload { shown: DeskUpload { id: "f1".into(), name: "a.jpg".into(), sent: 0, total: 1, state }, station: StationId::new("s"), dropped: Arc::default(), file_path: String::new(), name: "a.jpg".into() };
+    let upload = |state: UploadState| Upload { shown: DeskUpload { id: "f1".into(), name: "a.jpg".into(), sent: 0, total: 1, state, why: None }, station: StationId::new("s"), dropped: Arc::default(), file_path: String::new(), name: "a.jpg".into() };
     state.uploads.push(upload(UploadState::Sending));
     state.after_files = Some(AfterFiles { text: "look".into(), label: None, re: None, room: None, agent: None });
     assert!(settled(&mut state).is_none(), "the words went before the file got there");
     state.uploads[0].shown.state = UploadState::Failed;
     assert_eq!(settled(&mut state).map(|w| w.text).as_deref(), Some("look"));
     assert!(state.after_files.is_none());
+}
+
+// (audit 9, B-7) A message his computer took and keeps answering "taken" for ends once it is as old as the outbox
+// keeps anything, he is told, and it no longer holds up what he says after it.
+#[test]
+fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
+    let tower = Arc::new(FakeTower::default());
+    tower.answers::<at::Utterance>(&airband_core::radio::Outcome::Taken);
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let radio = radio_of(&desk, &link(1));
+    radio.queue_as(Outgoing { at: now_ms() - crate::store::OUTBOX_EXPIRY_MS - 1000, stage: Stage::Taken, ..Outgoing::of("old".into()) }, Carry::Nothing);
+    radio.queue_as(Outgoing::of("new".into()), Carry::Nothing);
+    let mut ended = None;
+    for _ in 0..300 {
+        ended = radio.unsent().into_iter().find(|o| o.text == "old").and_then(|o| o.failed);
+        if ended.is_some() && tower.asked_on::<at::Utterance>() > 0 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    desk.stop();
+    assert_eq!(ended.as_deref(), Some("Your computer took it and in half an hour did not say what came of it."));
+    assert!(tower.asked_on::<at::Utterance>() >= 1, "what he said after it was held up");
+}
+
+// (audit 8, radio.rs:384) A picture whose parts stop moving forward before the last is only part of one: none
+// of it is kept, and he is told.
+#[test]
+fn a_picture_that_stops_coming_part_way_is_not_kept_as_the_whole() {
+    let tower = Arc::new(FakeTower::default());
+    tower.answers::<at::Picture>(&airband_core::radio::PicturePart { data: airband_core::encode::base64(b"\xff\xd8 half"), next: 0, done: false });
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let radio = radio_of(&desk, &link(1));
+    let id = airband_core::encode::random_hex(8);
+    let got = radio.picture(id.clone());
+    desk.stop();
+    assert!(matches!(&got, Err(RadioError::Told { reason }) if reason == "Your computer sent only part of that picture."), "{got:?}");
+    assert!(!radio.store.pictures().join(format!("{id}.jpg")).exists(), "part of a picture was kept as the whole");
+}
+
+// (audit 9, B-39) A file that did not get there says why, for the tray to show.
+#[test]
+fn a_file_that_did_not_get_there_keeps_why() {
+    let tower = Arc::new(FakeTower::default());
+    tower.refuses::<at::Attachment>(413, &Refusal::TooBig);
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let file = std::env::temp_dir().join(format!("airband-upload-{}.png", airband_core::encode::random_hex(6)));
+    std::fs::write(&file, b"not much").unwrap();
+    desk.attach(file.display().to_string(), "a.png".into(), None, None, None);
+    let mut shown = None;
+    for _ in 0..300 {
+        shown = desk.shared.state.lock().unwrap().uploads.first().map(|u| u.shown.clone()).filter(|u| u.state == UploadState::Failed);
+        if shown.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    desk.stop();
+    std::fs::remove_file(&file).ok();
+    assert_eq!(shown.and_then(|u| u.why).as_deref(), Some("It is more than your computer takes in one message."));
+}
+
+// (audit 9, B-36) Something said aloud that the tower took and then refuses for good ends with the refusal at
+// once: it is not asked about for a minute and a half and then given up on in silence.
+#[test]
+fn a_spoken_message_refused_after_it_was_taken_ends_with_the_refusal() {
+    let tower = Arc::new(FakeTower::default());
+    tower.first::<at::Utterance>(&airband_core::radio::Outcome::Taken).refuses::<at::Utterance>(409, &Refusal::Told { reason: "That question was closed.".into() });
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let radio = radio_of(&desk, &link(1));
+    let began = std::time::Instant::now();
+    let got = radio.link.say_and_wait(&Outgoing::of("yes".into()).utterance());
+    desk.stop();
+    assert!(matches!(&got, Err(crate::link::LinkError::Refused(Refusal::Told { .. }))), "{got:?}");
+    assert!(began.elapsed() < Duration::from_secs(10), "it kept asking after a refusal for good");
+}
+
+// (audit 9, B-38) The trail names each request by its endpoint: the id of a picture or a message is never in it.
+#[test]
+fn the_trail_never_holds_the_id_a_request_names() {
+    let tower = Arc::new(FakeTower::default());
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let radio = radio_of(&desk, &link(1));
+    let id = airband_core::encode::random_hex(8);
+    radio.picture(id.clone()).ok();
+    let trail = radio.link_trail();
+    desk.stop();
+    assert!(trail.iter().any(|l| l.contains("/picture/")), "the failed request is not in the trail: {trail:?}");
+    assert!(trail.iter().all(|l| !l.contains(&id)), "{trail:?}");
 }

@@ -181,7 +181,8 @@ pub(crate) fn converse(link: &Arc<Link>, session: &Session, host: &dyn RadioHost
             Err(e) => {
                 // said aloud, with what went wrong
                 host.status(RadioStatus::Speaking { agent: None, callsign: None });
-                voice::say(host, mouth, &format!("That was not sent: {}.", e.told()));
+                // in the one wording every failure is told in, after what did not happen
+                voice::say(host, mouth, &format!("That was not sent. {}", e.said()));
                 return;
             }
         };

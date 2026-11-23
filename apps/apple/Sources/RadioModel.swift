@@ -1,9 +1,9 @@
 // Glue between the Rust core and the screen. The core's desk holds every paired computer as one and decides
 // everything about the chat: what is waiting, what is done, where a message goes, who has the floor on a call.
-// This file passes the desk's view to SwiftUI, lends it the phone's speaker and microphone, and keeps the
-// pairing links in the Keychain. Nothing here would have to be written again in the same way for Android or
-// Windows beyond these three things. What he chooses, what he does with his agents, and the core's host calls are
-// in RadioModel+Choices, +Agents and +Host.
+// This file holds what the screens are drawn from (the desk's view and the phone's own state beside it) and
+// keeps the pairing links in the Keychain. What he chooses is in +Choices, what he does with his agents in
+// +Agents, the core's host calls (speaker, microphone, keys) in +Host, calling the core in +Calls, his computers
+// in +Computers, the banners in +Banners, and what he attaches in AttachPrepare.
 import AVFoundation
 import PhononCoreML
 import Foundation
@@ -79,11 +79,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
         voiceDir = dir.path
+        engines = [Self.neuralEngine: { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
         // the newest catalogue of services and models this phone has kept, before anything is listed from it
         loadCatalog(dir: dir.path)
         desk = Desk.open(dataDir: dir.path, host: self)
         #if DEBUG
-        // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
+        // development only: `-airband.devTools '("<a tool id>")'` opens as someone who uses those coding tools, for a screenshot
         if let tools = Dev.list("devTools") { desk.setTools(tools: tools) }
         #endif
         var links: [String]? = readLinks()
@@ -157,7 +158,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// What was wrong with this link, in words for him, or nothing when it was taken.
     @discardableResult
     func pair(with link: String) -> String? {
-        let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        let link = link.trimmed
         let wrong: String?
         if !isPairingLink(link: link) {
             wrong = "That is not a pairing link. Run airband pair on your computer."
@@ -196,7 +197,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// He tapped a notification: show that agent.
     func show(room: String, agent: String) {
-        look(room: room.isEmpty ? nil : room, agent: agent.isEmpty ? nil : agent)
+        look(room: room.orNone, agent: agent.orNone)
     }
 
     /// A team on his screen, by its room id.
@@ -253,13 +254,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             if now.colours != view.colours { Keychain.keepTeamColours(now.colours) }
             view = now
         }
-        // what has gone with a message has left the desk's list: it leaves the tray too
-        if !tray.isEmpty {
-            let gone = tray.filter { item in item.attachment.map { id in !view.uploads.contains { $0.id == id } } ?? false }
-            gone.forEach { if let source = $0.source { try? FileManager.default.removeItem(at: source) } }
-            tray.removeAll { item in gone.contains { $0.id == item.id } }
+        letGoOfSent()
+        // opened long ago: fetched again if he looks again. What is in the chat now stays, so a long message
+        // on screen never falls back to its opening (audit 9, B-43)
+        if full.count > (showWhole ? 400 : 60) {
+            let shown = Set(view.feed.map(\.id))
+            full = full.filter { shown.contains($0.key) }
         }
-        if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
     }
@@ -349,7 +350,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
-    lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = [Self.neuralEngine: { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
+    /// Set once in `init`, before the core is opened and can ask from its own threads (audit 9, B-45).
+    private(set) var engines: [String: (String, ChoiceJob, Data) -> Data?] = [:]
 
     /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
     var heardWith: [String: Transcriber] = [:]

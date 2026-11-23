@@ -31,6 +31,9 @@ pub(crate) enum LinkError {
     Rejected(airband_core::radio::Rejected),
     /// The relay says this pairing was ended: nothing reaches that computer this way until he pairs again.
     Ended,
+    /// The relay does not know this phone for that computer, and it did once: the pairing was taken away
+    /// there, and nothing reaches it this way until he pairs again.
+    Forgotten,
 }
 
 /// What he is told when his computer speaks another version of the radio protocol. No capital, no full stop.
@@ -61,21 +64,44 @@ impl LinkError {
             LinkError::Relay(_) | LinkError::HoldRefused(_) | LinkError::Unreadable(_) => Retry::Later,
             // the computer is in trouble of its own, which may pass; anything else it refuses, it refuses for good
             LinkError::Trouble(500..=599) | LinkError::Refused(Refusal::NotNow { .. }) => Retry::Later,
-            LinkError::Refused(_) | LinkError::Trouble(_) | LinkError::Rejected(_) | LinkError::Ended => Retry::Never,
+            LinkError::Refused(_) | LinkError::Trouble(_) | LinkError::Rejected(_) | LinkError::Ended | LinkError::Forgotten => Retry::Never,
         }
     }
-    /// What the relay's status says to a radio on one of its two routes, read in this one place: Ok when it
-    /// passed the request on (a call answered, a message kept), else what it said.
-    pub(crate) fn relay_said(route: airband_core::relay::Route, status: u16) -> Result<(), LinkError> {
-        use airband_core::relay::Route;
-        match (route, status) {
-            (Route::Call, 200) | (Route::Queue, 202) => Ok(()),
-            (_, 410) => Err(LinkError::Ended),
-            (Route::Call, 409) => Err(LinkError::Behind),
-            (Route::Call, 503) => Err(LinkError::Away),
-            (Route::Call, 504) => Err(LinkError::TowerSilent),
-            (Route::Queue, status) => Err(LinkError::HoldRefused(status)),
-            (_, status) => Err(LinkError::Relay(status)),
+    /// What the relay's answer says to a radio on one of its two routes, read in this one place: Ok when it
+    /// passed the request on (or kept it), else why not. Why is read from the refusal's body
+    /// ([`airband_core::relay::CallRefused`]). A body that is no such refusal is the relay's own about the
+    /// request (its token, its size, how often), told by its status. Only a refusal with no body at all (a relay
+    /// from before refusals carried one) is read by its status as that relay meant it.
+    pub(crate) fn relay_said(route: airband_core::relay::Route, status: u16, body: &[u8]) -> Result<(), LinkError> {
+        use airband_core::relay::{CallRefused, Route};
+        let why = match CallRefused::of(route, status, body) {
+            Ok(()) => return Ok(()),
+            Err(Some(why)) => Some(why),
+            Err(None) if body.is_empty() => match (route, status) {
+                (_, 410) => Some(CallRefused::Ended),
+                (Route::Call, 409) => Some(CallRefused::Behind),
+                (Route::Call, 503) => Some(CallRefused::Away),
+                (Route::Call, 504) => Some(CallRefused::TowerSilent),
+                _ => None,
+            },
+            Err(None) => None,
+        };
+        Err(match (why, route) {
+            (Some(CallRefused::Ended), _) => LinkError::Ended,
+            (Some(CallRefused::Behind), _) => LinkError::Behind,
+            (Some(CallRefused::Away), _) => LinkError::Away,
+            (Some(CallRefused::TowerSilent), _) => LinkError::TowerSilent,
+            // a radio asks the relay on these two routes only: kept is the one, any other passed on
+            (Some(CallRefused::Unknown) | None, Route::Queue) => LinkError::HoldRefused(status),
+            (Some(CallRefused::Unknown) | None, _) => LinkError::Relay(status),
+        })
+    }
+    /// The same, for a relay that has passed on a request of this phone's before (`knew`): its not knowing
+    /// the phone now is a pairing taken away, not one still being opened.
+    pub(crate) fn relay_said_after(route: airband_core::relay::Route, status: u16, body: &[u8], knew: bool) -> Result<(), LinkError> {
+        match Self::relay_said(route, status, body) {
+            Err(LinkError::Relay(401 | 403) | LinkError::HoldRefused(401 | 403)) if knew => Err(LinkError::Forgotten),
+            said => said,
         }
     }
     /// What a status other than 200 from his computer comes to: the refusal its body carries, read by its tag
@@ -123,6 +149,7 @@ impl LinkError {
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
             LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
             LinkError::Ended => "the relay says this pairing was ended; pair this phone again".into(),
+            LinkError::Forgotten => "the relay no longer knows this phone for that computer; pair this phone again".into(),
         }
     }
 }
@@ -141,15 +168,46 @@ mod tests {
     #[test]
     fn the_relay_is_read_by_route_and_a_pairing_it_ended_is_told_as_that() {
         use airband_core::relay::Route;
-        assert_eq!(LinkError::relay_said(Route::Call, 200), Ok(()));
-        assert_eq!(LinkError::relay_said(Route::Queue, 202), Ok(()));
-        assert_eq!(LinkError::relay_said(Route::Call, 503), Err(LinkError::Away));
-        assert_eq!(LinkError::relay_said(Route::Queue, 507), Err(LinkError::HoldRefused(507)));
+        assert_eq!(LinkError::relay_said(Route::Call, 200, b""), Ok(()));
+        assert_eq!(LinkError::relay_said(Route::Queue, 202, b""), Ok(()));
+        assert_eq!(LinkError::relay_said(Route::Call, 503, b""), Err(LinkError::Away));
+        assert_eq!(LinkError::relay_said(Route::Queue, 507, b""), Err(LinkError::HoldRefused(507)));
         // the relay's 410 on either route is a pairing that was ended: he is told to pair again (audit 8)
         for route in [Route::Call, Route::Queue] {
-            assert_eq!(LinkError::relay_said(route, 410), Err(LinkError::Ended));
+            assert_eq!(LinkError::relay_said(route, 410, b""), Err(LinkError::Ended));
         }
         assert_eq!(LinkError::Ended.retry(), Retry::Never);
         assert!(LinkError::Ended.said().contains("pair this phone again"));
+        // (audit 9, B-41) not knowing this phone is a pairing still being opened only until the relay has
+        // once passed on a request of its: after that it is one taken away, and he is told to pair again
+        assert_eq!(LinkError::relay_said_after(Route::Call, 401, b"", false), Err(LinkError::Relay(401)));
+        assert_eq!(LinkError::Relay(401).retry(), Retry::Soon);
+        for route in [Route::Call, Route::Queue] {
+            assert_eq!(LinkError::relay_said_after(route, 401, b"", true), Err(LinkError::Forgotten));
+            assert_eq!(LinkError::relay_said_after(route, 403, b"", true), Err(LinkError::Forgotten));
+        }
+        assert_eq!(LinkError::relay_said_after(Route::Call, 503, b"", true), Err(LinkError::Away));
+        assert_eq!(LinkError::Forgotten.retry(), Retry::Never);
+        assert!(LinkError::Forgotten.said().ends_with("pair this phone again."));
+    }
+
+    #[test]
+    fn why_the_relay_refused_is_read_from_its_body_and_the_status_only_when_there_is_none() {
+        use airband_core::relay::{CallRefused, Route};
+        let body = |why: CallRefused| serde_json::to_vec(&why).unwrap();
+        // each refusal the relay writes is read back by its body, whatever status came with it
+        assert_eq!(LinkError::relay_said(Route::Call, 503, &body(CallRefused::Away)), Err(LinkError::Away));
+        assert_eq!(LinkError::relay_said(Route::Call, 409, &body(CallRefused::Behind)), Err(LinkError::Behind));
+        assert_eq!(LinkError::relay_said(Route::Call, 504, &body(CallRefused::TowerSilent)), Err(LinkError::TowerSilent));
+        assert_eq!(LinkError::relay_said(Route::Queue, 410, &body(CallRefused::Ended)), Err(LinkError::Ended));
+        assert_eq!(LinkError::relay_said(Route::Call, 500, &body(CallRefused::Away)), Err(LinkError::Away));
+        // a 409 that is not "behind" (the relay's own, or a reason this build does not know) is not taken for it
+        assert_eq!(LinkError::relay_said(Route::Call, 409, b"too many requests"), Err(LinkError::Relay(409)));
+        assert_eq!(LinkError::relay_said(Route::Call, 409, br#"{"refused":"later"}"#), Err(LinkError::Relay(409)));
+        assert_eq!(LinkError::relay_said(Route::Queue, 409, br#"{"refused":"later"}"#), Err(LinkError::HoldRefused(409)));
+        assert_eq!(LinkError::relay_said(Route::Call, 503, b"busy"), Err(LinkError::Relay(503)));
+        // an old relay's bare status still reads as it meant
+        assert_eq!(LinkError::relay_said(Route::Call, 409, b""), Err(LinkError::Behind));
+        assert_eq!(LinkError::relay_said(Route::Queue, 409, b""), Err(LinkError::HoldRefused(409)));
     }
 }

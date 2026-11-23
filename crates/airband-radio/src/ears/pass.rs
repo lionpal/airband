@@ -13,12 +13,33 @@ pub(crate) struct Pass {
     pub phrases: Vec<String>,
     /// What the service's row tells its dialect: where its stream is, among the rest.
     pub by: By,
+    /// When it ends (ms), as it says itself or as it was asked for; nothing when it does not say.
+    pub until: Option<u64>,
+}
+
+/// What a dialect is given by its service: the pass, and when it ends when that is known.
+pub(crate) struct Ticket {
+    pub token: String,
+    pub until: Option<u64>,
+}
+
+/// When a signed web token says it ends (its `exp`, in ms): nothing for a token that is not one or does not
+/// say.
+pub(super) fn signed_until(token: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        exp: u64,
+    }
+    let mut parts = token.split('.');
+    let (_, claims, _, None) = (parts.next()?, parts.next()?, parts.next()?, parts.next()) else { return None };
+    let claims: Claims = serde_json::from_slice(&airband_core::encode::unbase64_url(claims)?).ok()?;
+    claims.exp.checked_mul(1000)
 }
 
 /// The pass itself is never printed.
 impl std::fmt::Debug for Pass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Pass").field("dialect", &self.dialect).field("token", &"…").field("set", &self.set).field("phrases", &self.phrases).finish_non_exhaustive()
+        f.debug_struct("Pass").field("dialect", &self.dialect).field("token", &"…").field("set", &self.set).field("phrases", &self.phrases).field("until", &self.until).finish_non_exhaustive()
     }
 }
 
@@ -65,4 +86,17 @@ pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, Strin
         None => req.header("Content-Length", "0"),
     };
     airband_io::http::sent(&airband_core::providers::Answering::of(service), crate::net::Client::new(Duration::from_secs(8)).send(req))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_signed_pass_says_when_it_ends_and_anything_else_says_nothing() {
+        // (audit 9, B-32)
+        let claims = airband_core::encode::base64_url(br#"{"exp":1900000000,"region":"r"}"#);
+        assert_eq!(super::signed_until(&format!("h.{claims}.s")), Some(1_900_000_000_000));
+        assert_eq!(super::signed_until("opaque-token"), None);
+        assert_eq!(super::signed_until(&format!("h.{}.s", airband_core::encode::base64_url(b"{}"))), None);
+        assert_eq!(super::signed_until(&format!("h.{claims}.s.extra")), None);
+    }
 }

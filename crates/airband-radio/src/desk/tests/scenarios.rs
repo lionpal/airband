@@ -86,7 +86,7 @@ fn n26_an_attached_file_follows_its_computer_and_not_its_place_in_the_list() {
     desk.set_links(vec![nobody(1), nobody(2)]);
     {
         let mut state = desk.shared.state.lock().unwrap();
-        let shown = DeskUpload { id: "f1".into(), name: "a.jpg".into(), sent: 1, total: 1, state: UploadState::Ready };
+        let shown = DeskUpload { id: "f1".into(), name: "a.jpg".into(), sent: 1, total: 1, state: UploadState::Ready, why: None };
         state.uploads.push(Upload { shown, station: super::super::ids::station_id(&nobody(2)), dropped: Arc::default(), file_path: String::new(), name: "a.jpg".into() });
     }
     // the second computer is unpaired; the first stays

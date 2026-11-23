@@ -8,10 +8,23 @@ import UserNotifications
 final class NotificationService: UNNotificationServiceExtension {
     private var deliver: ((UNNotificationContent) -> Void)?
     private var plain: UNNotificationContent?
+    /// The content is handed over once: by the buttons' registration finishing, or by the time running out,
+    /// which come on different threads.
+    private let handing = NSLock()
+
+    /// What hands the content over, taken so nothing else can: nothing when it has been handed already.
+    private func takeDeliver() -> ((UNNotificationContent) -> Void)? {
+        handing.lock()
+        defer { handing.unlock() }
+        let taken = deliver
+        deliver = nil
+        return taken
+    }
 
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
-        deliver = contentHandler
-        plain = request.content
+        handing.lock()
+        (deliver, plain) = (contentHandler, request.content)
+        handing.unlock()
         guard let sealed = request.content.userInfo["sealed"] as? String, case .found(let links) = Keychain.links(), let note = openNotice(links: links, sealed: sealed, colours: Keychain.teamColours()),
               let content = request.content.mutableCopy() as? UNMutableNotificationContent else { return contentHandler(request.content) }
         content.title = note.title
@@ -24,16 +37,14 @@ final class NotificationService: UNNotificationServiceExtension {
         let picture = badgeImage(note.badge, colour: note.colour)
         let show: () -> Void = { [weak self] in
             let shown = Self.fromAgent(content, note, picture) ?? content
-            self?.deliver?(shown)
-            self?.deliver = nil
+            self?.takeDeliver()?(shown)
         }
         // a question's own answers have to be registered as buttons before it is shown
         if note.permission || note.options.isEmpty { show() } else { NoticeButtons.register([NoticeButtons.category(for: note.options)], then: show) }
     }
 
     override func serviceExtensionTimeWillExpire() {
-        if let plain { deliver?(plain) }
-        deliver = nil
+        if let hand = takeDeliver(), let plain { hand(plain) }
     }
 
 

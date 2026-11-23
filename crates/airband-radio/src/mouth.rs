@@ -42,7 +42,7 @@ fn silent(own: Option<Own>) -> String {
     match own {
         Some(Own::Cannot(why)) => why.told(),
         Some(Own::Host) => "This radio shows what is said and makes no sound.".into(),
-        _ => crate::voice::NOTHING_CHOSEN.into(),
+        _ => crate::voice::nothing_chosen(),
     }
 }
 

@@ -1,5 +1,6 @@
-//! Why what he chose to listen or speak with cannot be used as things are: one typed reason, put in words for him
-//! in one place. Listening (`ears.rs`) and the voice (`mouth.rs`) both carry it; `choices.rs` decides it.
+//! Why what he chose to listen or speak with cannot be used as things are, or why nothing is chosen: one typed
+//! reason, put in words for him in this one place. Listening (`ears.rs`) and the voice (`mouth.rs`, `voice.rs`,
+//! `voices.rs`) all carry it; `choices.rs` decides it.
 
 /// Which of the two a reason is about: it names the place in Settings where he chooses again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +21,13 @@ impl Sense {
 /// What he chose cannot be used, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Cannot {
+    /// Nothing is chosen.
+    NothingChosen(Sense),
+    /// A service this build does not know at all.
+    UnknownService(Sense),
+    /// A service this build knows, set up in a way it cannot use, in the words of what said so (a rate that
+    /// is not one, a field the row does not give).
+    BadSetting { why: String },
     /// A model this build cannot run on this device.
     ModelNotRun(Sense),
     /// A service this build cannot use for this.
@@ -38,6 +46,11 @@ impl Cannot {
     /// In words for him.
     pub(crate) fn told(&self) -> String {
         match self {
+            Cannot::NothingChosen(Sense::Listening) => "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.".into(),
+            Cannot::NothingChosen(Sense::Voice) => "No voice is chosen on this device. Choose one in Settings, under Voice.".into(),
+            Cannot::UnknownService(Sense::Listening) => "This version of airband does not know that listening service.".into(),
+            Cannot::UnknownService(Sense::Voice) => "This version of airband does not know that voice service.".into(),
+            Cannot::BadSetting { why } => why.clone(),
             Cannot::ModelNotRun(Sense::Listening) => "This version of airband cannot run the listening model you chose. Choose another in Settings, under Listening.".into(),
             Cannot::ModelNotRun(Sense::Voice) => "This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into(),
             Cannot::ServiceNotUsed(Sense::Listening) => "This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into(),
@@ -64,6 +77,8 @@ mod tests {
             (Cannot::NotDownloaded { sense: Sense::Listening, model: "M".into() }, "Listening"),
             (Cannot::NoVoiceNamed { model: "M".into() }, "Voice"),
             (Cannot::VoiceGone { model: "M".into(), voice: "v".into() }, "Voice"),
+            (Cannot::NothingChosen(Sense::Listening), "Listening"),
+            (Cannot::NothingChosen(Sense::Voice), "Voice"),
         ];
         for (why, section) in all {
             assert!(why.told().ends_with(&format!("under {section}.")), "{why:?}");

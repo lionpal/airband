@@ -52,6 +52,13 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
                 gave_up(expired(&next.trail));
                 continue;
             }
+            // His computer took it and, asked again and again, still says only that it has it: it ends, and holds
+            // up nothing behind it (audit 9, B-7). Sent again, it goes under the same id, so his computer
+            // never acts on it twice.
+            Stage::Taken if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS => {
+                gave_up(NEVER_SETTLED.into());
+                continue;
+            }
             Stage::Left if now_ms().saturating_sub(next.at) > airband_core::relay::HELD_FOR_MS => {
                 gave_up("Your computer was away for more than a week, and the relay keeps a message that long.".into());
                 continue;
@@ -199,6 +206,9 @@ pub(crate) fn told(steps: &[Step]) -> Vec<String> {
     }
     out
 }
+
+/// What he is told of a message his computer took and, in half an hour, never said what came of.
+const NEVER_SETTLED: &str = "Your computer took it and in half an hour did not say what came of it.";
 
 /// What he is told of a message that half an hour of trying did not send.
 fn expired(trail: &[String]) -> String {
