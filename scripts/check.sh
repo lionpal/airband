@@ -19,7 +19,9 @@ cargo test -q --release -p airband-core -p airband-io -p airband-relay -p airban
 [ "$1" = "--full" ] || exit 0
 # The suites run a build with the stand-ins in it (test accounts and addresses read from the environment). It is
 # built into a folder of its own, never where the README installs from, so it can never become his copy.
+# made whole from the start: the suites start programs in other folders, which find it by this path
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/stand-ins"
+case "$CARGO_TARGET_DIR" in /*) ;; *) CARGO_TARGET_DIR="$PWD/$CARGO_TARGET_DIR" ;; esac
 export CARGO_TARGET_DIR
 cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/stand-ins
 python3 tools/e2e-relay.py
