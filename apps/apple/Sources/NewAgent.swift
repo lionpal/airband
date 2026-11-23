@@ -44,7 +44,7 @@ struct NewAgentSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if model.onlyComputer == nil {
                         label("Computer")
-                        chips(model.view.stations.map { ($0.id, $0.name, .symbol(RadioModel.symbol($0.shape))) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
+                        chips(model.view.stations.map { ($0.id, $0.name, .symbol(RadioModel.symbol($0.picture))) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
                     }
                     if model.onlyTool == nil {
                         label("Coding agent")

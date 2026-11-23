@@ -279,8 +279,39 @@ pub struct DeskComputer {
     pub id: String,
     /// Its own name once it has said one; until then what its pairing link calls it.
     pub name: String,
-    /// What shape it is, by its model, for the host to draw.
+    /// What shape it is, by its model.
     pub shape: MachineShape,
+    /// What to draw it as: the picture he picked, else its shape, else a plain computer.
+    pub picture: ComputerPicture,
+}
+
+/// A picture a computer is drawn with: one for each shape, a plain computer, and a few more he can pick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ComputerPicture {
+    Laptop,
+    Mini,
+    Studio,
+    Imac,
+    Pro,
+    Plain,
+    Pc,
+    Server,
+    Chip,
+}
+
+impl ComputerPicture {
+    /// The picture of a shape; a shape not known is a plain computer.
+    pub(crate) fn of(shape: MachineShape) -> ComputerPicture {
+        match shape {
+            MachineShape::Laptop => ComputerPicture::Laptop,
+            MachineShape::Mini => ComputerPicture::Mini,
+            MachineShape::Studio => ComputerPicture::Studio,
+            MachineShape::Imac => ComputerPicture::Imac,
+            MachineShape::Pro => ComputerPicture::Pro,
+            MachineShape::Unknown => ComputerPicture::Plain,
+        }
+    }
 }
 
 /// The shape of a computer, by the identifier of its model (`airband_core::catalog::shape_of`). `Unknown` when

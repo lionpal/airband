@@ -6,7 +6,7 @@
 use super::*;
 use airband_core::routing::{Callsign, parse_utterance};
 use crate::services::CodingTool;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Condvar;
 pub(crate) use airband_core::ids::StationId;
 mod agents;
@@ -253,7 +253,10 @@ impl State {
     }
     /// A computer as the screens show it: its id, what it is called, and its shape.
     pub(super) fn shown(&self, computer: &Computer) -> DeskComputer {
-        DeskComputer { id: computer.id().to_string(), name: self.computer_name(&computer.id()), shape: MachineShape::of(&computer.model) }
+        let shape = MachineShape::of(&computer.model);
+        // his pick, else its shape, else a plain computer
+        let picture = self.read.marks.pictures.get(computer.id().as_str()).copied().unwrap_or_else(|| ComputerPicture::of(shape));
+        DeskComputer { id: computer.id().to_string(), name: self.computer_name(&computer.id()), shape, picture }
     }
     /// Every computer's radio with its id and what it is called.
     fn named_radios(&self) -> Vec<(DeskComputer, Arc<Radio>)> {

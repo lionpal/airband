@@ -1,15 +1,14 @@
-// Each shape the core gives a computer is drawn with a symbol this system has.
+// Each picture a computer can be drawn with is a symbol this system has.
 import UIKit
 import XCTest
 @testable import Airband
 
 final class ComputerTests: XCTestCase {
-    func testEveryShapeIsDrawnWithASymbolThatExists() {
-        let shapes: [MachineShape] = [.laptop, .mini, .studio, .imac, .pro, .unknown]
-        for shape in shapes {
-            XCTAssertNotNil(UIImage(systemName: RadioModel.symbol(shape)), "\(shape)")
+    func testEveryPictureIsASymbolThatExists() {
+        for picture in RadioModel.computerPictures {
+            XCTAssertNotNil(UIImage(systemName: RadioModel.symbol(picture)), "\(picture)")
         }
-        XCTAssertEqual(Set(shapes.map(RadioModel.symbol)).count, shapes.count)
-        XCTAssertEqual(RadioModel.symbol(.unknown), "display")
+        XCTAssertEqual(Set(RadioModel.computerPictures.map(RadioModel.symbol)).count, RadioModel.computerPictures.count)
+        XCTAssertEqual(RadioModel.symbol(.plain), "display")
     }
 }

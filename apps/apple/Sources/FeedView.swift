@@ -46,7 +46,7 @@ struct FeedView: View {
         // named as the core names it to him.
         // Shown with the computers as they are now, and drawn again when one's name changes while it is up.
         .confirmationDialog("Default computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible, presenting: model.computers) { computers in
-            ForEach(computers, id: \.self) { c in Button { model.setMainComputer(c.id) } label: { Label(c.name, systemImage: RadioModel.symbol(c.shape)) } }
+            ForEach(computers, id: \.self) { c in Button { model.setMainComputer(c.id) } label: { Label(c.name, systemImage: RadioModel.symbol(c.picture)) } }
         } message: { _ in
             Text(RadioModel.mainComputerNote)
         }

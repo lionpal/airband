@@ -54,11 +54,15 @@ struct SetupView: View {
                         if model.view.severalComputers {
                             Picker("Default computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
                                 if model.view.mainComputer == nil { Text("Not chosen").tag("") }
-                                ForEach(model.computers, id: \.self) { c in Label(c.name, systemImage: RadioModel.symbol(c.shape)).tag(c.id) }
+                                ForEach(model.computers, id: \.self) { c in Label(c.name, systemImage: RadioModel.symbol(c.picture)).tag(c.id) }
                             }
                         }
                         ForEach(model.computers, id: \.id) { c in
-                            Label(c.name, systemImage: RadioModel.symbol(c.shape))
+                            Picker(selection: Binding(get: { c.picture }, set: { model.setPicture($0, of: c.id) })) {
+                                ForEach(RadioModel.computerPictures, id: \.self) { picture in Image(systemName: RadioModel.symbol(picture)).tag(picture) }
+                            } label: {
+                                Text(c.name)
+                            }
                         }
                     } header: {
                         Text("Computers")

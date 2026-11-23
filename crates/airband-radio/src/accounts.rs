@@ -155,7 +155,7 @@ mod tests {
     use airband_core::radio::{Account, Accounts, Limit};
 
     fn computer(id: &str) -> crate::DeskComputer {
-        crate::DeskComputer { id: id.into(), name: id.into(), shape: crate::MachineShape::Unknown }
+        crate::DeskComputer { id: id.into(), name: id.into(), shape: crate::MachineShape::Unknown, picture: crate::ComputerPicture::Plain }
     }
     fn account(label: &str, identity: AccountIdentity, read: bool) -> Account {
         let limits = if read { vec![Limit { name: "week".into(), used: 0.5, ..Limit::default() }] } else { Vec::new() };

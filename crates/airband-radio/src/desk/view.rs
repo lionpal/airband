@@ -24,6 +24,10 @@ pub(super) struct Marks {
     /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
     pub(super) main: Option<StationId>,
+    /// The picture he picked for each computer, by its [`DeskComputer::id`]. One he has not picked for is
+    /// drawn by its shape.
+    #[serde(default)]
+    pub(super) pictures: BTreeMap<String, ComputerPicture>,
 }
 
 impl Marks {
@@ -44,6 +48,7 @@ impl crate::kept::Rejoin for Marks {
         if since.main.is_some() {
             self.main = since.main;
         }
+        self.pictures.extend(since.pictures);
     }
 }
 
@@ -56,7 +61,7 @@ impl ReadMarks {
     #[must_use]
     pub(super) fn keep(&mut self) -> Option<String> {
         crate::kept::again_as::<Option<Marks>, Marks>(&self.keeper, &mut self.marks, |found| found.flatten().unwrap_or_else(Marks::begun));
-        crate::kept::told(self.keeper.save(&self.marks), "What you have read, and your main computer, are not kept if the app closes.")
+        crate::kept::told(self.keeper.save(&self.marks), "What you have read, your main computer and its picture are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
         !m.his && !m.fyi && m.at > self.marks.upto.get(m.agent.as_deref().unwrap_or_default()).copied().unwrap_or(self.marks.since)
@@ -70,6 +75,19 @@ impl Desk {
         let lost = {
             let mut state = self.shared.state.lock().unwrap();
             state.read.marks.main = Some(StationId::new(computer));
+            state.read.keep()
+        };
+        if let Some(lost) = lost {
+            self.shared.host.note(lost);
+        }
+        self.shared.host.changed();
+    }
+
+    /// Draw one of his computers, by its [`DeskComputer::id`], with this picture from now on, whatever its shape.
+    pub fn set_computer_picture(&self, computer: String, picture: ComputerPicture) {
+        let lost = {
+            let mut state = self.shared.state.lock().unwrap();
+            state.read.marks.pictures.insert(computer, picture);
             state.read.keep()
         };
         if let Some(lost) = lost {

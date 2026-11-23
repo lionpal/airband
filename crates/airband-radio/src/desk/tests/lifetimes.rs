@@ -223,3 +223,30 @@ fn the_default_computer_is_asked_for_only_once_every_computer_has_a_name_and_eac
     assert!(!desk.view().choose_main);
     desk.stop();
 }
+
+#[test]
+fn a_computer_is_drawn_as_his_pick_else_its_shape_else_a_plain_computer_and_his_pick_outlives_the_app() {
+    let dir = temp_dir("pictures");
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let mini = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t1&model=Mac16%2C10&name=mini".to_string();
+    let other = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t2&name=other".to_string();
+    let pictures = |desk: &Desk| desk.view().stations.into_iter().map(|c| c.picture).collect::<Vec<_>>();
+    let first = Desk::open(dir.display().to_string(), host.clone());
+    first.set_links(vec![mini.clone(), other.clone()]);
+    // nothing picked: its shape, and with no shape known, a plain computer
+    assert_eq!(pictures(&first), [ComputerPicture::Mini, ComputerPicture::Plain]);
+    // his pick, over its shape and over no shape
+    let ids: Vec<String> = first.view().stations.into_iter().map(|c| c.id).collect();
+    first.set_computer_picture(ids[0].clone(), ComputerPicture::Server);
+    first.set_computer_picture(ids[1].clone(), ComputerPicture::Laptop);
+    assert_eq!(pictures(&first), [ComputerPicture::Server, ComputerPicture::Laptop]);
+    // the shape itself is still what the identifier says
+    assert_eq!(first.view().stations[0].shape, MachineShape::Mini);
+    first.stop();
+    // after the app opens again
+    let again = Desk::open(dir.display().to_string(), host);
+    again.set_links(vec![mini, other]);
+    assert_eq!(pictures(&again), [ComputerPicture::Server, ComputerPicture::Laptop]);
+    again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
