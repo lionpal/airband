@@ -27,6 +27,8 @@ for target in "$@"; do
     *) echo "no Homebrew name is known for $target" >&2; exit 1 ;;
   esac
   cargo build --release --locked -p airband-cli --target "$target"
+  # where cargo put it: CARGO_TARGET_DIR when set, never a copy an earlier build left in target/
+  bin="${CARGO_TARGET_DIR:-target}/$target/release/airband"
   # A Mac binary is signed with the Developer ID certificate, when this Mac has one, and sent to Apple's
   # notary service, when the App Store Connect key is in the environment (ASC_KEY_ID, ASC_ISSUER_ID,
   # ASC_KEY_PATH, as scripts/testflight.sh uses). A bare binary cannot carry the notary's ticket with it, so
@@ -34,13 +36,13 @@ for target in "$@"; do
   # unsigned, and the release notes say so.
   case "$target" in
     *-apple-darwin)
-      scripts/sign-mac.sh "target/$target/release/airband"
+      scripts/sign-mac.sh "$bin"
       # who signed it: the first Authority field codesign gives is the certificate that signed (the chain follows)
-      signer=$(codesign -d --verbose=2 "target/$target/release/airband" 2>&1 | awk -F= '$1 == "Authority" { print $2; exit }')
+      signer=$(codesign -d --verbose=2 "$bin" 2>&1 | awk -F= '$1 == "Authority" { print $2; exit }')
       case "$signer" in "Developer ID Application:"*) developer_id=yes ;; *) developer_id=no ;; esac
       if [ -n "${ASC_KEY_ID:-}" ] && [ "$developer_id" = yes ]; then
         sent=$(mktemp -d)
-        ditto -c -k "target/$target/release/airband" "$sent/airband.zip"
+        ditto -c -k "$bin" "$sent/airband.zip"
         xcrun notarytool submit "$sent/airband.zip" --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait --output-format json > "$sent/notary.json"
         cat "$sent/notary.json"
         [ "$(plutil -extract status raw -o - "$sent/notary.json")" = Accepted ] || { echo "Apple's notary service did not accept the $target binary" >&2; exit 1; }
@@ -50,7 +52,7 @@ for target in "$@"; do
   stage=$(mktemp -d)
   keg="$stage/airband/$version"
   mkdir -p "$keg/bin"
-  cp "target/$target/release/airband" "$keg/bin/"
+  cp "$bin" "$keg/bin/"
   cp LICENSE NOTICE "$keg/"
   plain="dist/airband-$version-$target.tar.gz"
   bottle="dist/airband-$version.$tag.bottle.tar.gz"
