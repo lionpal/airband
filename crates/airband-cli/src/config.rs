@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The settings. Their `Debug` shows what is plain and leaves every token, key and pairing secret out.
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Config {
     /// Why these settings came without their keys, when they did: the keychain could not be read where they
     /// were read. Never in the file. What needs a key says so and stops, and these settings are never saved.
@@ -105,7 +106,7 @@ fn his_own<S: serde::Serializer>(all: &BTreeMap<String, Launcher>, to: S) -> Res
     to.collect_map(all.iter().filter(|(name, _)| !built_in().any(|b| b.name == **name)).map(|(name, l)| (name, Launcher { name: String::new(), ..l.clone() })))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StoredKey {
     /// The provider it is for, by the name its settings use ("gemini", "azure").
     pub(crate) provider: String,
@@ -175,11 +176,27 @@ fn fill_keys(doc: &mut serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct PairedRadio {
     pub(crate) name: String,
     /// 32 random bytes as hex, shared with that radio and nobody else, the relay included.
     pub(crate) secret: String,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config").field("port", &self.port).field("name", &self.name).field("station", &self.station).field("relay", &self.relay).field("pairings", &self.pairings).finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for StoredKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredKey").field("provider", &self.provider).finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for PairedRadio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairedRadio").field("name", &self.name).finish_non_exhaustive()
+    }
 }
 
 /// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
@@ -425,6 +442,16 @@ fn yes() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_settings_debug_shows_no_token_key_or_pairing_secret() {
+        let cfg: Config = serde_json::from_value(serde_json::json!({ "token": "TOKEN-ONE", "radio_token": "TOKEN-TWO", "pairings": [{ "name": "phone", "secret": "SECRET-THREE" }] })).unwrap();
+        let shown = format!("{cfg:?} {:?}", StoredKey { provider: "gemini".into(), secret: "SECRET-FOUR".into() });
+        assert!(shown.contains("phone") && shown.contains("gemini"));
+        for secret in ["TOKEN-ONE", "TOKEN-TWO", "SECRET-THREE", "SECRET-FOUR"] {
+            assert!(!shown.contains(secret), "{secret} is shown");
+        }
+    }
 
     #[test]
     fn a_change_is_made_to_the_settings_as_the_file_has_them_then() {
