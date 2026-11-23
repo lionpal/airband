@@ -37,9 +37,9 @@ impl Synth for Timed {
             if line.trim().is_empty() {
                 continue;
             }
-            // a line that is not a part is the service saying something else (an error, most likely): it is
-            // told, never taken for silence
-            let part = serde_json::from_str::<Part>(&line).map_err(|_| unreadable(&self.reach.service))?;
+            // a line that is not a part (no sound and no timings in it) is the service saying something else
+            // (an error, most likely): it is told, never taken for silence (audit 7, P-N10)
+            let part = serde_json::from_str::<Part>(&line).ok().filter(Part::is_part).ok_or_else(|| super::unreadable(&self.reach.service))?;
             // the timings, read as the service sends them; a part whose timings do not read marks nothing
             if let Some(Alignment { characters, character_start_times_seconds: starts }) = part.alignment {
                 for (c, start) in characters.iter().zip(starts) {
@@ -59,11 +59,6 @@ impl Synth for Timed {
     }
 }
 
-/// What he is told when the service's stream holds something this build cannot read.
-fn unreadable(service: &super::Answering) -> String {
-    format!("{} sent something this version of airband cannot read.", service.name)
-}
-
 /// One line of what the service streams back: some of the sound, and where in the text each character of it
 /// starts.
 #[derive(serde::Deserialize)]
@@ -73,8 +68,28 @@ struct Part {
     #[serde(default)]
     alignment: Option<Alignment>,
 }
+impl Part {
+    /// It carries sound or timings: a line with neither is not one.
+    fn is_part(&self) -> bool {
+        self.audio_base64.is_some() || self.alignment.is_some()
+    }
+}
 #[derive(serde::Deserialize)]
 struct Alignment {
     characters: Vec<String>,
     character_start_times_seconds: Vec<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_with_no_sound_and_no_timings_is_not_taken_for_silence() {
+        let read = |line: &str| serde_json::from_str::<Part>(line).ok().filter(Part::is_part).is_some();
+        assert!(!read(r#"{"detail":{"status":"quota_exceeded","message":"out of credits"}}"#));
+        assert!(!read("{}"));
+        assert!(read(r#"{"audio_base64":"AAAA"}"#));
+        assert!(read(r#"{"audio_base64":"AAAA","alignment":{"characters":["a"],"character_start_times_seconds":[0.0]}}"#));
+    }
 }

@@ -299,7 +299,16 @@ impl Stream<'_> {
     /// He has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come
     /// back. With something already heard, a failure at the very end loses only the last words, not all of them.
     fn finish(&mut self) -> Result<Option<String>, ()> {
-        if self.last().is_err() && !self.salvage() {
+        let ended = self.last();
+        self.settle(ended)
+    }
+
+    /// What he said, once the end of the audio went (`ended`) or failed. The stretch the service had not
+    /// finished when it stopped answering is kept as he last saw it: whether it never said its last or the
+    /// connection went, no word on his screen is dropped.
+    fn settle(&mut self, ended: Result<(), ()>) -> Result<Option<String>, ()> {
+        let heard = self.ended || self.salvage();
+        if ended.is_err() && !heard {
             return Err(());
         }
         let said = self.kept.join(" ");
@@ -411,6 +420,25 @@ mod tests {
         assert_eq!(stream.kept, ["ship it", "and test", "again"]);
         // with the connection gone at the end, what was heard is what he said
         assert_eq!(stream.finish(), Ok(Some("ship it and test again".to_string())));
+    }
+
+    #[test]
+    fn the_words_he_saw_are_kept_when_the_service_never_says_its_last() {
+        // (audit 8, M7) the end went, and the service did not finish its turn before it stopped answering
+        let tape = Tape::of(&[], false);
+        let pass: PassFor = Arc::new(|| Err(String::new()));
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None, refused: None };
+        stream.tell("and deploy");
+        assert_eq!(stream.settle(Ok(())), Ok(Some("ship it and deploy".to_string())));
+        // one that did finish its turn is taken as it said it, and the stretch is not added twice
+        stream.kept = vec!["ship it and deploy".into()];
+        stream.partial = Some((0, "ship it and".into()));
+        stream.ended = true;
+        assert_eq!(stream.settle(Ok(())), Ok(Some("ship it and deploy".to_string())));
+        // nothing heard and the end could not go: that is a failure
+        let pass: PassFor = Arc::new(|| Err(String::new()));
+        let mut bare = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None, refused: None };
+        assert_eq!(bare.settle(Err(())), Err(()));
     }
 
     #[test]

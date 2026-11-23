@@ -132,7 +132,8 @@ impl Mouth {
     fn rate(&self) -> Result<u32, String> {
         match self.using() {
             Some(Own::Service(with)) => crate::voices::synth(&with).map(|s| s.rate()),
-            Some(Own::Model { held, .. }) => held.m.told(crate::models::field::RATE).parse().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)),
+            // the same rule as a service's: a rate a voice can be played at, or why not
+            Some(Own::Model { held, .. }) => held.m.told(crate::models::field::RATE).parse::<u64>().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)).and_then(|r| crate::voices::rate_of(Some(r))),
             other => Err(silent(other)),
         }
     }

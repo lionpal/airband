@@ -50,6 +50,20 @@ pub(crate) struct Reach {
 /// The rates a voice's sound can be played at.
 const RATES: std::ops::RangeInclusive<u32> = 8000..=48000;
 
+/// The rate a voice's sound is played at, from what the row or his setting says (`given`): Err in words for
+/// him when nothing says it, or it is not a rate a voice can be played at. The one rule, for every voice.
+pub(crate) fn rate_of(given: Option<u64>) -> Result<u32, String> {
+    match given {
+        None => Err("That voice service's row does not say the rate of its sound.".into()),
+        Some(r) => u32::try_from(r).ok().filter(|r| RATES.contains(r)).ok_or_else(|| format!("{r} is not a rate a voice can be played at. It is a number like 24000.")),
+    }
+}
+
+/// What he is told when a voice service's answer holds something this build cannot read.
+fn unreadable(service: &Answering) -> String {
+    format!("{} sent something this version of airband cannot read.", service.name)
+}
+
 /// How a voice service takes this key, by its row. One sent no key needs nothing said.
 fn key_header(by: &By, key: &str) -> Result<Option<(String, String)>, String> {
     by.key_header(key).map_err(|_| "This version of airband was not told how that voice service takes its key.".to_string())
@@ -70,7 +84,7 @@ impl Reach {
     fn of(voice: &Use, by: &By, provider: &Provider) -> Result<Reach, String> {
         let url = airband_core::providers::fill(by.text(crate::models::field::URL), &|field| voice.get(Job::Voice, field))?;
         let auth = key_header(by, &voice.key)?;
-        let rate = by.with.get(crate::models::field::RATE).and_then(serde_json::Value::as_u64).map(|r| r as u32).filter(|r| RATES.contains(r)).ok_or("That voice service's row does not say the rate of its sound.")?;
+        let rate = rate_of(by.with.get(crate::models::field::RATE).and_then(serde_json::Value::as_u64))?;
         let headers = by.with.get(crate::models::field::HEADERS).and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
         Ok(Reach { url, auth, headers, rate, service: Answering::of(provider) })
     }

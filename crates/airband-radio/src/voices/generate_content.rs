@@ -44,7 +44,7 @@ impl Synth for Generated {
             let line = line.map_err(|e| e.to_string())?;
             let Some(data) = line.strip_prefix("data: ") else { continue };
             // an event that is not JSON is the service saying something else: it is told, never taken for silence
-            let v = serde_json::from_str::<Value>(data).map_err(|_| format!("{} sent something this version of airband cannot read.", self.reach.service.name))?;
+            let v = serde_json::from_str::<Value>(data).map_err(|_| super::unreadable(&self.reach.service))?;
             if let Some(error) = v.get("error") {
                 return Err(format!("{}: {}", self.reach.service.name, error["message"].as_str().unwrap_or("it stopped with an error")));
             }
