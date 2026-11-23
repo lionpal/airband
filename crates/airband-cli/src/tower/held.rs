@@ -497,6 +497,15 @@ pub(super) fn forget(inner: &mut Inner, id: &str) {
     inner.held.retain(|k| k.id != id);
 }
 
+/// The launcher that carries on an agent of `harness` the tower holds: of the launchers of that harness that
+/// hold their agents, by the one rule (`launch::which_launcher`): the tool's usual launcher when it is one of
+/// them, else the only one, else he is asked.
+fn holder_for(cfg: &config::Config, harness: &str) -> launch::Starts {
+    let holding: Vec<LauncherId> = cfg.launchers.iter().filter(|(_, l)| l.harness == harness && l.held.is_some()).map(|(name, _)| LauncherId::new(name.as_str())).collect();
+    let usual = cfg.launcher_for(Some(harness)).map(|(name, _)| LauncherId::new(name.as_str()));
+    launch::which_launcher(usual.as_ref(), &holding)
+}
+
 /// Take over an agent he started in a terminal of his own: end that process and carry the same session on in
 /// one the tower holds. Only for an agent whose process the tower knows, so that two never run one session.
 pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
@@ -504,14 +513,16 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         let inner = app.read();
         let s = inner.find(id).cloned().ok_or(NOT_RUNNING)?;
         // carried on by a launcher that runs this agent's own harness: never one tool's session under another
-        let launcher = app.cfg().launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
+        let launcher = holder_for(&app.cfg(), &s.agent.harness);
         (s, launcher)
     };
     if session.agent.deliver == Some(Deliver::Held) {
         return Err("airband already runs this one.".into());
     }
-    let Some(launcher) = launcher else {
-        return Err(format!("No launcher here runs {} agents itself.", session.agent.harness));
+    let launcher = match launcher {
+        launch::Starts::This(launcher) => launcher.to_string(),
+        launch::Starts::Nobody => return Err(format!("No launcher here runs {} agents itself.", session.agent.harness)),
+        launch::Starts::Which(several) => return Err(format!("Which should carry it on: {}?", super::route::either(&several))),
     };
     let cwd = session.agent.cwd.clone().ok_or("airband does not know which folder it is in.")?;
     let pid = session.agent.pid.ok_or("airband cannot find it running on this computer. Close it in its terminal, then start it from here.")?;
@@ -581,6 +592,23 @@ mod tests {
         assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);
     }
     use super::*;
+
+    #[test]
+    fn a_take_over_is_carried_on_by_a_launcher_that_holds_its_agents_though_the_usual_one_does_not() {
+        let held = serde_json::json!({ "by": "lines", "fresh": [], "resume": [], "line": "{text}", "stop": "{id}" });
+        let cfg = |usual: &str, launchers: serde_json::Value| crate::tower::http::tests::app_with("holder", serde_json::json!({ "launcher": usual, "launchers": launchers })).cfg();
+        // his usual hands its agents off: the one that holds them carries it on
+        let one = cfg("mine", serde_json::json!({ "mine": { "harness": "tool-one", "argv": ["true"] }, "held-one": { "harness": "tool-one", "argv": ["true"], "held": held } }));
+        assert_eq!(holder_for(&one, "tool-one"), launch::Starts::This(LauncherId::new("held-one")));
+        // his usual holds them: that one, whichever others do
+        let usual = cfg("b", serde_json::json!({ "a": { "harness": "tool-one", "argv": ["true"], "held": held }, "b": { "harness": "tool-one", "argv": ["true"], "held": held } }));
+        assert_eq!(holder_for(&usual, "tool-one"), launch::Starts::This(LauncherId::new("b")));
+        // several hold them and none is usual: he is asked
+        let several = cfg("other", serde_json::json!({ "other": { "harness": "tool-two", "argv": ["true"] }, "a": { "harness": "tool-one", "argv": ["true"], "held": held }, "b": { "harness": "tool-one", "argv": ["true"], "held": held } }));
+        assert_eq!(holder_for(&several, "tool-one"), launch::Starts::Which(vec![LauncherId::new("a"), LauncherId::new("b")]));
+        // none of another tool's launchers, however they are held
+        assert_eq!(holder_for(&several, "tool-three"), launch::Starts::Nobody);
+    }
 
     #[test]
     fn a_line_taken_back_from_one_agent_still_stands_for_another_it_reached() {

@@ -84,7 +84,7 @@ fn heard(pick: Option<&Pick>) -> Option<&Heard> {
 
 /// Which launcher starts an agent on something he named, of those that offer it.
 #[derive(Debug, PartialEq, Eq)]
-enum Starts {
+pub(super) enum Starts {
     This(LauncherId),
     /// None offers it.
     Nobody,
@@ -94,7 +94,7 @@ enum Starts {
 
 /// The rule, the same with a tool named or none: his usual launcher (for that tool, or at all) when it offers
 /// it; else the one launcher that does; else he is asked. Where a launcher stands in any list decides nothing.
-fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]) -> Starts {
+pub(super) fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]) -> Starts {
     if let Some(usual) = usual.filter(|u| offering.contains(u)) {
         return Starts::This(usual.clone());
     }
@@ -300,8 +300,8 @@ mod tests {
         assert_eq!(which_launcher(Some(&b), &[a.clone(), b.clone()]), Starts::This(b.clone()));
         assert_eq!(which_launcher(Some(&b), &[b.clone(), a.clone()]), Starts::This(b.clone()));
         // his usual does not offer it: the one that does
-        assert_eq!(which_launcher(Some(&c), &[a.clone()]), Starts::This(a.clone()));
-        assert_eq!(which_launcher(None, &[a.clone()]), Starts::This(a.clone()));
+        assert_eq!(which_launcher(Some(&c), std::slice::from_ref(&a)), Starts::This(a.clone()));
+        assert_eq!(which_launcher(None, std::slice::from_ref(&a)), Starts::This(a.clone()));
         // several, and none is his usual: he is asked, never given the first
         assert_eq!(which_launcher(Some(&c), &[a.clone(), b.clone()]), Starts::Which(vec![a.clone(), b.clone()]));
         assert_eq!(which_launcher(None, &[b.clone(), a.clone()]), Starts::Which(vec![b.clone(), a.clone()]));
