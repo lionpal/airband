@@ -91,10 +91,13 @@ NOTIFY_PROFILE="$(profile "$NOTIFY_ID" airband_notify_appstore.mobileprovision)"
 WIDGETS_PROFILE="$(profile "$WIDGETS_ID" airband_widgets_appstore.mobileprovision)"
 echo "✓ $PROFILE"
 echo "✓ $NOTIFY_PROFILE"
-security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "aps-environment" || { echo "✗ the app's profile has no push notifications"; exit 1; }
+# what the app's profile grants, read as the entitlement it is (its key under Entitlements), never found in its text
+security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" > "$BUILD/profiles/airband_appstore.plist"
+entitled() { /usr/libexec/PlistBuddy -c "Print :Entitlements:$1" "$BUILD/profiles/airband_appstore.plist" >/dev/null 2>&1; }
+entitled aps-environment || { echo "✗ the app's profile has no push notifications"; exit 1; }
 # the car's screen: the capability is a tick box on the identifier at developer.apple.com (Capability Requests)
-security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "carplay-voice-based-conversation" || { echo "✗ the app's profile has no CarPlay voice conversation capability"; exit 1; }
-if security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "usernotifications.communication"; then
+entitled com.apple.developer.carplay-voice-based-conversation || { echo "✗ the app's profile has no CarPlay voice conversation capability"; exit 1; }
+if entitled com.apple.developer.usernotifications.communication; then
   COMMUNICATION=(AIRBAND_COMMUNICATION=YES AIRBAND_COMMUNICATION_SUFFIX=-communication)
   echo "✓ Communication Notifications is on: a notification carries the agent's badge"
 else
@@ -103,9 +106,12 @@ else
 fi
 
 echo "▸ Archiving…"
+# an archive left from an earlier run must never pass for this one
+rm -rf "$ARCHIVE"
+# the build's own status decides, not the filter on its output (pipefail is on; grep finding nothing is not a failure)
 xcodebuild -project "$APP/Airband.xcodeproj" -scheme Airband -configuration Release -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" AIRBAND_WIDGETS_PROFILE="$WIDGETS_PROFILE" "${COMMUNICATION[@]}" \
-  "CODE_SIGN_IDENTITY=$SIGN_AS" archive | grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true
+  "CODE_SIGN_IDENTITY=$SIGN_AS" archive | { grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true; }
 [[ -d "$ARCHIVE" ]] || { echo "✗ no archive was made"; exit 1; }
 echo "✓ $ARCHIVE"
 [[ "${1:-}" == "archive" ]] && exit 0
