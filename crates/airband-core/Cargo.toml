@@ -22,6 +22,10 @@ linkify = "0.10"
 uniffi = { workspace = true, optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 
+[dev-dependencies]
+# what the tower reads a query with (axum's Query), so the tests read it the same way
+serde_urlencoded = "0.7"
+
 [build-dependencies]
 serde_json.workspace = true
 sha2 = "0.10"

@@ -1,34 +1,8 @@
 use super::*;
 
-/// What a tower's query reader does with an address: every value a string, taken as a number or `true` where
-/// the type wants one.
+/// What a tower's query reader does with an address: axum's `Query` is `serde_urlencoded`.
 fn read_query<Q: DeserializeOwned>(q: &str) -> Q {
-    let decode = |s: &str| {
-        let bytes = s.as_bytes();
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%' {
-                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
-                i += 3;
-            } else {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-        String::from_utf8(out).unwrap()
-    };
-    let fields: serde_json::Map<String, serde_json::Value> = q
-        .split('&')
-        .filter(|p| !p.is_empty())
-        .map(|p| {
-            let (k, v) = p.split_once('=').unwrap();
-            let v = decode(v);
-            let v = v.parse::<u64>().map(Into::into).unwrap_or_else(|_| if v == "true" { true.into() } else { v.into() });
-            (decode(k), v)
-        })
-        .collect();
-    serde_json::from_value(serde_json::Value::Object(fields)).unwrap()
+    serde_urlencoded::from_str(q).unwrap()
 }
 
 fn round<T: Serialize + DeserializeOwned>(v: &T) -> T {
@@ -86,7 +60,7 @@ fn an_address_puts_the_id_in_its_place_and_the_query_after() {
 
 #[test]
 fn a_refusal_says_what_it_is_and_one_from_a_newer_tower_still_reads() {
-    for r in [Refusal::told("no"), Refusal::BadAsk { reason: "x".into() }, Refusal::OtherVersion { speaks: "airband.radio/9".into() }, Refusal::NotNow { reason: "later".into() }, Refusal::TooBig, Refusal::Gone, Refusal::NotAllowed] {
+    for r in [Refusal::told("no"), Refusal::BadAsk { reason: "x".into() }, Refusal::OtherVersion { speaks: "airband.radio/9".into() }, Refusal::NotNow { reason: "later".into() }, Refusal::TooBig, Refusal::Gone, Refusal::NotAllowed, Refusal::NotPaired, Refusal::Unknown] {
         assert_eq!(round(&r), r);
         // a no is a 4xx; "not now" is the one refusal that is not a no
         assert!((400..500).contains(&r.status()) || matches!(r, Refusal::NotNow { .. }) && r.status() == 503);
