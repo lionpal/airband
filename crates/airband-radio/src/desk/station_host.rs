@@ -126,7 +126,7 @@ impl RadioHost for ComputerHost {
                 // (one that was given up on and has now been let go did not go anywhere)
                 let gone: Vec<Outgoing> = s.was_waiting.iter().filter(|was| !waiting.iter().any(|w| w.id == was.id)).cloned().collect();
                 let now = std::time::Instant::now();
-                s.landing.retain(|(_, at)| at.elapsed() < Duration::from_secs(15));
+                s.landing.retain(|(_, at)| at.elapsed() < super::LANDING);
                 s.landing.extend(gone.into_iter().map(|o| (o, now)));
             }
             s.was_waiting = waiting;

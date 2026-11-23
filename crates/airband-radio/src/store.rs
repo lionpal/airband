@@ -54,6 +54,7 @@ impl Store {
     }
     pub(crate) fn change<T>(&self, f: impl FnOnce(&mut Saved) -> T) -> T {
         let mut saved = self.saved.lock().unwrap();
+        crate::kept::again(&self.keeper, &mut *saved);
         let out = f(&mut saved);
         if let Some(told) = crate::kept::told(self.keeper.save(&*saved), "What you send and the chat are lost if the app closes.")
             && let Some(host) = &self.host

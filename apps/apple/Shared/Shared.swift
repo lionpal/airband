@@ -139,19 +139,22 @@ enum NoticeButtons {
         let buttons = options.prefix(3).enumerated().map { UNNotificationAction(identifier: noticeOptionId(index: UInt32($0.offset)), title: $0.element, options: []) }
         return UNNotificationCategory(identifier: name(for: options), actions: buttons + [type], intentIdentifiers: [], options: [])
     }
-    /// Add these sets to the ones registered, keeping the others. Calls back once the system has them.
-    static func register(_ more: [UNNotificationCategory], then done: @escaping () -> Void = {}) {
+    /// Add these sets to the ones registered. Answer sets of questions no longer shown are let go; the rest are
+    /// kept. Calls back once the system has them, as read back from it. The app and its extension both
+    /// register: one that finds its sets gone (the other wrote over them) writes them again.
+    static func register(_ more: [UNNotificationCategory], then done: @escaping () -> Void = {}, tries: Int = 3) {
         let center = UNUserNotificationCenter.current()
+        let names = Set(more.map(\.identifier))
         center.getNotificationCategories { have in
-            let names = Set(more.map(\.identifier))
-            var kept = have.filter { !names.contains($0.identifier) }
-            if kept.count == have.count - names.count && names.allSatisfy({ noticeIsAnswers(name: $0) }) { return done() } // a question asked before
-            // old questions' answers are not kept for ever
-            let asked = kept.filter { noticeIsAnswers(name: $0.identifier) }
-            if asked.count > 48 { kept.subtract(asked.prefix(asked.count - 48)) }
-            center.setNotificationCategories(kept.union(more))
-            // the system takes a moment to have them; a notification shown before that has no buttons
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3, execute: done)
+            if names.isSubset(of: Set(have.map(\.identifier))) { return done() }
+            center.getDeliveredNotifications { shown in
+                // a question's answers are needed while its notification is up, and not after
+                let showing = Set(shown.map(\.request.content.categoryIdentifier))
+                let kept = have.filter { !names.contains($0.identifier) && (!noticeIsAnswers(name: $0.identifier) || showing.contains($0.identifier)) }
+                center.setNotificationCategories(kept.union(more))
+                guard tries > 0 else { return done() }
+                register(more, then: done, tries: tries - 1)
+            }
         }
     }
 }

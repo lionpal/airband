@@ -28,6 +28,7 @@ impl Colours {
     /// not be kept.
     #[must_use]
     pub(crate) fn see(&mut self, teams: impl IntoIterator<Item = String>) -> Option<String> {
+        self.again();
         let mut changed = false;
         for team in teams {
             if team.is_empty() {
@@ -52,12 +53,24 @@ impl Colours {
     /// answered, so the file holds only teams that are still there. The words to tell him when it could not be kept.
     #[must_use]
     pub(crate) fn keep_only(&mut self, rooms: &std::collections::BTreeSet<String>) -> Option<String> {
+        self.again();
         let before = self.by_team.len();
         self.by_team.retain(|room, _| rooms.contains(room));
         if self.by_team.len() == before {
             return None;
         }
         crate::kept::told(self.keeper.save(&self.by_team), "Team colours may change when the app opens again.")
+    }
+    /// The file could not be read when the app opened: once it can be, what it holds is taken, with the
+    /// colours given since kept where it has none.
+    fn again(&mut self) {
+        if let Some(found) = self.keeper.read_again::<BTreeMap<String, u8>>() {
+            let mut found = found.unwrap_or_default();
+            for (room, colour) in std::mem::take(&mut self.by_team) {
+                found.entry(room).or_insert(colour);
+            }
+            self.by_team = found;
+        }
     }
     /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.
     pub(crate) fn of(&self, room: &str) -> Option<u8> {

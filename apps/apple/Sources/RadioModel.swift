@@ -397,6 +397,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The clip being played to let him hear a voice before choosing it, and which voice it is.
     @Published var previewing: String?
     var previewPlayer: AVAudioPlayer?
+    let previewEnd = PlayerEnd()
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
@@ -418,4 +419,11 @@ struct Caption {
         guard let i = marks.lastIndex(where: { $0.time <= t }) else { return 0 }
         return i + 1 < marks.count ? marks[i + 1].at : text.count
     }
+}
+
+/// Told by a player when its clip has finished, or could not be played.
+final class PlayerEnd: NSObject, AVAudioPlayerDelegate {
+    var ended: () -> Void = {}
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { DispatchQueue.main.async { self.ended() } }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { DispatchQueue.main.async { self.ended() } }
 }

@@ -116,13 +116,13 @@ struct ServiceEntry: View {
             .buttonStyle(.plain).disabled(!ready)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red) }
         }
-        .onChange(of: typing) { _, now in
-            // after the keyboard has taken its room
-            if now { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reveal(choice.id) } }
+        // once the keyboard has taken its room, as the system says
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+            if typing { reveal(choice.id) }
         }
-        // what came of trying the key is under the button: bring it into view
+        // what came of trying the key is under the button: bring it into view once it is laid out
         .onChange(of: wrong) { _, now in
-            if now != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { reveal(choice.id) } }
+            if now != nil { DispatchQueue.main.async { reveal(choice.id) } }
         }
         #if DEBUG
         // development only: with `-airband.devOpen <service>`, the key in AIRBAND_DEV_KEY and the settings in

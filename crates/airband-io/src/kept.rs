@@ -129,8 +129,10 @@ impl Keeper {
         self.path.as_deref()
     }
     /// When the file could not be read, read it again: what it holds now, once it can be read (`Some(None)` when
-    /// it is gone or was set aside), and saves may go on. `None` while it still cannot be.
-    fn read_again<T: DeserializeOwned>(&self) -> Option<Option<T>> {
+    /// it is gone or was set aside), and saves may go on. `None` while it still cannot be, or when it was read
+    /// at the start. A holder of a bare `Keeper` calls this before each change and makes the change to what it
+    /// gives, as [`Kept::change`] does.
+    pub fn read_again<T: DeserializeOwned>(&self) -> Option<Option<T>> {
         let path = self.path.as_deref()?;
         let mut read_only = self.read_only.lock().unwrap_or_else(|e| e.into_inner());
         if !read_only.as_ref().is_some_and(|r| r.read_failed) {

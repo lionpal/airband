@@ -28,7 +28,19 @@ impl ReadMarks {
     }
     /// Keep them on the device. The words to tell him when they could not be kept.
     #[must_use]
-    pub(super) fn keep(&self) -> Option<String> {
+    pub(super) fn keep(&mut self) -> Option<String> {
+        // the file could not be read when the app opened: once it can be, what it holds is taken, with what
+        // was read since and a main computer chosen since kept over it
+        if let Some(Some(Some(found))) = self.keeper.read_again::<Option<ReadMarks>>() {
+            for (agent, at) in found.upto {
+                let mine = self.upto.entry(agent).or_insert(at);
+                *mine = (*mine).max(at);
+            }
+            self.since = self.since.min(found.since);
+            if self.main.is_none() {
+                self.main = found.main;
+            }
+        }
         crate::kept::told(self.keeper.save(self), "What you have read, and your main computer, are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
@@ -194,12 +206,12 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     rooms
 }
 
-/// What is on its way: not yet sent, then sent and not yet back in the chat (for a quarter of a minute at most).
+/// What is on its way: not yet sent, then sent and not yet back in the chat (for [`super::LANDING`] at most).
 fn sending(state: &State) -> Vec<DeskOutgoing> {
     state
         .computers
         .iter()
-        .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+        .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < super::LANDING && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
         .map(|o| DeskOutgoing::from(&o))
         .collect()
 }

@@ -30,6 +30,15 @@ fn damaged(loaded: &Loaded, what: &str) -> Option<String> {
     }
 }
 
+/// A file that could not be read when it was opened, read again now that it may be: what it holds replaces
+/// `value` (the default when it has gone), so the change about to be made is made to it and nothing kept is
+/// written over. Called before each change of a bare [`Keeper`]'s value.
+pub(crate) fn again<T: DeserializeOwned + Default>(keeper: &Keeper, value: &mut T) {
+    if let Some(found) = keeper.read_again::<T>() {
+        *value = found.unwrap_or_default();
+    }
+}
+
 /// The words for him when a save failed: why, in words for him.
 pub(crate) fn not_kept(why: &str) -> String {
     format!("This phone could not keep it: {why}.")
@@ -68,5 +77,35 @@ mod tests {
         assert!(told.is_some_and(|t| t.contains("left as it was")), "he is not told");
         assert!(saved.is_err(), "it was saved over");
         assert_eq!(left, b"{ half written");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_phone_stores_take_a_file_that_could_not_be_read_once_it_can_be() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-kept-{}", airband_core::encode::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let chat = dir.join("radio.json");
+        let colours = dir.join("colours.json");
+        std::fs::write(&chat, br#"{"outbox":[],"history":[],"after":7,"radio":"kept"}"#).unwrap();
+        std::fs::write(&colours, br#"{"shop":3}"#).unwrap();
+        // unreadable as the app opens: nothing is taken for empty
+        for f in [&chat, &colours] {
+            std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let store = crate::store::Store::open(dir.to_str().unwrap(), None);
+        let mut paint = crate::desk::colours::Colours::open(dir.to_str().unwrap(), 6);
+        assert_eq!(store.saved.lock().unwrap().radio, "");
+        for f in [&chat, &colours] {
+            std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        // readable again: the next change is made to what it holds, and it is saved
+        store.change(|s| s.rev = 9);
+        let _ = paint.see(["garden".to_string()]);
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&chat).unwrap()).unwrap();
+        let painted = (paint.of("shop"), paint.of("garden").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((saved["radio"].as_str(), saved["after"].as_u64(), saved["rev"].as_u64()), (Some("kept"), Some(7), Some(9)));
+        assert_eq!(painted, (Some(3), true));
     }
 }

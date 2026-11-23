@@ -186,6 +186,9 @@ impl Chooser {
     /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
     fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(found) = self.keeper.read_again::<Option<Saved>>() {
+            *saved = found.flatten().unwrap_or_else(|| Saved::fresh(&self.device));
+        }
         with(&mut saved);
         crate::kept::said(self.keeper.save(&*saved)).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }

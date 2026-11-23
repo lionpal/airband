@@ -217,10 +217,12 @@ extension RadioModel {
         }
     }
 
-    @MainActor func setCalling(_ on: Bool) async {
+    /// Turn the call on or off. Turning it on needs the microphone: when it is not allowed the call stays off,
+    /// and he is told on the phone unless `tell` is false (the car tells him itself).
+    @MainActor func setCalling(_ on: Bool, tell: Bool = true) async {
         if on {
             if let missing = await voice.authorize() {
-                problem = missing
+                if tell { problem = missing }
                 return
             }
             voice.goOnDuty()
