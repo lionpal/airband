@@ -68,6 +68,6 @@ impl Desk {
     pub(crate) fn through(data_dir: &str, host: Arc<dyn DeskHost>, towers: impl Fn(&str) -> Arc<FakeTower> + Send + Sync + 'static) -> Desk {
         let chooser = crate::choices::Chooser::open(data_dir, host.device());
         let dial: Dial = Arc::new(move |link: &str| towers(link) as Arc<dyn Transport>);
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: Some(dial) }), data_dir: data_dir.into() }
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: Some(dial) }), data_dir: data_dir.into() }
     }
 }

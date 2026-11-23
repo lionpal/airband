@@ -172,7 +172,7 @@ impl Desk {
     /// model it takes effect at once; a service is tried with it first. Blocks.
     pub fn choose_voice(&self, name: String) -> Result<(), RadioError> {
         let chooser = &self.shared.chooser;
-        let Some(pick) = chooser.saved().pick(ChoiceJob::Voice) else { return Err(told(crate::voice::NOTHING_CHOSEN)) };
+        let Some(pick) = chooser.saved().pick(ChoiceJob::Voice) else { return Err(told(crate::voice::nothing_chosen())) };
         match pick.place {
             ChoicePlace::Phone => {
                 chooser.change(|s| {

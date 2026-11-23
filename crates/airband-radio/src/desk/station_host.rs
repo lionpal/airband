@@ -27,9 +27,18 @@ impl Floor {
         }
         holder.as_ref().is_none_or(|h| h == computer)
     }
+    /// Nobody has it: the call is over.
     pub(super) fn clear(&self) {
         *self.holder.lock().unwrap() = None;
         self.freed.notify_all();
+    }
+    /// The floor is let go when the computer holding it is one of these: its connection is being replaced.
+    pub(super) fn clear_for(&self, computers: &[StationId]) {
+        let mut holder = self.holder.lock().unwrap();
+        if holder.as_ref().is_some_and(|h| computers.contains(h)) {
+            *holder = None;
+            self.freed.notify_all();
+        }
     }
 }
 /// What one computer's radio calls back into: it knows which computer it is, and the desk does the rest.

@@ -447,7 +447,7 @@ mod tests {
         let refused = live(&NOWHERE, Arc::new(|| Err("Scribe: that key is not valid.".to_string())), &tape, 16000, Vec::new(), true);
         assert_eq!(refused, Err(Failed { why: Some("Scribe: that key is not valid.".into()) }));
         // the next listening, whose pass was had and whose line failed, is not told the last one's reason (P-N9)
-        let grant = Pass { dialect: String::new(), token: String::new(), set: Default::default(), phrases: Vec::new(), by: serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap() };
+        let grant = Pass { dialect: String::new(), token: String::new(), set: Default::default(), phrases: Vec::new(), by: serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap(), until: None };
         let tape = Tape::of(&[0u8; 32000], true);
         let failed = live(&NOWHERE, Arc::new(move || Ok(grant.clone())), &tape, 16000, Vec::new(), true);
         assert_eq!(failed, Err(Failed { why: None }));

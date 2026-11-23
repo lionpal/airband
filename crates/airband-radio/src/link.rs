@@ -92,6 +92,8 @@ pub(crate) struct Link {
     /// has told it.
     awaited: Mutex<std::collections::HashMap<String, Option<Reply>>>,
     told: std::sync::Condvar,
+    /// The relay has passed on a request of this phone's for this computer, in this launch or one before.
+    relay_knew: AtomicBool,
 }
 
 /// What a failed send came to: nothing answered, or it took too long.
@@ -122,7 +124,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::Client::quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
+        Ok(Link { route, agent, near: crate::net::Client::quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), relay_knew: AtomicBool::new(false) })
     }
 
     /// Reach the tower through `transport` and nothing else.
@@ -154,7 +156,7 @@ impl Link {
     /// Write a step down: in `steps` for whoever is following this one request, and in the link's own trail
     /// when it failed, when it carried something he said, or when it is the first to work after a failure.
     fn note(&self, steps: &mut Vec<Step>, ordered: bool, began: std::time::Instant, what: &str, way: Way, outcome: Result<u16, LinkError>) {
-        let step = Step { at: now_ms(), what: what.split('?').next().unwrap_or_default().to_string(), way, outcome, ms: began.elapsed().as_millis() as u64 };
+        let step = Step { at: now_ms(), what: what.to_string(), way, outcome, ms: began.elapsed().as_millis() as u64 };
         let recovered = step.outcome.is_ok() && self.last_by(way).is_some_and(|s| s.outcome.is_err());
         if step.outcome.is_err() || ordered || recovered {
             self.keep(Line::Step(step.clone()));
@@ -251,7 +253,8 @@ impl Link {
     /// nothing to try: the tower has given no address, or none of them answered a moment ago (he is away from
     /// its network), which is remembered for a while so the relay is not kept waiting behind a dead address
     /// each time.
-    fn straight(&self, keys: &Keys, method: Method, path: &str, body: &Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Option<Result<(u16, Value), LinkError>> {
+    #[expect(clippy::too_many_arguments, reason = "one sealed request, what the trail calls it, and where its steps go")]
+    fn straight(&self, keys: &Keys, method: Method, path: &str, what: &str, body: &Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Option<Result<(u16, Value), LinkError>> {
         let tries: Vec<String> = {
             let d = self.direct.lock().unwrap();
             if d.addrs.is_empty() || d.rest_until.is_some_and(|t| std::time::Instant::now() < t) {
@@ -262,7 +265,6 @@ impl Link {
                 None => d.addrs.clone(),
             }
         };
-        let what = format!("{method} {path}");
         let mut last = LinkError::Unreachable(Way::Near);
         for addr in tries {
             let began = std::time::Instant::now();
@@ -276,7 +278,7 @@ impl Link {
                     None => Err(LinkError::Unreadable(Way::Near)),
                 },
             };
-            self.note(steps, ordered, began, &what, Way::Near, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
+            self.note(steps, ordered, began, what, Way::Near, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
             match got {
                 Ok(answer) => {
                     self.direct.lock().unwrap().good = Some(addr);
@@ -318,7 +320,8 @@ impl Link {
         }
         let path = wire::address::<E>(id, query);
         let body = (E::METHOD == Method::Post).then(|| serde_json::to_value(body).expect("a request type writes as JSON"));
-        let got = self.sealed(E::METHOD, &path, body, ordered, steps)?;
+        // the trail names the endpoint, never the ids in its path: a message's or a picture's id is his
+        let got = self.sealed(E::METHOD, &path, &format!("{} {}", E::METHOD, E::PATH), body, ordered, steps)?;
         self.answer(got, steps)
     }
 
@@ -343,16 +346,17 @@ impl Link {
 
     /// A request sealed for the tower: straight to it on this network, or through the relay. `path` is the
     /// whole path, as the tower serves it.
-    fn sealed(&self, method: Method, path: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
-        let what = format!("{method} {path}");
+    /// `what` is what the trail calls it: the method and the endpoint's path, with nothing filled in.
+    #[expect(clippy::too_many_arguments, reason = "one sealed request, what the trail calls it, and where its steps go")]
+    fn sealed(&self, method: Method, path: &str, what: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
         match &self.route {
             // asked through `direct`, never sealed
             Route::Direct { .. } => Err(LinkError::Unreachable(Way::Paired)),
-            Route::Near { keys } => self.straight(keys, method, path, &body, ordered, steps).unwrap_or(Err(LinkError::Unreachable(Way::Near))),
+            Route::Near { keys } => self.straight(keys, method, path, what, &body, ordered, steps).unwrap_or(Err(LinkError::Unreachable(Way::Near))),
             Route::Through(transport) => {
                 let began = std::time::Instant::now();
                 let got = transport.exchange(method, path, body);
-                self.note(steps, ordered, began, &what, Way::Paired, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
+                self.note(steps, ordered, began, what, Way::Paired, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
                 got
             }
             Route::Relay { relay, keys } => {
@@ -360,7 +364,7 @@ impl Link {
                 // works when the relay does not. Only while the relay still keeps earlier words of his does
                 // something he says go by the relay first, so it keeps its place behind them.
                 if !(ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst))
-                    && let Some(Ok(answer)) = self.straight(keys, method, path, &body, ordered, steps) {
+                    && let Some(Ok(answer)) = self.straight(keys, method, path, what, &body, ordered, steps) {
                         return Ok(answer);
                     }
                 let began = std::time::Instant::now();
@@ -374,16 +378,16 @@ impl Link {
                 let got = match self.agent.send(req.bytes("application/octet-stream", sealed)) {
                     Err(e) => Err(unsent(&e, Way::Relay)),
                     // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
-                    Ok(mut res) => match LinkError::relay_said(RelayRoute::Call, res.status().as_u16()) {
+                    Ok(mut res) => match LinkError::relay_said_after(RelayRoute::Call, res.status().as_u16(), self.relay_knew.load(Ordering::SeqCst)) {
                         // an answer to some other request is not an answer to this one
-                        Ok(()) => match res.body_mut().read_to_vec().ok().and_then(|bytes| keys.open_answer(&bytes, &call.id)) {
+                        Ok(()) => match res.body_mut().read_to_vec().ok().and_then(|bytes| keys.open_answer(&bytes, &call.id).inspect(|_| self.relay_knew.store(true, Ordering::SeqCst))) {
                             Some(answer) => Ok((answer.status, answer.body)),
                             None => Err(LinkError::Unreadable(Way::Relay)),
                         },
                         Err(e) => Err(e),
                     },
                 };
-                self.note(steps, ordered, began, &what, Way::Relay, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
+                self.note(steps, ordered, began, what, Way::Relay, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
                 let failed = match got {
                     Ok(answer) => return Ok(answer),
                     Err(e) => e,
@@ -396,7 +400,7 @@ impl Link {
                 // tower already has the request and is slow to answer, asking it again another way only makes
                 // two of them wait.
                 if ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst) && !matches!(failed, LinkError::Behind | LinkError::TowerSilent | LinkError::Away)
-                    && let Some(Ok(answer)) = self.straight(keys, method, path, &body, ordered, steps) {
+                    && let Some(Ok(answer)) = self.straight(keys, method, path, what, &body, ordered, steps) {
                         return Ok(answer);
                     }
                 Err(failed)
@@ -421,10 +425,20 @@ impl Link {
         let sealed = keys.seal_call(&self.sealed_call(Method::Post, path, serde_json::to_value(u).unwrap()));
         let kept = match self.agent.send(Ask::post(keys.to(relay, RelayRoute::Queue)).header("authorization", keys.as_radio()).header(airband_core::relay::ID_HEADER, id).bytes("application/octet-stream", sealed)) {
             Err(e) => Err(unsent(&e, Way::Kept)),
-            Ok(res) => LinkError::relay_said(RelayRoute::Queue, res.status().as_u16()).map(|()| res.status().as_u16()),
+            Ok(res) => LinkError::relay_said_after(RelayRoute::Queue, res.status().as_u16(), self.relay_knew.load(Ordering::SeqCst)).map(|()| res.status().as_u16()),
         };
         self.note(steps, true, began, &format!("{} {path}", Method::Post), Way::Kept, kept.clone());
         kept.map(|_| ())
+    }
+
+    /// Has the relay passed on a request of this phone's for this computer? `knew` is what was kept from
+    /// before this launch.
+    pub(crate) fn relay_knew(&self, knew: bool) -> bool {
+        knew || self.relay_knew.load(Ordering::SeqCst)
+    }
+    /// What was kept from before this launch: the relay knew this phone then.
+    pub(crate) fn relay_knew_before(&self) {
+        self.relay_knew.store(true, Ordering::SeqCst);
     }
 
     /// The outbox says whether the relay still keeps something he said.
@@ -492,9 +506,11 @@ impl Link {
                     }
                     ask_in = (ask_in * 2).min(ASK_AGAIN);
                 }
+                // a refusal for good ends it, whether or not the tower had it: asking again gets the same no
+                Err(e) if e.retry() == Retry::Never => return Err(e),
                 // once the tower has it, a request that fails is only a question that went unanswered
                 Err(_) if taken => thread::sleep(ASK_AGAIN),
-                Err(e) if e.retry() == Retry::Never || failures == 2 => return Err(e),
+                Err(e) if failures == 2 => return Err(e),
                 Err(_) => {
                     failures += 1;
                     thread::sleep(Duration::from_secs(2));

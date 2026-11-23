@@ -115,6 +115,9 @@ impl Radio {
             Some(transport) => link.through(transport),
             None => link,
         };
+        if store.saved.lock().unwrap().relay_knew {
+            link.relay_knew_before();
+        }
         let (tx, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let link = Arc::new(link);
@@ -156,7 +159,7 @@ impl Radio {
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
         if !self.senses.mouth.ready() {
-            self.host.told(voice::NOTHING_CHOSEN.into());
+            self.host.told(voice::nothing_chosen());
             return false;
         }
         // His computer is asked for the words as they are read, and they are said here. When the voice he chose
@@ -311,6 +314,7 @@ impl Radio {
         // the tower's log is behind ours: it was reset. Start over rather than wait for numbers that will not come.
         let reset = feed.seq < after || feed.rev < since;
         self.store.change(|s| {
+            s.relay_knew = self.link.relay_knew(s.relay_knew);
             if reset {
                 s.history.clear();
                 s.after = 0;

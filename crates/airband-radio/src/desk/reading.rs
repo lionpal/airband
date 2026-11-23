@@ -15,7 +15,7 @@ impl Desk {
         }
         // with no voice chosen there is nothing to read aloud with: he is told now, where he turned it on
         if on && !self.shared.senses.mouth.ready() {
-            self.shared.host.note(crate::voice::NOTHING_CHOSEN.into());
+            self.shared.host.note(crate::voice::nothing_chosen());
         }
         radios.iter().for_each(|r| r.set_call_mode(on));
     }

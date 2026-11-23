@@ -223,7 +223,12 @@ impl Chooser {
                     Err(why) => return crate::ears::Own::Cannot(why),
                 };
                 let with = crate::services::service_of(&ears.id, &ears.offer, &key, ears.set.clone().into_iter().collect());
-                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(Cannot::ServiceNotUsed(Sense::Listening)) }
+                // what cannot listen says which it is: a service this build does not know, or one it cannot use
+                match with.offer(Job::Ears) {
+                    None => crate::ears::Own::Cannot(Cannot::UnknownService(Sense::Listening)),
+                    Some((_, o)) if crate::hears::listens(&o) => crate::ears::Own::Service(with),
+                    Some(_) => crate::ears::Own::Cannot(Cannot::ServiceNotUsed(Sense::Listening)),
+                }
             }
         }));
         senses.mouth.set(saved.pick(ChoiceJob::Voice).map(|voice| match voice.place {
@@ -241,7 +246,11 @@ impl Chooser {
                     Err(why) => return crate::mouth::Own::Cannot(why),
                 };
                 let with = crate::services::service_of(&voice.id, &voice.offer, &key, voice.set.clone().into_iter().collect());
-                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(Cannot::ServiceNotUsed(Sense::Voice)) }
+                // why it cannot speak is kept as the voice said it: a rate that is not one is told as that
+                match crate::voices::synth(&with) {
+                    Ok(_) => crate::mouth::Own::Service(with),
+                    Err(why) => crate::mouth::Own::Cannot(Cannot::BadSetting { why }),
+                }
             }
         }));
     }
@@ -517,11 +526,11 @@ mod tests {
         let tape = crate::ears_stream::Tape::of(&[], false);
         let ears = crate::ears::Ears::new(desk.shared.senses.clone());
         assert!(matches!(ears.hear(&tape, true), Listened::Cannot));
-        assert_eq!(desk.shared.senses.ears.failed().as_deref(), Some(crate::ears::NOTHING_CHOSEN));
+        assert_eq!(desk.shared.senses.ears.failed().as_deref(), Some(crate::ears::nothing_chosen().as_str()));
         // reading aloud, turned on: the same for the voice, and nothing is said
         desk.set_call_mode(true);
-        assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::NOTHING_CHOSEN));
-        assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::NOTHING_CHOSEN));
+        assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::nothing_chosen().as_str()));
+        assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::nothing_chosen()));
         let _ = std::fs::remove_dir_all(dir);
     }
 

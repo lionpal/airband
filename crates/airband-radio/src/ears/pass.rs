@@ -13,12 +13,33 @@ pub(crate) struct Pass {
     pub phrases: Vec<String>,
     /// What the service's row tells its dialect: where its stream is, among the rest.
     pub by: By,
+    /// When it ends (ms), as it says itself or as it was asked for; nothing when it does not say.
+    pub until: Option<u64>,
+}
+
+/// What a dialect is given by its service: the pass, and when it ends when that is known.
+pub(crate) struct Ticket {
+    pub token: String,
+    pub until: Option<u64>,
+}
+
+/// When a signed web token says it ends (its `exp`, in ms): nothing for a token that is not one or does not
+/// say.
+pub(super) fn signed_until(token: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        exp: u64,
+    }
+    let mut parts = token.split('.');
+    let (_, claims, _, None) = (parts.next()?, parts.next()?, parts.next()?, parts.next()) else { return None };
+    let claims: Claims = serde_json::from_slice(&airband_core::encode::unbase64_url(claims)?).ok()?;
+    claims.exp.checked_mul(1000)
 }
 
 /// The pass itself is never printed.
 impl std::fmt::Debug for Pass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Pass").field("dialect", &self.dialect).field("token", &"…").field("set", &self.set).field("phrases", &self.phrases).finish_non_exhaustive()
+        f.debug_struct("Pass").field("dialect", &self.dialect).field("token", &"…").field("set", &self.set).field("phrases", &self.phrases).field("until", &self.until).finish_non_exhaustive()
     }
 }
 

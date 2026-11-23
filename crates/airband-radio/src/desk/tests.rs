@@ -166,7 +166,7 @@ fn a_computer_is_never_picked_for_him() {
     let host = Arc::new(Noted(Mutex::new(Vec::new())));
     // two computers that each have a team called shop
     let state = State { computers: vec![station("mini", 1, &[("shop two", "shop")], Vec::new()), station("macbook", 2, &[("shop one", "shop")], Vec::new())], ..State::default() };
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     // a team of the same name on each is two rooms: a new agent goes to the computer of the room it was asked in
     let (on_mini, on_macbook) = { let s = desk.shared.state.lock().unwrap(); (s.computers[0].agents[0].room.clone(), s.computers[1].agents[0].room.clone()) };
     assert_ne!(on_mini, on_macbook);
@@ -197,7 +197,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
     let mut state = two();
     state.computers[0].messages[0].options = vec!["Rewrite".into(), "Leave".into()];
     state.computers[0].agents[0].state = AgentState::Stalled;
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     let sent = |desk: &Desk| desk.shared.state.lock().unwrap().computers[0].radio.unsent().into_iter().map(|o| (o.text, o.re, o.act, o.to)).collect::<Vec<_>>();
     let act = Some;
     // a yes to a request, an answer he tapped, and one the message does not have (nothing goes)
@@ -225,7 +225,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
 #[test]
 fn words_that_only_start_with_an_at_sign_address_nobody() {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     // no agent is called home: the message he picked still says who it is for
     desk.send("@home is broken".into(), Some("q2".into()), None, None);
     let sent: Vec<(String, Option<String>)> = desk.shared.state.lock().unwrap().computers[1].radio.unsent().into_iter().map(|o| (o.text, o.re)).collect();
@@ -241,7 +241,7 @@ fn a_message_sent_again_goes_to_the_agent_picked_by_its_id() {
         a.id = format!("id-{}", a.id);
     }
     let picked = state.computers[0].agents[1].id.clone();
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     desk.resend("q1".into(), picked.clone()).unwrap();
     let sent: Vec<Vec<String>> = desk.shared.state.lock().unwrap().computers[0].radio.unsent().into_iter().map(|o| o.to).collect();
     assert_eq!(sent, vec![vec![picked]]);
@@ -268,7 +268,7 @@ fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     let mut state = State { computers: vec![station("mini", 1, &[], vec![msg("an agent's own words", 1, "shop two", "shop", false)])], ..State::default() };
     state.computers[0].radio = radio.clone();
     state.computers[0].link = link;
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
     let record = desk.diagnostics();
     // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
     assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
@@ -291,7 +291,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut read = ReadMarks::load(&dir.display().to_string());
     read.marks.since = 0;
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(State { read, ..two() }), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(State { read, ..two() }), floor: Floor::default(), moved: Condvar::new(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
     let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
     // looking at one team: what it said is read, and the other two teams' one thing each is not
     let (shop, ff) = { let s = desk.shared.state.lock().unwrap(); (room(&s, "shop"), room(&s, "ff")) };
@@ -365,6 +365,19 @@ fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
 }
 
 #[test]
+fn a_tag_that_names_agents_on_two_computers_goes_to_both() {
+    // (audit 9, A-1): `@all` is for every agent, whichever computer has it; not only the first in his list
+    let desk = desk_of(two());
+    assert_eq!(pick_station(&desk.shared.state.lock().unwrap(), "@all stop", None, None, None), None, "none of them is picked for him");
+    desk.send("@all stop".into(), None, None, None);
+    let sent = |i: usize| desk.shared.state.lock().unwrap().computers[i].radio.unsent().into_iter().map(|o| o.text).collect::<Vec<_>>();
+    assert_eq!((sent(0), sent(1)), (vec!["@all stop".to_string()], vec!["@all stop".to_string()]));
+    // one computer tagged is still that one alone
+    desk.send("@ff1 go".into(), None, None, None);
+    assert_eq!((sent(0).len(), sent(1).len()), (1, 2));
+}
+
+#[test]
 fn waiting_is_what_is_open_and_not_just_answered() {
     let mut state = two();
     assert!(state.is_open("q1") && state.is_open("q2") && !state.is_open("d1"));
@@ -395,7 +408,7 @@ fn teams_on_two_computers_get_different_colours_that_last() {
 
 fn desk_of(state: State) -> Desk {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
-    Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() }
+    Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() }
 }
 
 #[test]
@@ -481,7 +494,7 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
     let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
     let (mini, epoch) = (state.computers[0].id(), state.computers[0].epoch);
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
-    let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
+    let shared = Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
     crate::choices::tell_reads(&shared, &mini, epoch, true);
     // the first computer has it, and it still waits for the other
     let ids: Vec<String> = shared.state.lock().unwrap().computers.iter().map(|s| s.id().to_string()).collect();
@@ -507,7 +520,7 @@ fn desk_choosing(dir: &std::path::Path, computers: Vec<Computer>, reads: serde_j
     let offered = serde_json::json!({ "reads": reads, "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
-    Desk { shared: Arc::new(Shared { state: Mutex::new(State { computers, ..State::default() }), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() }
+    Desk { shared: Arc::new(Shared { state: Mutex::new(State { computers, ..State::default() }), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() }
 }
 
 #[test]
@@ -556,7 +569,7 @@ fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_p
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
     let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![])], ..State::default() };
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
     let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
     assert!(chose.is_ok(), "{chose:?}");

@@ -26,6 +26,10 @@ pub(crate) struct Saved {
     /// What the computer last said it is called: known at launch, before it is reached again.
     #[serde(default)]
     pub(crate) computer: String,
+    /// The relay has passed on a request of this phone's for this computer at least once: it knew this phone
+    /// then, so its not knowing it later means the pairing was taken away ([`crate::link::LinkError::Forgotten`]).
+    #[serde(default)]
+    pub(crate) relay_knew: bool,
 }
 
 impl crate::kept::Rejoin for Saved {
@@ -57,6 +61,7 @@ impl crate::kept::Rejoin for Saved {
         if !since.computer.is_empty() {
             self.computer = since.computer;
         }
+        self.relay_knew |= since.relay_knew;
     }
 }
 
@@ -85,12 +90,14 @@ impl Store {
         airband_io::files::prune_older(&self.pictures(), PICTURES_KEEP);
     }
     pub(crate) fn change<T>(&self, f: impl FnOnce(&mut Saved) -> T) -> T {
-        let mut saved = self.saved.lock().unwrap();
-        crate::kept::again(&self.keeper, &mut *saved);
-        let out = f(&mut saved);
-        if let Some(told) = crate::kept::told(self.keeper.save(&*saved), "What you send and the chat are lost if the app closes.")
-            && let Some(host) = &self.host
-        {
+        let (out, told) = {
+            let mut saved = self.saved.lock().unwrap();
+            crate::kept::again(&self.keeper, &mut *saved);
+            let out = f(&mut saved);
+            (out, crate::kept::told(self.keeper.save(&*saved), "What you send and the chat are lost if the app closes."))
+        };
+        // told once the file is let go: whoever is told may well look at it again (audit 9, B-40)
+        if let (Some(told), Some(host)) = (told, &self.host) {
             host.told(told);
         }
         out
@@ -107,12 +114,12 @@ mod tests {
         // (audit 8, M4)
         let said = |id: &str| Outgoing::new(id.into(), id.into(), None, None, None, Vec::new(), Vec::new());
         let line = |id: &str, seq: u64, text: &str| -> airband_core::radio::Message { serde_json::from_value(serde_json::json!({ "seq": seq, "id": id, "at": seq, "from": "a", "group": "g", "text": text })).unwrap() };
-        let mut found = Saved { outbox: vec![said("before")], history: vec![line("m1", 1, "old"), line("m2", 2, "kept")], after: 2, rev: 4, radio: "radio-kept".into(), computer: "studio".into() };
-        let since = Saved { outbox: vec![said("meanwhile"), said("before")], history: vec![line("m1", 1, "new"), line("m3", 3, "since")], after: 3, rev: 6, radio: "radio-new".into(), computer: String::new() };
+        let mut found = Saved { outbox: vec![said("before")], history: vec![line("m1", 1, "old"), line("m2", 2, "kept")], after: 2, rev: 4, radio: "radio-kept".into(), computer: "studio".into(), relay_knew: false };
+        let since = Saved { outbox: vec![said("meanwhile"), said("before")], history: vec![line("m1", 1, "new"), line("m3", 3, "since")], after: 3, rev: 6, radio: "radio-new".into(), computer: String::new(), relay_knew: true };
         found.rejoin(since);
         assert_eq!(found.outbox.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["before", "meanwhile"]);
         assert_eq!(found.history.iter().map(|m| (m.id.as_str(), m.text.as_str())).collect::<Vec<_>>(), [("m1", "new"), ("m2", "kept"), ("m3", "since")]);
-        assert_eq!((found.after, found.rev, found.radio.as_str(), found.computer.as_str()), (3, 6, "radio-kept", "studio"));
+        assert_eq!((found.after, found.rev, found.radio.as_str(), found.computer.as_str(), found.relay_knew), (3, 6, "radio-kept", "studio", true));
         // with no feed had since, the place the file kept stands
         let mut found = Saved { after: 9, rev: 9, ..Saved::default() };
         found.rejoin(Saved::default());

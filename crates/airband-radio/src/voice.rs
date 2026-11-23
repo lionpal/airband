@@ -5,7 +5,9 @@
 use super::*;
 
 /// Why nothing was said, when no voice is chosen. Also what he is told where he turns reading aloud on.
-pub(crate) const NOTHING_CHOSEN: &str = "No voice is chosen on this device. Choose one in Settings, under Voice.";
+pub(crate) fn nothing_chosen() -> String {
+    crate::senses::Cannot::NothingChosen(crate::senses::Sense::Voice).told()
+}
 
 /// How saying something went.
 pub(crate) enum Said {
@@ -37,5 +39,5 @@ pub(crate) fn say_until(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text:
             }
         };
     }
-    Said::Nothing(NOTHING_CHOSEN.into())
+    Said::Nothing(nothing_chosen())
 }

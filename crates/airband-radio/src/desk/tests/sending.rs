@@ -64,3 +64,27 @@ fn words_waiting_for_files_go_once_no_file_is_still_on_its_way() {
     assert_eq!(settled(&mut state).map(|w| w.text).as_deref(), Some("look"));
     assert!(state.after_files.is_none());
 }
+
+// (audit 9, B-7) A message his computer took and keeps answering "taken" for ends once it is as old as the outbox
+// keeps anything, he is told, and it no longer holds up what he says after it.
+#[test]
+fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
+    let tower = Arc::new(FakeTower::default());
+    tower.answers::<at::Utterance>(&airband_core::radio::Outcome::Taken);
+    let desk = desk_with(vec![(link(1), tower.clone())]);
+    desk.set_links(vec![link(1)]);
+    let radio = radio_of(&desk, &link(1));
+    radio.queue_as(Outgoing { at: now_ms() - crate::store::OUTBOX_EXPIRY_MS - 1000, stage: Stage::Taken, ..Outgoing::of("old".into()) }, Carry::Nothing);
+    radio.queue_as(Outgoing::of("new".into()), Carry::Nothing);
+    let mut ended = None;
+    for _ in 0..300 {
+        ended = radio.unsent().into_iter().find(|o| o.text == "old").and_then(|o| o.failed);
+        if ended.is_some() && tower.asked_on::<at::Utterance>() > 0 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    desk.stop();
+    assert_eq!(ended.as_deref(), Some("Your computer took it and in half an hour did not say what came of it."));
+    assert!(tower.asked_on::<at::Utterance>() >= 1, "what he said after it was held up");
+}
