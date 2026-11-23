@@ -38,33 +38,21 @@ struct Menus {
     efforts: Listing,
 }
 
-/// One menu across every launcher, by what each choice is called as offered: a choice two launchers offer under
-/// one name is listed once, with each launcher's own id for it kept, so the model names what he heard and never
-/// a launcher. Which launcher starts the agent is a rule applied after (`launch::starter`), and no place on this
-/// list decides it.
+/// One menu across every launcher: each launcher's own choices, each listed apart under its own number and by
+/// its name alone. Two launchers' choices are never one because their names are alike: the model answers with
+/// every number that is the one he named, and which launcher starts the agent is a rule applied after
+/// (`launch::starter`). No place on this list decides it.
 #[derive(Default)]
 struct Listing {
     /// Each choice as the routing model is shown it: its name as offered.
     names: Vec<String>,
-    /// For each name, in the same order: every launcher that offers it, with that launcher's own id for it.
-    offered: Vec<Vec<launch::Offered>>,
+    /// Each choice, in the same order: the launcher that offers it, with that launcher's own id for it.
+    offered: Vec<launch::Offered>,
 }
 impl Listing {
     fn of(menus: &[(LauncherId, airband_core::tools::Offers)], of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>) -> Listing {
-        let mut listing = Listing::default();
-        for (launcher, offers) in menus {
-            for c in of(offers) {
-                let offer = launch::Offered { launcher: launcher.clone(), choice: c.clone() };
-                match listing.names.iter().position(|n| *n == c.name) {
-                    Some(i) => listing.offered[i].push(offer),
-                    None => {
-                        listing.names.push(c.name.clone());
-                        listing.offered.push(vec![offer]);
-                    }
-                }
-            }
-        }
-        listing
+        let offered: Vec<launch::Offered> = menus.iter().flat_map(|(launcher, offers)| of(offers).iter().map(|c| launch::Offered { launcher: launcher.clone(), choice: c.clone() })).collect();
+        Listing { names: offered.iter().map(|o| o.choice.name.clone()).collect(), offered }
     }
     /// A choice's name, for an example in the question.
     fn first_name(&self) -> Option<&str> {
@@ -73,18 +61,17 @@ impl Listing {
     fn last_name(&self) -> Option<&str> {
         self.names.last().map(String::as_str)
     }
-    /// What the model's numbers for these come to: each name it gave, with every launcher's offer of it.
+    /// What the model's numbers for these come to: every launcher's offer it said is the one he named.
     fn picked(&self, numbers: &[usize]) -> Option<Pick> {
-        let mut heard = launch::Heard { names: Vec::new(), offered: Vec::new() };
+        let mut offered: Vec<launch::Offered> = Vec::new();
         for n in numbers {
-            if let (Some(name), Some(offered)) = (judge::listed(Some(*n), &self.names), judge::listed(Some(*n), &self.offered))
-                && !heard.names.contains(name)
+            if let Some(o) = judge::listed(Some(*n), &self.offered)
+                && !offered.contains(o)
             {
-                heard.names.push(name.clone());
-                heard.offered.extend(offered.iter().cloned());
+                offered.push(o.clone());
             }
         }
-        (!heard.names.is_empty()).then_some(Pick::Heard(heard))
+        (!offered.is_empty()).then_some(Pick::Heard(launch::Heard { offered }))
     }
 }
 
@@ -297,7 +284,7 @@ fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) ->
         if names.is_empty() {
             format!("\"{what}\" is empty; \"{what}_said\" is his own word for the {what} when he named one, else null. ")
         } else {
-            format!("\"{what}\" lists the number of the {what} he named, of {}; when more than one listed is that same {what} under another spelling, the number of each; empty when he named none or one that is not listed. \"{what}_said\" is his own word for it when he named one that is not listed, else null. ", numbered(names))
+            format!("\"{what}\" lists the number of the {what} he named, of {}; several are listed with one name or alike, one for each way of starting an agent: give the number of every one that is the {what} he named; empty when he named none or one that is not listed. \"{what}_said\" is his own word for it when he named one that is not listed, else null. ", numbered(names))
         }
     };
     // the examples are written with a model and an effort he can ask for, by the names their rows give
@@ -470,20 +457,20 @@ mod tests {
     }
 
     #[test]
-    fn a_choice_is_listed_once_by_its_name_as_offered_and_keeps_each_launchers_own_id() {
+    fn each_launchers_choices_are_listed_apart_and_never_merged_by_a_name_alike() {
         let offers = |models: &[(&str, &str)]| Offers { models: models.iter().map(|(id, name)| Choice { id: id.to_string(), name: name.to_string() }).collect(), ..Offers::default() };
         let (a, b) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
-        let menus = vec![(a.clone(), offers(&[("gpt-6.2-sol", "6.2 Sol"), ("gpt-6-luna", "6 Luna")])), (b.clone(), offers(&[("sol-2", "6.2 Sol"), ("sol", "Sol")]))];
+        let menus = vec![(a.clone(), offers(&[("gpt-6.2-sol", "6.2 Sol"), ("gpt-6-luna", "6 Luna")])), (b.clone(), offers(&[("sol-2", "6.2 Sol")]))];
         let listing = Listing::of(&menus, |m| &m.models);
-        // no launcher is named to the model: it names what he heard
-        assert_eq!(listing.names, ["6.2 Sol", "6 Luna", "Sol"]);
+        // each launcher's own, under a number of its own, and no launcher named to the model
+        assert_eq!(listing.names, ["6.2 Sol", "6 Luna", "6.2 Sol"]);
         let offer = |l: &LauncherId, id: &str, name: &str| launch::Offered { launcher: l.clone(), choice: Choice { id: id.into(), name: name.into() } };
-        let heard = |names: &[&str], offered: Vec<launch::Offered>| Some(Pick::Heard(launch::Heard { names: names.iter().map(|n| n.to_string()).collect(), offered }));
-        // each launcher's offer of it, with that launcher's id alone
-        assert_eq!(listing.picked(&[1]), heard(&["6.2 Sol"], vec![offer(&a, "gpt-6.2-sol", "6.2 Sol"), offer(&b, "sol-2", "6.2 Sol")]));
-        assert_eq!(listing.picked(&[2]), heard(&["6 Luna"], vec![offer(&a, "gpt-6-luna", "6 Luna")]));
-        // two spellings of one model, both named: every offer of either
-        assert_eq!(listing.picked(&[3, 1]), heard(&["Sol", "6.2 Sol"], vec![offer(&b, "sol", "Sol"), offer(&a, "gpt-6.2-sol", "6.2 Sol"), offer(&b, "sol-2", "6.2 Sol")]));
+        let heard = |offered: Vec<launch::Offered>| Some(Pick::Heard(launch::Heard { offered }));
+        // one number is one launcher's offer, with that launcher's id alone
+        assert_eq!(listing.picked(&[1]), heard(vec![offer(&a, "gpt-6.2-sol", "6.2 Sol")]));
+        assert_eq!(listing.picked(&[3]), heard(vec![offer(&b, "sol-2", "6.2 Sol")]));
+        // every number the model gave for what he said, each once
+        assert_eq!(listing.picked(&[3, 1, 3]), heard(vec![offer(&b, "sol-2", "6.2 Sol"), offer(&a, "gpt-6.2-sol", "6.2 Sol")]));
         assert_eq!(listing.picked(&[4]), None);
         assert_eq!(listing.picked(&[]), None);
     }

@@ -522,7 +522,11 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let launcher = match launcher {
         launch::Starts::This(launcher) => launcher.to_string(),
         launch::Starts::Nobody => return Err(format!("No launcher here runs {} agents itself.", session.agent.harness)),
-        launch::Starts::Which(several) => return Err(format!("Which should carry it on: {}?", super::route::either(&several))),
+        // the take-over is a button, which carries no answer back: he is told the names to choose between
+        launch::Starts::Which(several) => {
+            let named: Vec<String> = launch::sayable(&app.cfg(), &several).into_iter().map(|(_, n)| n).collect();
+            return Err(format!("It could be carried on by {}, and none of them is the usual one, so it was left running in its terminal.", super::route::either(&named)));
+        }
     };
     let cwd = session.agent.cwd.clone().ok_or("airband does not know which folder it is in.")?;
     let pid = session.agent.pid.ok_or("airband cannot find it running on this computer. Close it in its terminal, then start it from here.")?;

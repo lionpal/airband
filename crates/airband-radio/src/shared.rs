@@ -7,7 +7,7 @@
 use airband_io::kept::{Keeper, Loaded};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// How many sets of answer buttons are kept, newest first. A question older than these shows its reply box and
 /// no answers.
@@ -57,6 +57,13 @@ impl SharedFolder {
     }
     fn locked(&self, name: &str) -> Option<airband_io::files::Lock> {
         airband_io::files::lock(&self.at(name)).map_err(|e| eprintln!("airband: the lock {name} in the shared folder cannot be taken: {e}")).ok()
+    }
+    fn answer_sets_now(&self) -> (AnswerSets, Keeper) {
+        let (kept, keeper, loaded) = Keeper::open::<AnswerSets>(Some(self.at("answer-sets.json")));
+        if let Some(trouble) = loaded.trouble() {
+            eprintln!("airband: {trouble}");
+        }
+        (kept, keeper)
     }
     fn colours_now(&self) -> (HashMap<String, u8>, Keeper, Loaded) {
         let (colours, keeper, loaded) = Keeper::open::<HashMap<String, u8>>(Some(self.colours_file()));
@@ -116,26 +123,29 @@ impl SharedFolder {
         if old.forget() { ColoursMoved::Moved } else { ColoursMoved::NotYet }
     }
 
-    /// Add a question's answers to the sets of buttons kept, newest first, and hold the lock on them until
-    /// [`AnswerSets::done`]: the host registers what [`AnswerSets::sets`] gives with its system and reads it
-    /// back before letting go, so the app and the extension never register over each other. With no answers,
-    /// the sets as they are (the app registers them with its fixed ones when it starts). None when the lock
-    /// cannot be taken or the sets cannot be kept: nothing is registered then.
-    pub fn answer_sets(&self, adding: Option<Vec<String>>) -> Option<Arc<AnswerSets>> {
-        let held = self.locked("answer-sets.lock")?;
-        let (kept, keeper, loaded) = Keeper::open::<Vec<Vec<String>>>(Some(self.at("answer-sets.json")));
-        if let Some(trouble) = loaded.trouble() {
-            eprintln!("airband: {trouble}");
-        }
-        let sets = match adding {
+    /// Add a question's answers to the sets of buttons kept, newest first, under the lock, which is let go
+    /// before this returns: the host then registers what it gives with its system, holding nothing, and once
+    /// its system has them reads [`SharedFolder::answer_sets_rev`]. A different number means another process
+    /// kept a change meanwhile and may have registered before this one: the host registers the sets again, as
+    /// they are now. With no answers, the sets as they are (the app registers them with its fixed ones when it
+    /// starts). None when the lock cannot be taken or the sets cannot be kept: nothing is registered then.
+    pub fn answer_sets(&self, adding: Option<Vec<String>>) -> Option<AnswerSets> {
+        let _held = self.locked("answer-sets.lock")?;
+        let (kept, keeper) = self.answer_sets_now();
+        match adding {
             Some(options) => {
-                let sets = newest_first(kept, options);
+                let sets = AnswerSets { rev: kept.rev + 1, sets: newest_first(kept.sets, options) };
                 keeper.save(&sets).into_result().map_err(|why| eprintln!("airband: {why}")).ok()?;
-                sets
+                Some(sets)
             }
-            None => kept,
-        };
-        Some(Arc::new(AnswerSets { held: Mutex::new(Some(held)), sets }))
+            None => Some(kept),
+        }
+    }
+
+    /// The number of the change last kept to the answer sets. None when they cannot be read.
+    pub fn answer_sets_rev(&self) -> Option<u64> {
+        let _held = self.locked("answer-sets.lock")?;
+        Some(self.answer_sets_now().0.rev)
     }
 }
 
@@ -148,29 +158,18 @@ fn newest_first(kept: Vec<Vec<String>>, options: Vec<String>) -> Vec<Vec<String>
     sets
 }
 
-/// The sets of answer buttons, newest first, with the lock on them held.
-#[derive(uniffi::Object)]
+/// The sets of answer buttons, newest first, and the number of the change that kept them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AnswerSets {
-    held: Mutex<Option<airband_io::files::Lock>>,
-    sets: Vec<Vec<String>>,
-}
-
-#[uniffi::export]
-impl AnswerSets {
-    /// Each set's answers, newest first.
-    pub fn sets(&self) -> Vec<Vec<String>> {
-        self.sets.clone()
-    }
-    /// Let the lock go: the host's system has them.
-    pub fn done(&self) {
-        self.held.lock().unwrap_or_else(|e| e.into_inner()).take();
-    }
+    pub rev: u64,
+    pub sets: Vec<Vec<String>>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::Mutex;
 
 /// The folder, for a test.
     fn folder() -> (Arc<SharedFolder>, PathBuf) {
@@ -270,14 +269,14 @@ mod tests {
         let set = |n: usize| vec![format!("yes {n}"), "no".to_string()];
         let (shared, dir) = folder();
         for n in 0..KEPT_ANSWER_SETS + 5 {
-            shared.answer_sets(Some(set(n))).unwrap().done();
+            shared.answer_sets(Some(set(n))).unwrap();
         }
-        let sets = shared.answer_sets(None).unwrap().sets();
+        let sets = shared.answer_sets(None).unwrap().sets;
         assert_eq!(sets.len(), KEPT_ANSWER_SETS);
         assert_eq!(sets[0], set(KEPT_ANSWER_SETS + 4));
         assert_eq!(sets[KEPT_ANSWER_SETS - 1], set(5));
         // one asked again comes first, and is not kept twice
-        let again = shared.answer_sets(Some(set(10))).unwrap().sets();
+        let again = shared.answer_sets(Some(set(10))).unwrap().sets;
         assert_eq!(again[0], set(10));
         assert_eq!(again.iter().filter(|s| **s == set(10)).count(), 1);
         assert_eq!(again.len(), KEPT_ANSWER_SETS);
@@ -285,21 +284,22 @@ mod tests {
     }
 
     #[test]
-    fn answer_sets_are_changed_by_one_writer_at_a_time_and_none_is_lost() {
-        let (shared, dir) = folder();
-        let first = shared.answer_sets(Some(vec!["a".into()])).unwrap();
-        // another process's change waits until the first has registered its sets and let go
-        let (tx, rx) = std::sync::mpsc::channel();
-        let other = SharedFolder::new(dir.display().to_string());
-        let waiting = std::thread::spawn(move || {
-            let sets = other.answer_sets(Some(vec!["b".into()])).unwrap();
-            tx.send(sets.sets()).unwrap();
-            sets.done();
-        });
-        assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "the second waits");
-        first.done();
-        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), vec![vec!["b".to_string()], vec!["a".to_string()]]);
-        waiting.join().unwrap();
+    fn a_change_kept_while_another_process_registers_is_seen_by_its_number_and_none_is_lost() {
+        let (app, dir) = folder();
+        let extension = SharedFolder::new(dir.display().to_string());
+        // the app keeps its change and lets the lock go before it registers
+        let mine = app.answer_sets(Some(vec!["a".into()])).unwrap();
+        // so the extension is not held up meanwhile: it keeps its own, on top of the app's
+        let theirs = extension.answer_sets(Some(vec!["b".into()])).unwrap();
+        assert_eq!(theirs.sets, vec![vec!["b".to_string()], vec!["a".to_string()]]);
+        assert!(theirs.rev > mine.rev);
+        // the app's system has its sets: the number has moved on, so it registers again, as they are now
+        assert_ne!(app.answer_sets_rev(), Some(mine.rev));
+        assert_eq!(app.answer_sets(None).unwrap(), theirs);
+        // the extension, registering last, finds its own number and is done
+        assert_eq!(extension.answer_sets_rev(), Some(theirs.rev));
+        // and nothing holds the lock after: another change is kept at once
+        assert!(app.answer_sets(Some(vec!["c".into()])).is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

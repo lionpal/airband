@@ -174,28 +174,28 @@ enum NoticeButtons {
         return UNNotificationCategory(identifier: name(for: options), actions: buttons + [type], intentIdentifiers: [], options: [])
     }
     /// Register the fixed sets and the answer sets kept in the shared folder, newest first, with `adding` put
-    /// first among them. The app and its extension both register, each the whole of what is kept, under the
-    /// folder's lock, which is let go only once the system has them as read back: neither registers over the
-    /// other. Calls back with whether `adding` is registered; with no shared folder nothing of it is.
+    /// first among them. The app and its extension both register, each the whole of what is kept. Nothing is
+    /// locked while the system is asked: once it has them, the number of the last change kept says whether the
+    /// other kept one meanwhile, and then they are registered again as they are now. Calls back with whether
+    /// `adding` is registered; with no shared folder nothing of it is.
     static func register(adding options: [String]? = nil, then done: @escaping (Bool) -> Void = { _ in }) {
-        guard let sets = Together.folder?.answerSets(adding: options) else {
+        guard let folder = Together.folder, let kept = folder.answerSets(adding: options) else {
             UNUserNotificationCenter.current().setNotificationCategories(Set(fixed))
             return done(options == nil)
         }
-        let all = Set(fixed + sets.sets().map(category(for:)))
-        set(all, names: Set(all.map(\.identifier))) { registered in
-            sets.done()
-            done(registered)
-        }
+        let wanted = Set((options.map { [name(for: $0)] } ?? []) + fixed.map(\.identifier))
+        set(kept, in: folder, wanted: wanted, then: done)
     }
-    /// Hands the system these sets and reads them back, again if they are not all there.
-    private static func set(_ all: Set<UNNotificationCategory>, names: Set<String>, tries: Int = 3, then done: @escaping (Bool) -> Void) {
+    /// Hands the system these sets and reads them back; again, as they are now, while another change has been
+    /// kept since or they are not all there.
+    private static func set(_ kept: AnswerSets, in folder: SharedFolder, wanted: Set<String>, tries: Int = 3, then done: @escaping (Bool) -> Void) {
         let center = UNUserNotificationCenter.current()
-        center.setNotificationCategories(all)
+        center.setNotificationCategories(Set(fixed + kept.sets.map(category(for:))))
         center.getNotificationCategories { have in
-            let registered = names.isSubset(of: Set(have.map(\.identifier)))
-            guard !registered, tries > 1 else { return done(registered) }
-            set(all, names: names, tries: tries - 1, then: done)
+            let registered = wanted.isSubset(of: Set(have.map(\.identifier)))
+            let current = folder.answerSetsRev() == kept.rev
+            guard !(registered && current), tries > 1, let now = folder.answerSets(adding: nil) else { return done(registered) }
+            set(now, in: folder, wanted: wanted, tries: tries - 1, then: done)
         }
     }
 }

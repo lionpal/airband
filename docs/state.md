@@ -59,7 +59,7 @@ seen: the production push service delivering to a phone, the move of the pairing
 group on a phone that was already paired, a typed reply, Allow behind Face ID, and the "not sent" notification.
 
 The folder the app and its extension share (App Group `group.dev.airband`): the team colours' one move out of
-the Keychain, and answer buttons kept newest first by one writer at a time, are tested in the core
+the Keychain, and answer buttons kept newest first with a change number that tells a process to register again, are tested in the core
 (`shared::tests`, with a stand-in for the Keychain item). The app was only compiled with it, for the simulator and
 unsigned; it has not run signed with the group, on a phone or in the simulator. The group has to be made and
 given to both identifiers at developer.apple.com before the next TestFlight build (`scripts/testflight.sh`).

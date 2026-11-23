@@ -18,6 +18,18 @@ pub(super) struct Unplaced {
     pub(super) idea: Idea,
 }
 
+/// An idea for a new agent held until he says which of several ways of starting one should start it.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Unstarted {
+    /// The question asked him back, and its words ("Which should start it on …?").
+    pub(super) question: airband_core::ids::QuestionId,
+    pub(super) asked: String,
+    pub(super) place: Place,
+    pub(super) idea: Idea,
+    /// Each launcher he was offered, with the name he was offered it by.
+    pub(super) among: Vec<(LauncherId, String)>,
+}
+
 /// One radio's place in a call. Each radio has its own, so a phone and a desktop app on a call at the same time
 /// do not take each other's transmissions or answer each other's questions.
 #[derive(Default)]
@@ -47,6 +59,9 @@ pub(super) struct Call {
     /// Ideas for a new agent whose project the tower could not work out, each held under the id of the
     /// question it asked him back ("Which project?").
     unplaced: Vec<Unplaced>,
+    /// Ideas for a new agent several launchers could start, each held under the id of the question it asked
+    /// him back ("Which should start it?").
+    unstarted: Vec<Unstarted>,
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
     /// while it was showing the chat. A line changed after this is one he may not have seen.
     pub(super) has: u64,
@@ -121,6 +136,20 @@ impl Call {
     /// The question is settled: the idea is let go.
     pub(super) fn resolve_unplaced(&mut self, question: &airband_core::ids::QuestionId) {
         self.unplaced.retain(|u| u.question != *question);
+    }
+    /// Hold an idea under the question asked about which launcher starts it.
+    pub(super) fn hold_unstarted(&mut self, unstarted: Unstarted) {
+        self.unstarted.push(unstarted);
+        let extra = self.unstarted.len().saturating_sub(OPEN_QUESTIONS);
+        self.unstarted.drain(..extra);
+    }
+    /// The idea held for "Which should start it?" when these words answer that question, by its id. Read, not taken.
+    pub(super) fn unstarted_for(&self, answers: Option<&str>) -> Option<Unstarted> {
+        self.unstarted.iter().find(|u| answers == Some(u.question.as_str())).cloned()
+    }
+    /// The question is settled: the idea is let go.
+    pub(super) fn resolve_unstarted(&mut self, question: &airband_core::ids::QuestionId) {
+        self.unstarted.retain(|u| u.question != *question);
     }
     pub(super) fn connected(&self) -> bool {
         self.presence.on_call()

@@ -30,11 +30,10 @@ pub(super) enum Pick {
     Said(String),
 }
 
-/// What the routing model heard him name: each listed name it answered with, and every launcher that offers
-/// one of them, with that launcher's own id for it.
+/// What the routing model heard him name: every launcher's offer it said is that one, each with that
+/// launcher's own id for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Heard {
-    pub(super) names: Vec<String>,
     pub(super) offered: Vec<Offered>,
 }
 
@@ -50,9 +49,11 @@ impl Heard {
     fn of<'a>(&'a self, launcher: &'a LauncherId) -> impl Iterator<Item = &'a Offered> + 'a {
         self.offered.iter().filter(move |o| o.launcher == *launcher)
     }
-    /// How it is said to him.
+    /// How it is said to him: each name it was offered under, once, for the wording alone.
     fn said(&self) -> String {
-        either(&self.names)
+        let mut names: Vec<&str> = Vec::new();
+        self.offered.iter().for_each(|o| if !names.contains(&o.choice.name.as_str()) { names.push(&o.choice.name) });
+        either(&names)
     }
 }
 
@@ -105,18 +106,60 @@ pub(super) fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]
     }
 }
 
-/// The launcher that starts the agent. With nothing heard from his words to start it on: the launcher for the
-/// tool he named, else the usual one (`held::launcher_for`). With a model or an effort heard: of the launchers
-/// that offer all of it (only the named tool's, when he named one), by `which_launcher`. None offering it, or
-/// several and none usual, is said to him in words and nothing starts.
-fn starter(app: &App, idea: &Idea) -> Result<(String, config::Launcher), String> {
+/// Why no launcher was settled on: words for him, or a question of which of several.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Unsettled {
+    Say(String),
+    /// Several offer what he named and none is his usual: `what` he named, and each launcher with the name he
+    /// can say it by.
+    Which { what: String, among: Vec<(LauncherId, String)> },
+}
+
+impl Unsettled {
+    /// As it is put to him.
+    pub(super) fn words(&self) -> String {
+        match self {
+            Unsettled::Say(said) => said.clone(),
+            Unsettled::Which { what, among } => format!("Which should start it on {what}: {}?", either(&among.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>())),
+        }
+    }
+}
+
+/// Each launcher by a name he can say back: its tool's name, from the tool's row (or the name he gave a
+/// launcher of his own for a tool airband has no row for), and where two of these start the same tool, how
+/// each runs it: by airband, or in a terminal of its own; two that run it alike by the names he gave them.
+pub(super) fn sayable(cfg: &config::Config, among: &[LauncherId]) -> Vec<(LauncherId, String)> {
+    let tool = |id: &LauncherId, l: &config::Launcher| crate::adapters::tool_row(&l.harness).map(|row| row.name.clone()).unwrap_or_else(|| id.to_string());
+    among
+        .iter()
+        .filter_map(|id| cfg.launchers.get(id.as_str()).map(|l| (id, l)))
+        .map(|(id, l)| {
+            let alike: Vec<&config::Launcher> = among.iter().filter(|o| *o != id).filter_map(|o| cfg.launchers.get(o.as_str())).filter(|o| o.harness == l.harness && !l.harness.is_empty()).collect();
+            let name = match (alike.is_empty(), alike.iter().all(|o| o.held.is_some() != l.held.is_some())) {
+                (true, _) => tool(id, l),
+                (false, true) if l.held.is_some() => format!("{} run by airband", tool(id, l)),
+                (false, true) => format!("{} in a terminal", tool(id, l)),
+                (false, false) => id.to_string(),
+            };
+            (id.clone(), name)
+        })
+        .collect()
+}
+
+/// The launcher that starts the agent. One he chose when asked which (`chosen`) starts it when it offers what
+/// he named. Else, with nothing heard from his words to start it on: the launcher for the tool he named, else
+/// the usual one (`held::launcher_for`). With a model or an effort heard: of the launchers that offer all of it
+/// (only the named tool's, when he named one), by `which_launcher`. None offering it is said to him in words,
+/// several and none usual is a question, and nothing starts.
+pub(super) fn starter(app: &App, idea: &Idea, chosen: Option<&LauncherId>) -> Result<(String, config::Launcher), Unsettled> {
+    let say = Unsettled::Say;
     let wanted: Vec<&Heard> = [idea.model.as_ref(), idea.effort.as_ref()].into_iter().filter_map(heard).collect();
     let usual = held::launcher_for(app, idea.tool.as_deref());
     if wanted.is_empty() {
-        return usual.ok_or_else(|| match &idea.tool {
+        return usual.ok_or_else(|| say(match &idea.tool {
             Some(tool) => format!("This computer is not set up to start {tool} agents."),
             None => "Which coding agent should start it? Name one, or choose yours in Settings, under Coding agents.".to_string(),
-        });
+        }));
     }
     let what = wanted.iter().map(|h| h.said()).collect::<Vec<_>>().join(" at ");
     let cfg = app.cfg();
@@ -127,34 +170,44 @@ fn starter(app: &App, idea: &Idea) -> Result<(String, config::Launcher), String>
         .map(|(name, _)| LauncherId::new(name.as_str()))
         .filter(|id| wanted.iter().all(|h| h.of(id).next().is_some()))
         .collect();
-    let usual = usual.map(|(name, _)| LauncherId::new(name));
+    // the one he chose when asked, which must still offer it: the rule is not asked again
+    let usual = match chosen {
+        Some(chosen) if offering.contains(chosen) => Some(chosen.clone()),
+        Some(_) => return Err(say(format!("That one does not start an agent on {what}."))),
+        None => usual.map(|(name, _)| LauncherId::new(name)),
+    };
     let picked = match which_launcher(usual.as_ref(), &offering) {
         Starts::This(picked) => picked,
         Starts::Nobody => {
-            return Err(match &idea.tool {
+            return Err(say(match &idea.tool {
                 Some(tool) => format!("{tool} agents cannot be started on {what}."),
                 None => format!("Nothing here starts an agent on {what}."),
-            });
+            }));
         }
-        Starts::Which(several) => return Err(format!("Which should start it on {what}: {}?", either(&several))),
+        Starts::Which(several) => return Err(Unsettled::Which { what, among: sayable(&cfg, &several) }),
     };
     // two of what was heard offered by this one launcher: he is asked which he meant
     if let Some(h) = wanted.iter().find(|h| h.of(&picked).nth(1).is_some()) {
-        return Err(format!("Which one: {}?", either(&h.of(&picked).map(|o| o.choice.name.as_str()).collect::<Vec<_>>())));
+        return Err(say(format!("Which one: {}?", either(&h.of(&picked).map(|o| o.choice.name.as_str()).collect::<Vec<_>>()))));
     }
-    let Some(launcher) = cfg.launchers.get(picked.as_str()) else { return Err("The way of starting that agent is no longer set up here.".into()) };
+    let Some(launcher) = cfg.launchers.get(picked.as_str()) else { return Err(say("The way of starting that agent is no longer set up here.".into())) };
     Ok((picked.to_string(), launcher.clone()))
 }
 
 /// Start a new agent in `place`. `Ok` once it has started, with what to tell him; `Err` with why nothing started.
 pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result<Reply, Reply> {
+    launch_by(app, place, idea, None).await
+}
+
+/// The same, by the launcher he chose when asked which.
+pub(super) async fn launch_by(app: &Arc<App>, place: &Place, idea: &Idea, by: Option<&LauncherId>) -> Result<Reply, Reply> {
     let task = idea.task.as_str();
     let say = |s: String| reply(s, false);
     let (project, cwd) = (place.name.as_str(), place.folder.clone());
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(say(format!("The folder for {project} is gone.")));
     }
-    let (named, launcher) = starter(app, idea).map_err(say)?;
+    let (named, launcher) = starter(app, idea, by).map_err(|e| say(e.words()))?;
     let launcher = &launcher;
     // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
     // word. One that is handed off needs its task to start with.
@@ -272,7 +325,7 @@ mod tests {
 
     /// What the routing model heard: one name, offered by each of these launchers under its own id.
     fn heard(name: &str, by: &[(&LauncherId, &str)]) -> Pick {
-        Pick::Heard(Heard { names: vec![name.into()], offered: by.iter().map(|(l, id)| Offered { launcher: (*l).clone(), choice: Choice { id: id.to_string(), name: name.into() } }).collect() })
+        Pick::Heard(Heard { offered: by.iter().map(|(l, id)| Offered { launcher: (*l).clone(), choice: Choice { id: id.to_string(), name: name.into() } }).collect() })
     }
 
     #[test]
@@ -317,7 +370,7 @@ mod tests {
             "d": { "harness": "tool-four", "argv": ["true"], "models": { "Nova": "nova-d" } },
         }));
         let (a, b, c, d) = (LauncherId::new("a"), LauncherId::new("b"), LauncherId::new("c"), LauncherId::new("d"));
-        let started = |idea: Idea| starter(&app, &idea).map(|(name, _)| name);
+        let started = |idea: Idea| starter(&app, &idea, None).map(|(name, _)| name).map_err(|e| e.words());
         let sol = |by: &[(&LauncherId, &str)]| Some(heard("Sol", by));
         // (a) the tool he named, when it offers it, though his usual offers it too
         assert_eq!(started(Idea { tool: Some("tool-two".into()), model: sol(&[(&a, "sol-a"), (&b, "sol-b")]), ..Idea::default() }), Ok("b".into()));
@@ -356,6 +409,31 @@ mod tests {
 
     fn with_launchers(name: &str, usual: &str, launchers: serde_json::Value) -> Arc<App> {
         crate::tower::http::tests::app_with(name, serde_json::json!({ "launcher": usual, "launchers": launchers }))
+    }
+
+    #[test]
+    fn launchers_are_offered_by_names_he_can_say_back_and_the_one_he_chose_starts_it() {
+        let held = serde_json::json!({ "by": "lines", "fresh": [], "resume": [], "line": "{text}", "stop": "{id}" });
+        let app = with_launchers("spoken", "mine", serde_json::json!({
+            "mine": { "harness": "tool-one", "argv": ["true"] },
+            "x": { "harness": "claude-code", "argv": ["true"], "models": { "Nova": "nova-x" }, "held": held },
+            "y": { "harness": "claude-code", "argv": ["true"], "models": { "Nova": "nova-y" } },
+            "z": { "harness": "tool-four", "argv": ["true"], "models": { "Nova": "nova-z" } },
+        }));
+        let (x, y, z) = (LauncherId::new("x"), LauncherId::new("y"), LauncherId::new("z"));
+        let named = sayable(&app.cfg(), &[x.clone(), y.clone(), z.clone()]);
+        // by the tool's name from its row, and how each runs it where two start the same tool; one of his own for
+        // a tool with no row by the name he gave it
+        let row = crate::adapters::tool_row("claude-code").unwrap().name.clone();
+        assert_eq!(named, vec![(x.clone(), format!("{row} run by airband")), (y.clone(), format!("{row} in a terminal")), (z.clone(), "z".into())]);
+        assert_eq!(sayable(&app.cfg(), &[x.clone(), z.clone()])[0].1, row);
+        let nova = || Some(heard("Nova", &[(&x, "nova-x"), (&y, "nova-y"), (&z, "nova-z")]));
+        let idea = Idea { model: nova(), ..Idea::default() };
+        // several and none usual: a question naming each, typed
+        assert!(matches!(starter(&app, &idea, None), Err(Unsettled::Which { among, .. }) if among == named));
+        // his answer: the one he chose starts it, and one that does not offer it is refused
+        assert_eq!(starter(&app, &idea, Some(&y)).map(|(n, _)| n), Ok("y".into()));
+        assert_eq!(starter(&app, &Idea { model: Some(heard("Nova", &[(&x, "nova-x")])), ..Idea::default() }, Some(&y)).map(|(n, _)| n).map_err(|e| e.words()), Err("That one does not start an agent on Nova.".into()));
     }
 
     #[cfg(unix)]
