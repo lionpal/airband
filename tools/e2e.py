@@ -104,7 +104,8 @@ def said(text, **more):
     says where it stands, until it is answered."""
     body = {"text": text, "id": os.urandom(6).hex(), **more}
     for _ in range(1200):
-        took = http("POST", "/v1/radio/utterance", body)[1]
+        status, took = http("POST", "/v1/radio/utterance", body)
+        if wire.refusal(took): raise SystemExit(f"the tower refused what was said ({status}): {took}")
         if took["state"] == "answered": return took["reply"]
         time.sleep(0.1)
 def say(text, **more):
@@ -425,7 +426,7 @@ try:
     check("a team named alone narrows it to that team, and the work decides which of its agents (model)", say("to catalog. how is the supplier import going, did all the parts come in") == "Sent to catalog import.")
     check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and f"From {NAME}, on his phone." in received("page"), received("page")[-300:])
     # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
-    there = [{"id": "w1", "callsign": "warehouse stock", "badge": "WS", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
+    there = [{"id": "w1", "callsign": "warehouse stock", "badge": "WS", "group": "warehouse", "team": "t-warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
     told = said("recount bay 4 and tell me which units are missing", others=there)
     check("words about the work of an agent on another computer are handed back for that computer (model)", told.get("elsewhere") == "w1" and not told.get("say") and "bay 4" not in "".join(received(a) for a in ("page", "import", "rates", "refunds", "schedule")), told)
     told = said("make the photo on the part page a bit smaller again", others=there)
@@ -680,7 +681,8 @@ Send it as written, or do you want changes?""")
         # how long the radio's reason was, never its words: what a phone sends is not written in the log
         check("and the tower writes down that it could not", f"could not read solo second aloud ({len('the test made no sound')} characters said why)" in open(os.path.join(work, "tower.log")).read()
               and "the test made no sound" not in open(os.path.join(work, "tower.log")).read())
-        check("its place in the queue is on record: handed over, then back to waiting", any("solo second" in l and "handed to reader → waiting" in l for l in trail()), trail())
+        # the record names the line and the radio by id only (`radio_tag` in crates/airband-cli/src/tower/mod.rs)
+        check("its place in the queue is on record: handed over, then back to waiting", f"aloud: line {silent['id']} handed to radio reader → waiting" in "\n".join(trail()), trail())
         # another radio takes it, and the answer that carried it is lost on the way: asking again, saying what it
         # last got, gets the same one at once and not after two minutes
         def other(query):
@@ -693,11 +695,12 @@ Send it as written, or do you want changes?""")
         http("POST", "/v1/radio/heard", {"id": silent["id"]}, radio="reader2")
         http("POST", "/v1/radio/ready", {}, radio="reader2")
         status = http("GET", "/v1/status", token=OWN)[1]
-        check("once heard it is out of the queue and on record as heard", not any(p["callsign"] == "solo second" for p in status["pending"]) and any("solo second" in l and "→ heard on reader2" in l for l in status["aloud"]), status["aloud"])
+        check("once heard it is out of the queue and on record as heard", not any(p["callsign"] == "solo second" for p in status["pending"]) and any(f"aloud: line {silent['id']} " in l and "→ heard on radio reader2" in l for l in status["aloud"]), status["aloud"])
     # something newer from the same agent takes the place of what it said before, and that is written down too
     report("solo3", "solo", "solo third", "said", "The first batch of 40 invoices is filed.")
     report("solo3", "solo", "solo third", "said", "All 120 invoices are filed and the totals match the ledger.")
-    check("an unheard report replaced by a newer one leaves the queue with its reason on record", any("solo third" in l and "→ dropped (superseded)" in l for l in trail()), trail())
+    replaced = message(feed(), "solo third", "first batch")
+    check("an unheard report replaced by a newer one leaves the queue with its reason on record", replaced is not None and f"aloud: line {replaced['id']} waiting → dropped (superseded)" in "\n".join(trail()), (replaced, trail()))
     check("and the change is a line in the tower's log", "→ dropped (superseded)" in open(os.path.join(work, "tower.log")).read())
     first = [m for m in feed()["messages"] if "first batch" in (m.get("text") or "") + m["id"] or m.get("not_read")]
     check("the line he missed while he was listening says so in the chat, with the reason", any(m.get("not_read") == "superseded" for m in first), first)

@@ -211,7 +211,10 @@ try:
     report("asked", "Publish the notes?")
     check("it forgets the address: nothing more is asked for it", quiet(5))
     log = open(os.path.join(work, "tower.log")).read()
-    check("the log says what was asked and what came back", log.count("push: asked the relay to wake \"phone\"") == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
+    # the log names the radio by the start of its channel, never by the name he gave the pairing
+    asked = f"push: asked the relay to wake radio {wire.derive(SECRET)['channel'][:8]} for line "
+    check("the log says what was asked and what came back", log.count(asked) == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
+    check("and names the radio by id only", '"phone"' not in log, [l for l in log.splitlines() if "phone" in l])
     check("and holds no address", ADDRESS not in log and SECRET not in log)
 finally:
     tower.terminate()

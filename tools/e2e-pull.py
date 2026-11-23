@@ -46,7 +46,6 @@ def send(text, timeout=120):
     return subprocess.run([BIN, "send", text, "--keep-trying", "--link", link], env=phone_env, capture_output=True, text=True, timeout=timeout).stdout.strip()
 def received():
     return open(got).read() if os.path.exists(got) else ""
-SERVING = 'serving "test" through'
 ANOTHER = "another computer is serving this pairing"
 
 relay = subprocess.Popen([RELAY], env=dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data), stdout=open(os.path.join(work, "relay.log"), "w"), stderr=subprocess.STDOUT)
@@ -61,6 +60,7 @@ try:
     if not until(healthy, 20): sys.exit("The relay did not start. Its log: " + os.path.join(work, "relay.log"))
     first = start(first_home, "first.log"); towers.append(first)
     link = [w for w in subprocess.run([BIN, "pair", "test"], env=env_of(first_home), capture_output=True, text=True).stdout.split() if w.startswith("airband:")][-1]
+    SERVING = wire.serving(link)
     check("the first tower serves the new pairing through the relay", until(lambda: SERVING in log_of("first.log")), log_of("first.log")[-400:])
     subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", json.dumps(["sh", "-c", f"cat>>{got}"]), "checkin"], env=env_of(first_home))
     check("what he says reaches the agent through it", "Delivered." in send("one") and "one" in received(), received())

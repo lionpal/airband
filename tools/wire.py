@@ -2,7 +2,7 @@
 
 Read from core's own constant so the suites never carry a copy of it.
 """
-import os, re, socket
+import hashlib, hmac, os, re, socket, urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 with open(os.path.join(ROOT, "crates", "airband-core", "src", "radio.rs")) as f:
@@ -26,3 +26,21 @@ def refusal(body):
 def reason(body):
     """A refusal's words for him, or "" when it carries none or is not a refusal."""
     return (body.get("reason") or "") if refusal(body) else ""
+
+
+def derive(secret):
+    """What both ends make from a pairing secret (crates/airband-core/src/relay.rs): HKDF-SHA256, RFC 5869."""
+    prk = hmac.new(b"airband.relay/1", bytes.fromhex(secret), hashlib.sha256).digest()
+    take = lambda label: hmac.new(prk, label.encode() + b"\x01", hashlib.sha256).digest()
+    return {"channel": take("channel")[:16].hex(), "radio": take("radio").hex()}
+
+
+def keys_of(link):
+    """What a pairing link's secret makes (`derive`)."""
+    return derive(urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["secret"][0])
+
+
+def serving(link):
+    """The line a tower logs once it serves a pairing through the relay. The log names a radio by the start of
+    its channel (`radio_tag` in crates/airband-cli/src/tower/mod.rs), never by the name he gave it."""
+    return f"serving radio {keys_of(link)['channel'][:8]} through"

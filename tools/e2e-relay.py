@@ -11,7 +11,7 @@ tower in order, once each, when it is back; and the relay takes nothing on a cha
 A relay, a tower and a radio, all on this machine, in a throwaway folder. The radio is the terminal client with
 a pairing link, which uses the same core as the phone.
 """
-import base64, hashlib, hmac, json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
+import base64, json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
 import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -67,11 +67,6 @@ def status():
     with urllib.request.urlopen(req, timeout=10) as res: return json.loads(res.read())
 def received():
     return open(got).read() if os.path.exists(got) else ""
-def derive(secret):
-    """What both ends make from a pairing secret (crates/airband-core/src/relay.rs): HKDF-SHA256, RFC 5869."""
-    prk = hmac.new(b"airband.relay/1", bytes.fromhex(secret), hashlib.sha256).digest()
-    take = lambda label: hmac.new(prk, label.encode() + b"\x01", hashlib.sha256).digest()
-    return {"channel": take("channel")[:16].hex(), "radio": take("radio").hex()}
 def aws(*args):
     r = subprocess.run(["aws", *args, "--region", REGION, "--output", "json"], capture_output=True, text=True)
     if r.returncode: raise SystemExit(f"aws {args[0]} {args[1]} failed: {r.stderr.strip()[-300:]}")
@@ -120,14 +115,16 @@ time.sleep(3 if DYNAMO else 0.6)
 tower = start_tower()
 try:
     link = [w for w in subprocess.run([BIN, "pair", "test"], env=tower_env, capture_output=True, text=True).stdout.split() if w.startswith("airband:")][-1]
-    keys = derive(urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["secret"][0])
-    stranger = derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
+    keys = wire.keys_of(link)
+    serving = wire.serving(link)
+    stranger = wire.derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
     # the tower picks a new pairing up on its next look at the settings (every ten seconds): go on once it says
     # it is serving it through the relay, not after a guess at how long that takes
     until = time.time() + 40
-    while 'serving "test" through' not in open(os.path.join(work, "tower.log")).read() and time.time() < until:
+    while serving not in open(os.path.join(work, "tower.log")).read() and time.time() < until:
         time.sleep(0.5)
-    check("the tower serves the new pairing through the relay", 'serving "test" through' in open(os.path.join(work, "tower.log")).read(), open(os.path.join(work, "tower.log")).read()[-400:])
+    check("the tower serves the new pairing through the relay", serving in open(os.path.join(work, "tower.log")).read(), open(os.path.join(work, "tower.log")).read()[-400:])
+    check("and its log names the radio by id, not by the name he gave it", '"test"' not in open(os.path.join(work, "tower.log")).read(), open(os.path.join(work, "tower.log")).read()[-400:])
     subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", json.dumps(["sh", "-c", f"cat>>{got}"]), "checkin"], env=tower_env)
 
     print("With the computer there")
