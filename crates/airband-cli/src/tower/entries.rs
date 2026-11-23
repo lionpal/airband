@@ -116,13 +116,14 @@ impl Entry {
         self.short.clone().unwrap_or_else(|| opening(&self.said_whole()))
     }
     /// Whether there is more to the message than its line. A line with no short version yet is the message's
-    /// opening, cut here, so whether it was cut is known here.
+    /// opening: the words read out of it taken up to a place, so there is more exactly when that place comes
+    /// before their end. Where it was cut is counted, never its words compared.
     pub(super) fn more_to_read(&self) -> bool {
         match &self.short {
             Some(_) => self.more,
             None => {
                 let whole = self.said_whole();
-                opening(&whole) != spoken(&whole)
+                opening(&whole).chars().count() < spoken(&whole).chars().count()
             }
         }
     }

@@ -211,9 +211,6 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
-    let state = Arc::new(Mutex::new(State::Starting));
-    let (tx, rx) = mpsc::channel::<Msg>();
-    listen(&sock, state.clone(), tx.clone())?;
     // where it works, and who it is: the tower always says, and nothing is made up when it does not
     let cwd = named.get("cwd").cloned().ok_or("airband hold needs --cwd")?;
     let (id, harness) = (named.get("id").cloned().ok_or("airband hold needs --id")?, named.get("harness").cloned().ok_or("airband hold needs --harness")?);
@@ -222,6 +219,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         By::Lines => Some(named.get("line").cloned().ok_or("airband hold --by lines needs --line")?),
         By::Acp => None,
     };
+    // the socket is opened only once every argument has been read: one opened for a holder that then gives up
+    // would sit there with nobody answering, and no state to say why
+    let state = Arc::new(Mutex::new(State::Starting));
+    let (tx, rx) = mpsc::channel::<Msg>();
+    listen(&sock, state.clone(), tx.clone())?;
     let mut command = Command::new(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
@@ -359,6 +361,14 @@ fn end_group() {
 #[cfg(test)]
 mod by_tests {
     use super::*;
+
+    #[test]
+    fn a_holder_missing_an_argument_opens_no_socket() {
+        let sock = std::env::temp_dir().join(format!("airband-hold-{}.sock", crate::config::random_hex(4)));
+        let args: Vec<String> = ["--sock", sock.to_str().unwrap(), "--by", "lines", "--cwd", "/tmp", "--id", "a", "--harness", "t", "--", "true"].iter().map(|s| s.to_string()).collect();
+        assert!(run(&args).unwrap_err().contains("--line"));
+        assert!(!sock.exists(), "no socket is left behind");
+    }
 
     #[test]
     fn the_holder_kind_is_read_back_as_the_row_named_it() {

@@ -56,6 +56,10 @@ pub(super) struct Session {
     pub(super) turn: Option<String>,
 }
 impl Session {
+    /// One just met: nothing heard, nothing queued, nothing known of what it is doing.
+    pub(super) fn new(agent: Agent, callsign: Callsign, team: TeamId) -> Session {
+        Session { agent, callsign, team, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+    }
     /// It is in the room he was looking at, or he was in none.
     pub(super) fn in_room(&self, room: Option<&str>) -> bool {
         room.is_none_or(|g| self.team.as_str() == g)
@@ -149,7 +153,7 @@ impl Inner {
                 self.next_free(&team_name, None, &[])
             });
             log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
-            self.sessions.push(Session { agent: agent.clone(), callsign, team: team.clone(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None });
+            self.sessions.push(Session::new(agent.clone(), callsign, team.clone()));
             // one that was moved to another team before it went away is back there, by whoever put it there
             if let Some(by) = self.placed.get(&agent.id).filter(|p| p.team == team).map(|p| p.by)
                 && let Some(s) = self.session(&agent.id) {

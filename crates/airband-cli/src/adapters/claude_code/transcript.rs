@@ -1,6 +1,5 @@
 //! Reading a session's transcript: what it is doing, what it touched, what he typed, the name he gave it, the pull
 //! requests it made. Each reader reads only what was written since it last looked, or the end of the file.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// The name last given to `/remote-control` in this session, read from the whole transcript once and then
@@ -67,21 +66,21 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
             eprintln!("airband: {why}");
         }
     };
-    let Ok(file) = std::fs::File::open(transcript) else {
+    let Ok(meta) = std::fs::metadata(transcript) else {
         if first == FirstLook::FromEnd && !std::path::Path::new(transcript).exists() && kept.get("at").is_none() {
             kept["at"] = 0.into();
             keep(&kept);
         }
         return Some(kept);
     };
-    let len = file.metadata().ok()?.len();
+    let len = meta.len();
     let at = match kept["at"].as_u64() {
         Some(at) if at <= len => at,
         Some(_) => 0,
         None if first == FirstLook::FromEnd => len,
         None => 0,
     };
-    let reached = whole_lines(file, at, |line| each(line, &mut kept)).unwrap_or(at);
+    let reached = whole_lines(std::path::Path::new(transcript), at, |line| each(line, &mut kept)).unwrap_or(at);
     if kept["at"].as_u64() != Some(reached) || reached > at {
         kept["at"] = reached.into();
         keep(&kept);
@@ -107,19 +106,29 @@ pub(super) fn pull_request_line(line: &[u8]) -> Option<Event> {
 /// Read a transcript's lines from a place in it onward, handing each whole line to `each`, and say how far
 /// that got. A line still being written is left for next time, and so is whatever follows a part that could
 /// not be read. Nothing when the place could not be gone to.
-pub(super) fn whole_lines(mut file: std::fs::File, from: u64, mut each: impl FnMut(&[u8])) -> Option<u64> {
-    use std::io::{BufRead, Seek, SeekFrom};
-    file.seek(SeekFrom::Start(from)).ok()?;
-    let mut lines = std::io::BufReader::with_capacity(64 * 1024, file);
-    let (mut at, mut line) = (from, Vec::new());
+pub(super) fn whole_lines(path: &std::path::Path, from: u64, mut each: impl FnMut(&[u8])) -> Option<u64> {
+    // read a part at a time, so a long transcript costs the memory of one part and one line
+    const PART: u64 = 1024 * 1024;
+    let (mut at, mut read_to, mut line) = (from, from, Vec::new());
     loop {
-        line.clear();
-        let n = lines.read_until(b'\n', &mut line).unwrap_or(0);
-        if n == 0 || line.last() != Some(&b'\n') {
+        let part = match airband_io::files::read_part(path, read_to, PART) {
+            Ok(part) => part,
+            Err(_) if read_to == from => return None,
+            Err(_) => return Some(at),
+        };
+        if part.is_empty() {
             return Some(at);
         }
-        at += n as u64;
-        each(&line);
+        read_to += part.len() as u64;
+        let mut rest = part.as_slice();
+        while let Some(end) = rest.iter().position(|b| *b == b'\n') {
+            line.extend_from_slice(&rest[..=end]);
+            at += line.len() as u64;
+            each(&line);
+            line.clear();
+            rest = &rest[end + 1..];
+        }
+        line.extend_from_slice(rest);
     }
 }
 
@@ -152,12 +161,9 @@ pub(crate) fn glance(agent: &Agent) -> super::super::Glance {
 
 /// The end of a session's transcript: at most this many bytes of it.
 pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
-    let size = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(size.saturating_sub(most))).ok()?;
-    let mut tail = Vec::new();
-    file.read_to_end(&mut tail).ok()?;
+    let path = std::path::Path::new(agent.meta.get("transcript")?.as_str()?);
+    let size = std::fs::metadata(path).ok()?.len();
+    let tail = airband_io::files::read_part(path, size.saturating_sub(most), most).ok()?;
     Some(String::from_utf8_lossy(&tail).into_owned())
 }
 
@@ -168,8 +174,8 @@ pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
 /// for the next call.
 pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
     let read = || {
-        let file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
-        let size = file.metadata().ok()?.len();
+        let path = std::path::Path::new(agent.meta.get("transcript")?.as_str()?);
+        let size = std::fs::metadata(path).ok()?.len();
         // the transcript was replaced by a shorter one: start over; what was already taken is known by its id
         let from = if from > size { 0 } else { from };
         let fresh = from == 0 && size > 24 * 1024 * 1024;
@@ -177,7 +183,7 @@ pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
         let mut told = Vec::new();
         // started in the middle of the file: what is left of the line it landed in is not a line
         let mut skip = fresh;
-        let at = whole_lines(file, start, |line| {
+        let at = whole_lines(path, start, |line| {
             let wanted = |mark: &[u8]| line.windows(mark.len()).any(|w| w == mark);
             if !std::mem::take(&mut skip) && (wanted(b"\"human\"") || wanted(b"\"peer\"") || wanted(b"\"sdk\"")) {
                 told.extend(told_in(&String::from_utf8_lossy(line)));

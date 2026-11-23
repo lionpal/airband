@@ -43,7 +43,8 @@ pub(super) async fn switch(app: &Arc<App>, to: UseAccount) -> Result<Accounts, S
     let (h, i) = (harness.clone(), id.clone());
     // the swap is done when this returns; the thread it hands back only holds the name in place afterwards
     tokio::task::spawn_blocking(move || crate::adapters::use_account(&h, &i).map(|_holding| ())).await.map_err(|_| "The switch did not finish.".to_string())??;
-    log(format!("{harness} now runs as {id}"));
+    // the account by nothing that names it: its id is his email for a saved login
+    log(format!("{harness} now runs as another of his accounts"));
     Ok(match read().await {
         Ok(value) => {
             *kept = Some((Instant::now(), value.clone()));

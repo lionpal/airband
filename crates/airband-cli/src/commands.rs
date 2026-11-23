@@ -1,6 +1,5 @@
 //! The commands that change how this computer's tower is set up, and say how it is: `relay`, `model`, `lan`,
 //! `pair`, `unpair`, `quick`, `status`.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use crate::config::{self, Config};
 use serde::Serialize;
 use airband_core::pairing::Pairing;
@@ -188,9 +187,10 @@ pub(crate) fn unpair(cfg: Config, name: Option<&str>) -> Result<(), String> {
     // tell the relay the channel is finished with, so it does not keep it on record for ever. If the relay
     // cannot be reached the radio is cut off all the same: the tower no longer answers on that channel.
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
-        match airband_io::http::agent(std::time::Duration::from_secs(8)).delete(keys.at(relay, "")).header("authorization", keys.as_tower()).call().map(|r| r.status().as_u16()) {
-            Ok(200..=299 | 404) => {}
-            Ok(status) => eprintln!("{relay} did not close its channel ({status}). The phone is cut off all the same."),
+        use crate::tower::RelaySaid;
+        match crate::tower::close_channel(relay, &keys) {
+            Ok(RelaySaid::Done | RelaySaid::Nothing | RelaySaid::Unknown) => {}
+            Ok(said) => eprintln!("{relay} did not close its channel ({said:?}). The phone is cut off all the same."),
             Err(e) => eprintln!("Could not reach {relay} to close its channel ({e}). The phone is cut off all the same."),
         }
     }
@@ -236,8 +236,7 @@ fn word<T: Serialize>(t: &T) -> String {
 }
 
 pub(crate) fn status(cfg: &Config) {
-    let res = crate::adapters::taken(crate::adapters::TowerHere::here(cfg, std::time::Duration::from_secs(5)).get("/v1/status").call());
-    let Some(status) = res.and_then(|mut r| r.body_mut().read_json::<crate::tower::Status>().ok()) else {
+    let Some(status) = crate::adapters::TowerHere::here(cfg, std::time::Duration::from_secs(5)).status() else {
         println!("airband is not running, or is a version that says how it stands another way.");
         return;
     };

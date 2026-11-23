@@ -28,6 +28,60 @@ fn wrong_clock() -> String {
     format!("the clocks of your phone and your computer are more than {} minutes apart", FRESH_MS / 60_000)
 }
 
+/// What the relay's HTTP status says, read in one place for every call the tower and `airband unpair` make
+/// to it. What each means for a route is said where that route is called.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelaySaid {
+    /// 200, 201: done, or (pulling) a request handed over.
+    Done,
+    /// 204: done with nothing to say, or (pulling) nothing waiting.
+    Nothing,
+    /// 401: an admission key is needed.
+    NeedsAdmission,
+    /// 403: the channel belongs to another computer.
+    NotYours,
+    /// 404: the relay does not know the channel.
+    Unknown,
+    /// 410: closed for good (opening), or the radio stopped waiting (answering).
+    Closed,
+    /// 426: the relay speaks a newer version of the pull than this tower.
+    OtherVersion,
+    /// Anything else, kept as the number for the log.
+    Other(u16),
+}
+
+impl RelaySaid {
+    pub(crate) fn of(status: u16) -> RelaySaid {
+        match status {
+            200 | 201 => RelaySaid::Done,
+            204 => RelaySaid::Nothing,
+            401 => RelaySaid::NeedsAdmission,
+            403 => RelaySaid::NotYours,
+            404 => RelaySaid::Unknown,
+            410 => RelaySaid::Closed,
+            426 => RelaySaid::OtherVersion,
+            other => RelaySaid::Other(other),
+        }
+    }
+}
+
+/// Tell the relay a channel is finished with (`airband unpair`), so it does not keep it on record for ever.
+pub(crate) fn close_channel(relay: &str, keys: &Keys) -> Result<RelaySaid, String> {
+    airband_io::http::agent(Duration::from_secs(8)).delete(keys.to(relay, Route::Channel)).header("authorization", keys.as_tower()).call().map(|r| RelaySaid::of(r.status().as_u16())).map_err(|e| e.to_string())
+}
+
+/// Why a link's serving thread ended. One the relay keeps closed, or a pairing undone, is not started again
+/// while the same pairing is wanted: only a new pairing (a new secret, so a new channel) opens one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    /// Told to stop: the pairing or the relay address changed.
+    Stopped,
+    /// The relay keeps this channel closed for good.
+    Closed,
+    /// The settings no longer hold this pairing.
+    Unpaired,
+}
+
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
 /// same code, with the same key, as one pulled from the relay. One for each tower, on its [`App`].
 #[derive(Default)]
@@ -54,50 +108,75 @@ async fn sealed(State(app): State<Arc<App>>, axum::extract::Path(channel): axum:
 /// stops, and a changed relay address moves everything, all without restarting the tower.
 pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
     std::thread::spawn(move || {
-        // each link that is up, by its relay and its radio, with the way to stop it
-        type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;
-        let mut running: Running = HashMap::new();
+        let mut links = Links::default();
         loop {
-            // the settings now, with their keys: ones read without them never take the place of these
-            let cfg = app.cfg();
-            // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
-            let wanted: Vec<(Option<String>, PairedRadio)> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
-            running.retain(|key, (stop, serving)| {
-                let keep = wanted.contains(key);
-                // A pairing whose serving thread has ended while it is still wanted is started again below:
-                // with nobody pulling, the relay would call the computer away while it is on.
-                if keep && serving.is_finished() {
-                    log(format!("the link serving \"{}\" stopped; starting it again", key.1.name));
-                    return false;
-                }
-                if !keep {
-                    stop.store(true, Ordering::SeqCst);
-                    if let Some(channel) = super::push::channel_of(&key.1) {
-                        app.served.0.lock().unwrap().remove(&channel);
-                    }
-                    log(format!("\"{}\" is no longer served", key.1.name));
-                }
-                keep
-            });
-            for key in wanted {
-                if running.contains_key(&key) {
-                    continue;
-                }
-                let keys = match Keys::derive(&key.1.secret) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        log(format!("pairing \"{}\" is unusable: {e}", key.1.name));
-                        continue;
-                    }
-                };
-                let stop = Arc::new(AtomicBool::new(false));
-                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
-                app.served.0.lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
-                running.insert(key, (stop, std::thread::spawn(move || serve.run())));
-            }
+            links.watch(&app, &router, &handle);
             std::thread::sleep(Duration::from_secs(10));
         }
     });
+}
+
+/// A link: its relay and its pairing.
+type Link = (Option<String>, PairedRadio);
+
+/// The links the watcher keeps: each that is up, with the way to stop it, and those that ended for good, never
+/// opened again while that pairing stands.
+#[derive(Default)]
+struct Links {
+    running: HashMap<Link, (Arc<AtomicBool>, std::thread::JoinHandle<Ended>)>,
+    finished: std::collections::HashSet<Link>,
+}
+
+impl Links {
+    /// One look at the settings: start what is wanted, stop what is not.
+    fn watch(&mut self, app: &Arc<App>, router: &Router, handle: &Handle) {
+        let Links { running, finished } = self;
+        // the settings now, with their keys: ones read without them never take the place of these
+        let cfg = app.cfg();
+        // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
+        let wanted: Vec<Link> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
+        finished.retain(|key| wanted.contains(key));
+        let ended: Vec<Link> = running.iter().filter(|(key, (_, serving))| wanted.contains(key) && serving.is_finished()).map(|(key, _)| key.clone()).collect();
+        for key in ended {
+            let Some((_, serving)) = running.remove(&key) else { continue };
+            // A pairing whose serving thread has ended while it is still wanted is started again below (with
+            // nobody pulling, the relay would call the computer away while it is on), unless it ended for good:
+            // the relay keeps the channel closed, or the pairing is gone.
+            match serving.join() {
+                Ok(Ended::Closed | Ended::Unpaired) => {
+                    finished.insert(key);
+                }
+                Ok(Ended::Stopped) | Err(_) => log(format!("the link serving \"{}\" stopped; starting it again", key.1.name)),
+            }
+        }
+        running.retain(|key, (stop, _)| {
+            let keep = wanted.contains(key);
+            if !keep {
+                stop.store(true, Ordering::SeqCst);
+                if let Some(channel) = super::push::channel_of(&key.1) {
+                    app.served.0.lock().unwrap().remove(&channel);
+                }
+                log(format!("\"{}\" is no longer served", key.1.name));
+            }
+            keep
+        });
+        for key in wanted {
+            if running.contains_key(&key) || finished.contains(&key) {
+                continue;
+            }
+            let keys = match Keys::derive(&key.1.secret) {
+                Ok(k) => k,
+                Err(e) => {
+                    log(format!("pairing \"{}\" is unusable: {e}", key.1.name));
+                    continue;
+                }
+            };
+            let stop = Arc::new(AtomicBool::new(false));
+            let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
+            app.served.0.lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
+            running.insert(key, (stop, std::thread::spawn(move || serve.run())));
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -122,14 +201,14 @@ impl Serve {
         self.app.cfg().pairings.iter().any(|p| super::push::channel_of(p).as_ref() == Some(&self.keys.channel))
     }
 
-    fn run(self) {
+    fn run(self) -> Ended {
         // with no relay there is nothing to pull: requests come straight (`answer_here`) until this is stopped
         let Some(relay) = self.relay.clone() else {
             log(format!("serving \"{}\" at this computer's own addresses, with no relay", self.name));
             while !self.stop.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_secs(1));
             }
-            return;
+            return Ended::Stopped;
         };
         let agent = airband_io::http::agent(Duration::from_secs(40));
         let auth = self.keys.as_tower();
@@ -148,7 +227,7 @@ impl Serve {
                 // its channel, and opening it would put it back on record for a phone that was cut off
                 if !self.still_paired() {
                     log(format!("\"{}\" is no longer paired; its channel is not opened again", self.name));
-                    return;
+                    return Ended::Unpaired;
                 }
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
                 let mut req = agent.put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
@@ -156,22 +235,22 @@ impl Serve {
                 if let Some(a) = &self.app.cfg().relay_admission {
                     req = req.header(ADMISSION_HEADER, a);
                 }
-                match req.send_empty().map(|r| r.status().as_u16()) {
-                    Ok(201 | 204) => {
+                match req.send_empty().map(|r| RelaySaid::of(r.status().as_u16())) {
+                    Ok(RelaySaid::Done | RelaySaid::Nothing) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
                         (open, wait, told, got) = (true, 1, false, None);
                     }
                     // the relay keeps this channel closed for good: it was unpaired, and only a new pairing opens one
-                    Ok(410) => {
+                    Ok(RelaySaid::Closed) => {
                         log(format!("{} keeps the channel for \"{}\" closed; pair again to use it", relay, self.name));
-                        return;
+                        return Ended::Closed;
                     }
                     other => {
                         if !told {
                             log(match other {
-                                Ok(401) => format!("{} needs an admission key: airband relay <url> --admission <key>", relay),
-                                Ok(403) => format!("{} says the channel for \"{}\" belongs to another computer; pair again", relay, self.name),
-                                Ok(code) => format!("{} refused to open a channel ({code})", relay),
+                                Ok(RelaySaid::NeedsAdmission) => format!("{} needs an admission key: airband relay <url> --admission <key>", relay),
+                                Ok(RelaySaid::NotYours) => format!("{} says the channel for \"{}\" belongs to another computer; pair again", relay, self.name),
+                                Ok(said) => format!("{} refused to open a channel ({said:?})", relay),
                                 Err(e) => format!("cannot reach {}: {e}; retrying", relay),
                             });
                             told = true;
@@ -186,8 +265,8 @@ impl Serve {
                 ask = ask.header(GOT_HEADER, id);
             }
             match ask.call() {
-                Ok(mut res) => match res.status().as_u16() {
-                    200 => {
+                Ok(mut res) => match RelaySaid::of(res.status().as_u16()) {
+                    RelaySaid::Done => {
                         wait = 1;
                         // a request with no id could never be answered: the relay has broken its side of the contract
                         let Some(id) = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).map(String::from) else {
@@ -210,14 +289,21 @@ impl Serve {
                             }
                         }
                     }
-                    204 => wait = 1,
+                    RelaySaid::Nothing => wait = 1,
                     // the relay restarted without its data, or the channel changed hands: open it again
-                    status @ (403 | 404) => {
-                        log(format!("{} no longer knows the channel for \"{}\" ({status}); opening it again", relay, self.name));
+                    said @ (RelaySaid::NotYours | RelaySaid::Unknown) => {
+                        log(format!("{} no longer knows the channel for \"{}\" ({said:?}); opening it again", relay, self.name));
                         open = false;
                     }
-                    status => {
-                        log(format!("{} answered {status} when asked for \"{}\"'s requests; retrying", relay, self.name));
+                    RelaySaid::OtherVersion => {
+                        if !told {
+                            log(format!("{} speaks a newer airband than this computer; update airband here", relay));
+                            told = true;
+                        }
+                        nap(&mut wait);
+                    }
+                    said => {
+                        log(format!("{} answered {said:?} when asked for \"{}\"'s requests; retrying", relay, self.name));
                         nap(&mut wait);
                     }
                 },
@@ -231,6 +317,7 @@ impl Serve {
                 }
             }
         }
+        Ended::Stopped
     }
 
     /// Is this the first time a request of this id has come? Each is answered once: a copy of one, sent
@@ -315,15 +402,15 @@ impl Serve {
                 Some(sealed) => req.header("content-type", "application/octet-stream").send(&sealed[..]),
                 None => req.send_empty(),
             }
-            .map(|r| r.status().as_u16())
+            .map(|r| RelaySaid::of(r.status().as_u16()))
             .map_err(|e| e.to_string())
         })
         .await;
         match sent {
-            Ok(Ok(204)) => {}
+            Ok(Ok(RelaySaid::Nothing | RelaySaid::Done)) => {}
             // the radio gave up waiting before the answer was ready: it asks again, and nothing is lost
-            Ok(Ok(410)) => log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name)),
-            Ok(Ok(status)) => log(format!("{} answered {status} to an answer for \"{}\" (request {request_id})", relay, self.name)),
+            Ok(Ok(RelaySaid::Closed)) => log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name)),
+            Ok(Ok(said)) => log(format!("{} answered {said:?} to an answer for \"{}\" (request {request_id})", relay, self.name)),
             Ok(Err(e)) => log(format!("an answer for \"{}\" did not reach {} (request {request_id}): {e}", self.name, relay)),
             Err(_) => {}
         }
@@ -383,6 +470,58 @@ mod tests {
         app.settings.change(|c| c.pairings.clear()).unwrap();
         assert!(!serve.still_paired());
         let ended = tokio::task::spawn_blocking(move || serve.run());
-        tokio::time::timeout(Duration::from_secs(5), ended).await.expect("it ends without opening the channel").unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(5), ended).await.expect("it ends without opening the channel").unwrap();
+        assert_eq!(ended, Ended::Unpaired);
+    }
+
+    /// A relay that keeps the channel closed answers every open with 410: the link ends for good, and the
+    /// watcher never opens it again for the same pairing (the relay would count each open against the address).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_channel_the_relay_keeps_closed_is_opened_once_and_never_again() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let relay = format!("http://{}", listener.local_addr().unwrap());
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = opens.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let _read = stream.read(&mut buf);
+                counted.fetch_add(1, Ordering::SeqCst);
+                stream.write_all(b"HTTP/1.1 410 Gone\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").ok();
+            }
+        });
+        let app = crate::tower::http::tests::app("closed-link");
+        let phone = crate::config::PairedRadio { name: "phone".into(), secret: "22".repeat(32) };
+        app.settings.change(|c| {
+            c.pairings.push(phone.clone());
+            c.relay = Some(relay.clone());
+        })
+        .unwrap();
+        let keys = Keys::derive(&phone.secret).unwrap();
+        let serve = Serve { app: app.clone(), relay: Some(relay), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
+        let ended = tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || serve.run())).await.unwrap().unwrap();
+        assert_eq!(ended, Ended::Closed);
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        // the watcher, with the same pairing wanted, opens it once of its own and never again
+        let (router, handle) = (crate::tower::http::router(app.clone()), tokio::runtime::Handle::current());
+        let mut links = Links::default();
+        links.watch(&app, &router, &handle);
+        while links.running.values().any(|(_, t)| !t.is_finished()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        links.watch(&app, &router, &handle);
+        links.watch(&app, &router, &handle);
+        assert!(links.running.is_empty());
+        assert_eq!(opens.load(Ordering::SeqCst), 2, "opened once by the watcher, and never again while the same pairing stands");
+    }
+
+    #[test]
+    fn the_relays_statuses_are_read_in_one_place() {
+        assert_eq!(RelaySaid::of(201), RelaySaid::Done);
+        assert_eq!(RelaySaid::of(204), RelaySaid::Nothing);
+        assert_eq!(RelaySaid::of(410), RelaySaid::Closed);
+        assert_eq!(RelaySaid::of(418), RelaySaid::Other(418));
     }
 }

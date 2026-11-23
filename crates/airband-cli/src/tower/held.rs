@@ -224,7 +224,10 @@ async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
     // not there in time: it is not left to turn up later as an agent nobody was told about
-    say(&kept.id, format!("{}\n", crate::hold::Tell::End.line()).as_bytes()).await.ok();
+    // a holder that turns up late and cannot be told to end is said: it may run on with nobody told of it
+    if let Err(e) = say(&kept.id, format!("{}\n", crate::hold::Tell::End.line()).as_bytes()).await {
+        log(format!("{called} was late and could not be told to end ({e}); it may still start"));
+    }
     Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()))
 }
 #[cfg(not(unix))]
@@ -561,7 +564,7 @@ mod tests {
         let mut inner = Inner::default();
         let kept = |id: &str| Kept { id: id.into(), cwd: "/w".into(), launcher: "l".into(), model: None, effort: None, session: None };
         inner.held = vec![kept("on"), kept("off")];
-        let on = Agent { id: "on".into(), harness: "test".into(), cwd: Some("/w/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let on = airband_core::agent::Agent { cwd: Some("/w/shop".into()), ..crate::adapters::agent_with("on", "test") };
         inner.check_in(&on).expect("taken in");
         inner.drop_held_off_the_radio();
         assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);

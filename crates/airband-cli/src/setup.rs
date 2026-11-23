@@ -168,7 +168,7 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
     out
 }
 
-/// `airband keys [add <name> <provider> | remove <name>]`. A key is never shown.
+/// `airband keys [add <provider> | remove <name>]`. A key is never shown.
 pub(crate) fn keys(args: &[String]) -> Result<(), String> {
     let cfg = config::load();
     if let Some(why) = cfg.keyless.clone() {

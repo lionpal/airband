@@ -29,9 +29,11 @@ struct Now {
 }
 
 impl Settings {
-    /// The settings the tower started with, read with their keys.
+    /// The settings the tower started with, read with their keys. Which version of the file they came from is
+    /// not known here: a stamp taken now could be of a file another process (`airband pair`) wrote since they
+    /// were read, and its change would never be read. So none is kept, and the first look reads the file again.
     pub(crate) fn new(cfg: Config) -> Settings {
-        Settings { now: RwLock::new(Now { cfg: Arc::new(cfg), stamp: config::stamp_of(&config::file()), unread: None, file: Some(config::file()) }), failed: Mutex::new(None) }
+        Settings { now: RwLock::new(Now { cfg: Arc::new(cfg), stamp: None, unread: None, file: Some(config::file()) }), failed: Mutex::new(None) }
     }
 
     /// The settings now: the file's, when it has changed since they were last read and could be read with its
@@ -47,23 +49,23 @@ impl Settings {
         }
         let mut now = self.now.write().unwrap();
         if now.stamp != stamp {
-            match config::read_from(&file) {
-                Some(cfg) if cfg.keyless.is_none() => {
+            match config::read_from(&file).and_then(|cfg| cfg.ok_or_else(|| "it is not there".to_string())) {
+                Ok(cfg) if cfg.keyless.is_none() => {
                     now.cfg = Arc::new(cfg);
                     now.unread = None;
                 }
-                Some(cfg) => {
+                Ok(cfg) => {
                     let why = cfg.keyless.unwrap_or_default();
                     if now.unread.as_deref() != Some(why.as_str()) {
                         log(format!("the settings changed, and their keys could not be read: going on with the ones before ({why})"));
                     }
                     now.unread = Some(why);
                 }
-                None => {
-                    if now.unread.is_none() {
-                        log("the settings changed, and the file could not be read: going on with the ones before");
+                Err(why) => {
+                    if now.unread.as_deref() != Some(why.as_str()) {
+                        log(format!("the settings changed, and the file could not be read: going on with the ones before ({why})"));
                     }
-                    now.unread = Some("the settings file could not be read".into());
+                    now.unread = Some(why);
                 }
             }
             // tried for this version of the file: it is tried again when it changes again
@@ -84,8 +86,10 @@ impl Settings {
     /// changed, never written over.
     pub(crate) fn change<R>(&self, f: impl FnOnce(&mut Config) -> R) -> Result<R, String> {
         let file = self.now.read().unwrap().file.clone();
-        let held = match file {
-            Some(_) => Some(config::hold()?),
+        // the file these settings were read from, held and written: never another (a test's settings never
+        // touch his own)
+        let held = match &file {
+            Some(file) => Some((config::hold_at(file)?, file.clone())),
             None => None,
         };
         // read again now it is held: the settings as the file has them this moment
@@ -94,8 +98,8 @@ impl Settings {
             return Err(format!("This computer's settings cannot be read right now: {why}"));
         }
         let made = f(&mut cfg);
-        if let Some(held) = &held {
-            config::save_held(&cfg, held)?;
+        if let Some((held, file)) = &held {
+            config::save_at(&cfg, file, held)?;
         }
         let mut now = self.now.write().unwrap();
         now.cfg = Arc::new(cfg);
@@ -148,7 +152,7 @@ mod tests {
         let file = dir.join("config.json");
         let start = r#"{"token":"own","radio_token":"radio","pairings":[]}"#;
         write(&file, start, 60);
-        let settings = reading(config::read_from(&file).unwrap(), &file);
+        let settings = reading(config::read_from(&file).unwrap().unwrap(), &file);
         assert!(settings.current().pairings.is_empty());
         // `airband pair`, from another process
         write(&file, r#"{"token":"own","radio_token":"radio","pairings":[{"name":"phone","secret":"00"}]}"#, 30);
@@ -161,6 +165,40 @@ mod tests {
         write(&file, start, 0);
         assert!(settings.current().pairings.is_empty() && settings.unread().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_change_is_written_to_the_file_the_settings_came_from_and_never_another() {
+        let home = std::env::temp_dir().join(format!("airband-change-home-{}", config::random_hex(4)));
+        config::tests_home::set(home.clone());
+        let dir = std::env::temp_dir().join(format!("airband-change-{}", config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::vault::tests_folder::set(dir.clone());
+        let file = dir.join("config.json");
+        write(&file, r#"{"token":"own","radio_token":"radio","pairings":[]}"#, 60);
+        let settings = reading(config::read_from(&file).unwrap().unwrap(), &file);
+        settings.change(|c| c.name = "Changed".into()).unwrap();
+        assert_eq!(config::read_from(&file).unwrap().unwrap().name, "Changed");
+        assert!(!config::file().exists(), "the settings of the home were not written");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A pairing written by `airband pair` between the tower reading its settings and keeping them is read,
+    /// never taken as the version the tower already has.
+    #[test]
+    fn a_pairing_written_while_the_tower_starts_is_served() {
+        let home = std::env::temp_dir().join(format!("airband-start-home-{}", config::random_hex(4)));
+        config::tests_home::set(home.clone());
+        crate::vault::tests_folder::set(home.clone());
+        std::fs::create_dir_all(config::dir()).unwrap();
+        write(&config::file(), r#"{"token":"own","radio_token":"radio","pairings":[]}"#, 60);
+        let read_at_start = config::read_from(&config::file()).unwrap().unwrap();
+        // `airband pair`, from another process, before the tower has kept what it read
+        write(&config::file(), r#"{"token":"own","radio_token":"radio","pairings":[{"name":"test","secret":"00"}]}"#, 0);
+        let settings = Settings::new(read_at_start);
+        assert_eq!(settings.current().pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["test"]);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

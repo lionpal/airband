@@ -37,7 +37,7 @@ pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
 /// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
 /// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
 pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(model: &dyn Model, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
-    let traced = std::env::var_os("AIRBAND_TRACE").is_some().then(|| prompt.clone());
+    let traced = crate::adapters::stand_in("AIRBAND_TRACE").is_some().then(|| prompt.clone());
     let answer = model.ask(prompt, shape).await;
     if let Some(prompt) = traced {
         log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
@@ -241,8 +241,10 @@ fn judged(item: &Item, o: Answer) -> Judged {
     // a harness that knows its agent is blocked outranks the judge
     let kind = item.kind.unwrap_or(judged);
     let own_session = o.own_session && kind == Kind::NeedsYou;
-    let options = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
-    let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
+    // each kept answer with where the model had it, so the one it recommended is the one marked, whatever was dropped before it
+    let kept: Vec<(usize, String)> = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).enumerate().filter(|(_, c)| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
+    let recommended = o.recommended.and_then(|r| kept.iter().position(|(at, _)| *at == r as usize)).and_then(|i| u32::try_from(i).ok());
+    let options = kept.into_iter().map(|(_, c)| c).collect();
     // only for a message with more in it than its line: a name of a few words, and nothing for chatter
     // cut down by the model: its own verdict, never read from the words
     let cut = !o.as_written;
@@ -362,7 +364,7 @@ pub(super) async fn detail_by(app: &Arc<App>, model: &dyn Model, id: &str) -> Op
             let mut inner = app.change();
             if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
                 e.detail = Some(d.clone());
-                inner.unsaved.borrow_mut().insert(id.to_string());
+                inner.touch(id);
             }
             Some(d)
         }
@@ -414,6 +416,23 @@ mod detail_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn the_answer_the_model_recommended_stays_marked_when_an_answer_before_it_is_dropped() {
+        let item = Item { id: "e".into(), notice: false, full: "Which?".into(), kind: Some(Kind::NeedsYou), say: None, asked: None };
+        let answer = Answer { kind: Kind::NeedsYou, say: "Which one?".into(), options: vec!["".into(), "Ship it".into(), "Wait".into()], recommended: Some(2), read: None, background: false, own_session: false, as_written: false };
+        let j = judged(&item, answer);
+        assert_eq!(j.options, vec!["Ship it".to_string(), "Wait".to_string()]);
+        assert_eq!(j.recommended, Some(1), "\"Wait\" is the one recommended");
+        let dropped = Answer { kind: Kind::NeedsYou, say: "Which one?".into(), options: vec!["a very long answer that is far too long".into(), "Wait".into()], recommended: Some(0), read: None, background: false, own_session: false, as_written: false };
+        let dropped = judged(&item, dropped);
+        assert_eq!(dropped.recommended, None, "the one recommended was dropped: nothing is marked");
+        // whether there is more to read is the model's verdict: cut unless it said the words stand as written
+        assert!(dropped.cut);
+        let whole = Answer { kind: Kind::NeedsYou, say: "Which?".into(), options: Vec::new(), recommended: None, read: None, background: false, own_session: false, as_written: true };
+        assert!(!judged(&item, whole).cut);
+    }
     #[test]
     fn why_a_model_did_not_answer_is_told_from_the_status_and_never_in_the_services_words() {
         assert_eq!((Trouble::of_status(401, None), Trouble::of_status(403, None)), (Trouble::WrongKey, Trouble::WrongKey));
@@ -429,7 +448,6 @@ mod tests {
         assert!(!serde_json::to_string(&failed.0).unwrap().contains("sk-"));
     }
 
-    use super::*;
 
     #[test]
     fn every_reader_in_the_catalogue_is_one_this_tower_has() {

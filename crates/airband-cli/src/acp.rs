@@ -79,7 +79,7 @@ fn no_such(noun: &str, what: &str, said: &str, has: Option<&Setting>) -> String 
 pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), String> {
     let mut opening = Opening { held, early: VecDeque::new() };
     let (session, made) = opening.open(session, mode)?;
-    let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+    let me = airband_core::agent::Agent { cwd: Some(held.cwd.clone()), deliver: Some(Deliver::Held), ..crate::adapters::agent_with(held.id.clone(), held.harness.clone()) };
     // What it can be set to, as it opens. Then what he asked for.
     let offered = offers(&made["configOptions"]);
     let settings = opening.set_asked(&session, made["configOptions"].clone(), &asked)?;
@@ -212,6 +212,11 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
                 }
             }
             Msg::Tell(Tell::End) => {
+                // ended in the middle of a turn: what it had said of it so far is what it said, and with
+                // nothing said it stopped; neither is lost
+                if running.is_some() {
+                    post(me, cut_short(&mut said));
+                }
                 held.close_input();
                 break;
             }
@@ -253,6 +258,14 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
     // it ended with words of his still waiting: they never reached it, and he is told, not left thinking they did
     if !waiting.is_empty() {
         post(me, Event::Stopped { why: Some(never_reached(waiting.len())) });
+    }
+}
+
+/// A turn ended before the agent said it was done: its words so far, or a stop.
+fn cut_short(said: &mut String) -> Event {
+    match std::mem::take(said).trim() {
+        "" => Event::Stopped { why: None },
+        text => Event::Said { text: text.to_string(), kind: None, turn: None },
     }
 }
 
@@ -325,6 +338,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_turn_ended_part_way_keeps_its_words_or_says_it_stopped() {
+        let mut said = " Half the refunds are sent ".to_string();
+        assert_eq!(cut_short(&mut said), Event::Said { text: "Half the refunds are sent".into(), kind: None, turn: None });
+        assert!(said.is_empty());
+        assert_eq!(cut_short(&mut said), Event::Stopped { why: None });
+    }
+
+    #[test]
     fn his_answer_picks_one_of_the_agents_own_choices_and_only_for_this_once() {
         let params = json!({ "toolCall": { "title": "Run echo hi", "rawInput": { "command": "echo hi" } }, "options": [
             { "optionId": "always", "kind": "allow_always" }, { "optionId": "yes", "kind": "allow_once" }, { "optionId": "no", "kind": "reject_once" }] });
@@ -332,7 +353,7 @@ mod tests {
         assert_eq!(option(&params, false).as_deref(), Some("no"));
         // an agent that offers no "this once" is not allowed for always in its place
         assert_eq!(option(&json!({ "options": [{ "optionId": "always", "kind": "allow_always" }] }), true), None);
-        let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+        let me = airband_core::agent::Agent { deliver: Some(Deliver::Held), ..crate::adapters::agent_with("a", "codex") };
         let ask = leave(&params, me.clone()).unwrap();
         assert_eq!(ask.what, "run echo hi");
         let command = json!({ "toolCall": { "title": "echo hi", "kind": "execute", "rawInput": { "command": ["bash", "-lc", "echo hi"] } } });
@@ -362,7 +383,7 @@ mod tests {
 
     #[test]
     fn a_request_with_neither_a_command_nor_a_title_is_not_put_to_him_under_made_up_words() {
-        let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+        let me = airband_core::agent::Agent { deliver: Some(Deliver::Held), ..crate::adapters::agent_with("a", "codex") };
         assert!(leave(&json!({ "toolCall": { "rawInput": {} } }), me).is_none());
     }
 }

@@ -78,3 +78,14 @@ pub fn frames_programs() -> Vec<Frames> {
 pub fn terminal(id: &str) -> Option<Terminal> {
     current().terminals.iter().find(|t| t.id == id).cloned()
 }
+
+#[cfg(test)]
+mod frames_tests {
+    use super::*;
+
+    #[test]
+    fn a_path_holding_a_placeholder_is_put_in_as_it_is() {
+        let f = Frames { id: "f".into(), name: "f".into(), program: "p".into(), args: vec!["-i".into(), "{video}".into(), "-frames".into(), "{frames}".into(), "{out}/%04d.jpg".into(), "{other}".into()] };
+        assert_eq!(f.run("/v/{out}.mov", 3, "/o"), ["-i", "/v/{out}.mov", "-frames", "3", "/o/%04d.jpg", "{other}"]);
+    }
+}

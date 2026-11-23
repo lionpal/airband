@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_request_is_put_whole_or_not_at_all_and_a_long_input_says_it_was_cut() {
-        let agent = || Agent { id: "a".into(), harness: "x".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let agent = || crate::adapters::agent_with("a", "x");
         assert!(leave(agent(), "Bash", "x".repeat(SHOWN_WHOLE + 1), &json!({}), "", None).is_none());
         let long = leave(agent(), "Bash", "run `x`".into(), &json!({ "command": "y".repeat(7000) }), AT_KEYBOARD, None).unwrap();
         assert!(long.detail.starts_with("Bash\n") && long.detail.ends_with("characters. The rest is at the keyboard.)"));

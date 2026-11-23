@@ -182,7 +182,9 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                         format!("{}; forgotten", NotPushed::Gone)
                     }
                     Ok(PushAnswer { why: Some(why), .. }) => format!("not sent: {why}"),
-                    _ => format!("the relay does not send notifications for this channel ({status})"),
+                    // no answer of the push route's shape: what the status says, and nothing more is claimed
+                    Ok(_) => format!("the relay answered {status} with no word on whether it was sent"),
+                    Err(_) => format!("the relay answered {:?} with no push answer: it may not send notifications", crate::tower::RelaySaid::of(status)),
                 }
             }
         };
@@ -213,7 +215,7 @@ mod tests {
     }
     fn tower() -> Inner {
         let mut inner = Inner::default();
-        let _ = inner.check_in(&Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() });
+        let _ = inner.check_in(&airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") });
         inner
     }
 

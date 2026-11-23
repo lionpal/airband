@@ -279,7 +279,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
         }
     }
     for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
-        let gone = Agent { id: id.clone(), harness: h.name().into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let gone = crate::adapters::agent_with(id.clone(), h.name());
         if (tower.event)(AgentEvent::new(gone, airband_core::agent::Event::Signoff)) {
             told.remove(id);
         }
@@ -323,8 +323,8 @@ pub(crate) fn newest(found: impl IntoIterator<Item = Worked>) -> Vec<Worked> {
 }
 
 /// When a file was last written, in milliseconds since 1970.
-pub(crate) fn written(path: &std::path::Path) -> u64 {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
+pub(crate) fn written(path: &std::path::Path) -> Option<u64> {
+    crate::config::stamp_of(path).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64)
 }
 
 /// His words into a session of a tool's own, by that tool's way in. Blocks.
@@ -345,8 +345,43 @@ pub(crate) fn names() -> Vec<&'static str> {
     HARNESSES.iter().map(|h| h.name()).collect()
 }
 
+/// An agent known by its id and its tool alone: no folder, name, process, way in or notes yet. The one
+/// constructor for it; anything more is set on what it returns.
+pub(crate) fn agent_with(id: impl Into<String>, harness: impl Into<String>) -> Agent {
+    Agent { id: id.into(), harness: harness.into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }
+}
+
+/// A variable this process was started with, empty taken as unset. A test never reads the real environment:
+/// it sees only what it put in its own (`test_env::set`), so a test run inside one of his sessions reads nothing
+/// of that session's.
 pub(crate) fn env(k: &str) -> Option<String> {
+    #[cfg(test)]
+    return test_env::get(k);
+    #[cfg(not(test))]
     std::env::var(k).ok().filter(|v| !v.is_empty())
+}
+
+/// A switch only the end-to-end suites set (a stand-in address, a shorter wait, a trace): read only by a build
+/// made with the `stand-ins` feature, and by tests. The airband he installs never reads one.
+pub(crate) fn stand_in(k: &str) -> Option<String> {
+    if cfg!(feature = "stand-ins") || cfg!(test) { env(k) } else { None }
+}
+
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    thread_local!(static VARS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new()));
+    /// Set a variable in this test thread's own environment.
+    pub(crate) fn set(k: &str, v: &str) {
+        VARS.with(|m| m.borrow_mut().insert(k.into(), v.into()));
+    }
+    pub(crate) fn get(k: &str) -> Option<String> {
+        VARS.with(|m| m.borrow().get(k).cloned()).filter(|v| !v.is_empty())
+    }
+    pub(crate) fn clear() {
+        VARS.with(|m| m.borrow_mut().clear());
+    }
 }
 
 /// The folder a coding tool was told to keep its own files in instead of its usual one, by the variable its row
@@ -404,7 +439,7 @@ mod row_facts {
         // the tool ids each adapter is written for, and what each asks of its row: an empty answer would be a
         // made-up value (an empty home is his home folder itself)
         let asked: &[(&str, &[&str])] = &[
-            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
+            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
             ("codex", &["home", "home_env", "program", "control_socket", "hooks_file", "sessions"]),
             ("opencode", &["home", "home_env", "service", "user", "state"]),
         ];
@@ -413,6 +448,8 @@ mod row_facts {
                 assert!(!super::row_says(tool, fact).is_empty(), "the {tool} row says nothing for {fact}");
             }
         }
+        // a sign-in is started by the arguments the row lists, none written in the code
+        assert_eq!(super::claude_accounts::sign_in_args(), ["auth", "login"]);
         // Codex is handed words by the command its row gives, his words one whole word of it
         let run = super::tool_row("codex").unwrap().command("deliver", &[("program", "codex"), ("session", "t1"), ("words", "--yes {session}")]);
         assert_eq!(run.first().map(String::as_str), Some("codex"));
@@ -433,7 +470,7 @@ mod finding {
         }
         fn open(&self) -> Option<Vec<Open>> {
             let open = self.0.lock().unwrap().clone()?;
-            Some(open.into_iter().map(|id| Open { agent: Agent { id: id.into(), harness: "lists".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() }, idle: true }).collect())
+            Some(open.into_iter().map(|id| Open { agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(id, "lists") }, idle: true }).collect())
         }
     }
 

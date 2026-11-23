@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The settings. Their `Debug` shows what is plain and leaves every token, key and pairing secret out.
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Config {
     /// Why these settings came without their keys, when they did: the keychain could not be read where they
     /// were read. Never in the file. What needs a key says so and stops, and these settings are never saved.
@@ -105,7 +106,7 @@ fn his_own<S: serde::Serializer>(all: &BTreeMap<String, Launcher>, to: S) -> Res
     to.collect_map(all.iter().filter(|(name, _)| !built_in().any(|b| b.name == **name)).map(|(name, l)| (name, Launcher { name: String::new(), ..l.clone() })))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StoredKey {
     /// The provider it is for, by the name its settings use ("gemini", "azure").
     pub(crate) provider: String,
@@ -175,11 +176,27 @@ fn fill_keys(doc: &mut serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct PairedRadio {
     pub(crate) name: String,
     /// 32 random bytes as hex, shared with that radio and nobody else, the relay included.
     pub(crate) secret: String,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config").field("port", &self.port).field("name", &self.name).field("station", &self.station).field("relay", &self.relay).field("pairings", &self.pairings).finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for StoredKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredKey").field("provider", &self.provider).finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for PairedRadio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairedRadio").field("name", &self.name).finish_non_exhaustive()
+    }
 }
 
 /// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
@@ -227,18 +244,54 @@ fn new_token() -> String {
     random_hex(24)
 }
 
+/// His home folder. A test never gets his real one: it gets a folder of its own under the system's temporary
+/// one, or the one it put in place (`tests_home::set`).
 pub(crate) fn home() -> PathBuf {
+    #[cfg(test)]
+    return tests_home::get();
+    #[cfg(not(test))]
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).expect("no home directory (HOME or USERPROFILE)")
 }
 pub(crate) fn dir() -> PathBuf {
     home().join(".airband")
 }
 
+#[cfg(test)]
+pub(crate) mod tests_home {
+    use std::path::PathBuf;
+    thread_local!(static HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
+    /// Give this test thread a home of its own.
+    pub(crate) fn set(home: PathBuf) {
+        HOME.with(|h| *h.borrow_mut() = Some(home));
+    }
+    pub(crate) fn get() -> PathBuf {
+        HOME.with(|h| h.borrow().clone()).unwrap_or_else(|| std::env::temp_dir().join(format!("airband-test-home-{}", std::process::id())))
+    }
+}
+
 pub(crate) use airband_io::files::write_private;
 
 /// The config as it is on disk now, or None if there is none yet.
-pub(crate) fn read() -> Option<Config> {
-    read_from(&file())
+/// How a hook or a report reaches the tower here: its port and its own token, read from the file alone. The keys
+/// are not opened for this (every hook would otherwise read the keychain to send one event).
+pub(crate) struct Reach {
+    pub(crate) port: u16,
+    pub(crate) token: String,
+}
+
+/// The tower's port and token as the settings file has them. None when there is no file or it holds no token.
+pub(crate) fn reach() -> Result<Option<Reach>, String> {
+    #[derive(Deserialize)]
+    struct Plain {
+        #[serde(default = "default_port")]
+        port: u16,
+        #[serde(default)]
+        token: String,
+    }
+    let path = file();
+    let Some(text) = airband_io::files::read_text(&path).map_err(|e| format!("{} cannot be read: {e}", path.display()))? else { return Ok(None) };
+    let plain: Plain = serde_json::from_str(&text).map_err(|e| format!("{} cannot be read: {e}", path.display()))?;
+    Ok((!plain.token.is_empty()).then_some(Reach { port: plain.port, token: plain.token }))
 }
 
 /// Where the settings are kept.
@@ -246,9 +299,12 @@ pub(crate) fn file() -> PathBuf {
     dir().join("config.json")
 }
 
-/// The settings in this file, or None when it cannot be read.
-pub(crate) fn read_from(path: &Path) -> Option<Config> {
-    parse(&airband_io::files::read_text(path).ok()??, path).ok()
+/// The settings in this file: None when there is none, and why when it cannot be read.
+pub(crate) fn read_from(path: &Path) -> Result<Option<Config>, String> {
+    match airband_io::files::read_text(path).map_err(|e| e.to_string())? {
+        None => Ok(None),
+        Some(text) => parse(&text, path).map(Some),
+    }
 }
 
 /// When this file was last changed, or None when there is none.
@@ -324,7 +380,8 @@ fn render(cfg: &Config, path: &Path) -> Result<String, String> {
 pub(crate) fn hold() -> Result<crate::lock::Held, String> {
     hold_at(&file())
 }
-fn hold_at(path: &Path) -> Result<crate::lock::Held, String> {
+/// Hold the settings file at `path` while it is read, changed and written.
+pub(crate) fn hold_at(path: &Path) -> Result<crate::lock::Held, String> {
     crate::lock::take(&path.with_extension("lock"))
 }
 
@@ -349,10 +406,8 @@ fn change_at<R>(path: &Path, f: impl FnOnce(&mut Config) -> Result<R, String>) -
 }
 
 /// Write the settings, for one that already holds the file.
-pub(crate) fn save_held(cfg: &Config, held: &crate::lock::Held) -> Result<(), String> {
-    save_at(cfg, &file(), held)
-}
-fn save_at(cfg: &Config, path: &Path, _: &crate::lock::Held) -> Result<(), String> {
+/// Write the settings to the file at `path`, which the caller holds.
+pub(crate) fn save_at(cfg: &Config, path: &Path, _: &crate::lock::Held) -> Result<(), String> {
     let text = render(cfg, path)?;
     write_private(path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
@@ -409,6 +464,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_hook_reaches_the_tower_by_port_and_token_alone_and_a_file_it_cannot_read_says_why() {
+        let home = std::env::temp_dir().join(format!("airband-reach-{}", random_hex(4)));
+        tests_home::set(home.clone());
+        assert!(reach().unwrap().is_none(), "no file: nothing to reach");
+        std::fs::create_dir_all(dir()).unwrap();
+        // the keys' places hold marks the vault would have to open; reaching the tower never asks it
+        std::fs::write(file(), serde_json::json!({ "port": 7400, "token": "own", "radio_token": crate::vault::MARK }).to_string()).unwrap();
+        let r = reach().unwrap().unwrap();
+        assert_eq!((r.port, r.token.as_str()), (7400, "own"));
+        std::fs::write(file(), "not json").unwrap();
+        assert!(reach().is_err());
+        assert!(read_from(&file()).is_err(), "why it cannot be read is said, never taken as no file");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn the_settings_debug_shows_no_token_key_or_pairing_secret() {
+        let cfg: Config = serde_json::from_value(serde_json::json!({ "token": "TOKEN-ONE", "radio_token": "TOKEN-TWO", "pairings": [{ "name": "phone", "secret": "SECRET-THREE" }] })).unwrap();
+        let shown = format!("{cfg:?} {:?}", StoredKey { provider: "gemini".into(), secret: "SECRET-FOUR".into() });
+        assert!(shown.contains("phone") && shown.contains("gemini"));
+        for secret in ["TOKEN-ONE", "TOKEN-TWO", "SECRET-THREE", "SECRET-FOUR"] {
+            assert!(!shown.contains(secret), "{secret} is shown");
+        }
+    }
+
+    #[test]
     fn a_change_is_made_to_the_settings_as_the_file_has_them_then() {
         let dir = std::env::temp_dir().join(format!("airband-change-{}", random_hex(6)));
         airband_io::files::make_folder(&dir).unwrap();
@@ -421,7 +502,7 @@ mod tests {
         })
         .unwrap();
         // read by one command, then a pairing made by another before the first one writes
-        let stale = read_from(&path).unwrap();
+        let stale = read_from(&path).unwrap().unwrap();
         change_at(&path, |c| {
             c.pairings.push(PairedRadio { name: "pad".into(), secret: "s2".into() });
             Ok(())
@@ -432,7 +513,7 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        let now = read_from(&path).unwrap();
+        let now = read_from(&path).unwrap().unwrap();
         assert_eq!(now.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["phone", "pad"], "the pairing made in between is kept");
         assert_eq!(now.lan, !stale.lan);
         // a change that refuses writes nothing

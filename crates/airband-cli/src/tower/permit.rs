@@ -70,7 +70,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
             (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all, more)
         }
         None => {
-            log(format!("{}: asks permission to {what}", session.callsign.text()));
+            log(format!("{}: asks permission ({} characters)", session.callsign.text(), what.chars().count()));
             let line = Request { what: Some(what.to_string()), at_keyboard: false }.line().unwrap_or_default();
             let more = !ask.detail.trim().is_empty();
             let detail = if more { ask.detail.clone() } else { line.clone() };
@@ -197,7 +197,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let (agent_id, entry) = (inner.permits[&id].agent_id.clone(), inner.permits[&id].entry.clone());
     inner.close_permit(&id, Ended::Answered(allow, reason.clone()));
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
-    log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
+    log(format!("← radio: {} characters → {} is {} {}", text.chars().count(), session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), std::slice::from_ref(&session), shown));
     inner.touch(&entry);

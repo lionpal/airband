@@ -112,6 +112,12 @@
     "home": ".claude",
     "home_env": "CLAUDE_CONFIG_DIR",
     "account_file": ".claude.json",
+    "account_seed": "{\"hasCompletedOnboarding\":true}",
+    "account_email": "emailAddress",
+    "sign_in": [
+      "auth",
+      "login"
+    ],
     "keychain_service": "Claude Code-credentials",
     "login_key": "claudeAiOauth",
     "pid_env": "CLAUDE_PID",

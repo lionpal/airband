@@ -32,13 +32,30 @@ pub(super) enum Receipt {
 const KEEP_UNDER: &str = "insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value";
 
 impl Store {
-    pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
-        let db = Connection::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    /// The database file, and the log and index the database keeps beside it (`-wal`, `-shm`), readable by him
+    /// alone. Each that is not there yet is made so when it is; the database makes them on its first write.
+    fn private(path: &std::path::Path) -> Result<(), String> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("cannot make {} private: {e}", path.display()))?;
+            for file in [path.to_path_buf(), Store::beside(path, "-wal"), Store::beside(path, "-shm")] {
+                match std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    other => other.map_err(|e| format!("cannot make {} private: {e}", file.display()))?,
+                }
+            }
         }
+        Ok(())
+    }
+    fn beside(path: &std::path::Path, tail: &str) -> std::path::PathBuf {
+        let mut name = path.as_os_str().to_owned();
+        name.push(tail);
+        std::path::PathBuf::from(name)
+    }
+    pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
+        let db = Connection::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        // the database and the two files the database writes beside it, which hold the same lines
+        Store::private(path)?;
         db.execute_batch(
             "pragma journal_mode = wal;
              pragma cache_size = -256;
@@ -64,6 +81,8 @@ impl Store {
                 }
             }
         }
+        // its log and index are there now that it has been written to
+        Store::private(path)?;
         Ok(Store { db: Mutex::new(db) })
     }
 
@@ -333,6 +352,23 @@ pub(super) use airband_core::encode::word;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn the_database_and_the_files_beside_it_are_his_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("airband-private-{}.db", crate::config::random_hex(4)));
+        let s = Store::open(&path).unwrap();
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), ..Entry::default() }]);
+        Store::private(&path).unwrap();
+        for tail in ["", "-wal", "-shm"] {
+            let file = Store::beside(&path, tail);
+            if let Ok(meta) = std::fs::metadata(&file) {
+                assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{}", file.display());
+            }
+        }
+        assert!(Store::beside(&path, "-wal").exists());
+    }
 
     fn store(name: &str) -> (Store, std::path::PathBuf) {
         let path = std::env::temp_dir().join(format!("airband-store-{name}-{}.db", std::process::id()));

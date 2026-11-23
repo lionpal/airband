@@ -352,13 +352,14 @@ fn watch(_tower: super::Tower) {}
 fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
     // sessions/<year>/<month>/<day>/<one file per session>
     let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
-    let mut files: Vec<PathBuf> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).collect();
-    files.sort();
-    let found = files.iter().rev().take(300).filter_map(|file| {
+    // newest first by when each was last written, read as a time, never by how its path sorts as text
+    let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).filter_map(|p| Some((super::written(&p)?, p))).collect();
+    files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    let found = files.iter().take(300).filter_map(|(at, file)| {
         let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
         let line: Value = serde_json::from_str(&first).ok()?;
         let folder = line["payload"]["cwd"].as_str().filter(|c| !c.is_empty() && line["type"] == "session_meta")?.to_string();
-        Some(super::Worked { folder, at: super::written(file) })
+        Some(super::Worked { folder, at: *at })
     });
     super::newest(found)
 }
@@ -467,6 +468,26 @@ mod tests {
         failed["error"] = json!({ "message": "The model could not be reached." });
         assert_eq!(turn_event(&failed), Some(Event::Stopped { why: Some("The model could not be reached.".into()) }));
         assert_eq!(turn_event(&turn("something new", json!([]))), None);
+    }
+
+    #[test]
+    fn the_newest_sessions_are_the_ones_written_last_never_the_ones_whose_paths_sort_last() {
+        let dir = std::env::temp_dir().join(format!("airband-codex-{}", crate::config::random_hex(6)));
+        let meta = |cwd: &str| format!("{}\n", json!({ "type": "session_meta", "payload": { "id": "t", "cwd": cwd } }));
+        let day = dir.join("sessions").join("2026").join("11").join("21");
+        std::fs::create_dir_all(&day).unwrap();
+        for i in 0..300 {
+            std::fs::write(day.join(format!("rollout-{i}.jsonl")), meta("/x/new")).unwrap();
+        }
+        // its path sorts after every other, but it was written long ago
+        let late = dir.join("sessions").join("2026").join("12").join("31");
+        std::fs::create_dir_all(&late).unwrap();
+        std::fs::write(late.join("rollout-z.jsonl"), meta("/x/old")).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(90 * 24 * 3600);
+        std::fs::File::options().write(true).open(late.join("rollout-z.jsonl")).unwrap().set_modified(old).unwrap();
+        let worked: Vec<String> = worked_in(&dir).into_iter().map(|w| w.folder).collect();
+        assert_eq!(worked, ["/x/new"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

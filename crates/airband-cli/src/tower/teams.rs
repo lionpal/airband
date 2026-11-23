@@ -210,6 +210,9 @@ impl Inner {
     /// `named`) is read into teams once; then each agent and each line goes by its team's id, each agent nobody
     /// moved goes back to its own folder's team, and each kept folder is written as it really is on disk.
     pub(super) fn settle_teams(&mut self, old: BTreeMap<String, String>, named: BTreeSet<String>) {
+        // Only state kept in the old format holds teams by name. In the current one every team is an id: one the
+        // teams no longer hold is never read as a name, however it reads.
+        let by_names = !old.is_empty();
         for (name, folder) in old {
             let id = TeamId::new(self.disk.real(&folder));
             let is_named = named.contains(&name);
@@ -242,11 +245,11 @@ impl Inner {
                 },
             }
         }
-        // an agent kept with no team id goes in the team of its name; with none, its folder's; with neither it is
-        // let go, and said
+        // an agent kept with no team id goes in the team of its name (old state only); else its folder's; with
+        // neither it is let go, and said
         let unteamed: Vec<(String, String, Option<String>)> = self.sessions.iter().filter(|s| !self.teams.contains_key(&s.team)).map(|s| (s.agent.id.clone(), s.callsign.project.clone(), s.agent.cwd.clone())).collect();
         for (id, name, cwd) in unteamed {
-            match self.team_called(&name).or_else(|| cwd.and_then(|cwd| self.folder_team(&cwd))) {
+            match by_names.then(|| self.team_called(&name)).flatten().or_else(|| cwd.and_then(|cwd| self.folder_team(&cwd))) {
                 Some(team) => {
                     if let Some(s) = self.session(&id) {
                         s.team = team;
@@ -260,7 +263,7 @@ impl Inner {
         }
         let placed: Vec<(AgentId, Placed)> = self.placed.iter().filter(|(_, p)| !self.teams.contains_key(&p.team)).map(|(a, p)| (a.clone(), p.clone())).collect();
         for (agent, was) in placed {
-            match self.team_called(was.team.as_str()) {
+            match by_names.then(|| self.team_called(was.team.as_str())).flatten() {
                 Some(team) => {
                     self.placed.insert(agent, Placed { team, ..was });
                 }
@@ -269,12 +272,17 @@ impl Inner {
                 }
             }
         }
-        let by_name: BTreeMap<String, TeamId> = self.teams.iter().map(|(id, t)| (t.name.to_string(), id.clone())).collect();
+        let by_name: BTreeMap<String, TeamId> = if by_names { self.teams.iter().map(|(id, t)| (t.name.to_string(), id.clone())).collect() } else { BTreeMap::new() };
+        let mut moved = Vec::new();
         for e in self.log.iter_mut().filter(|e| e.team.as_ref().is_some_and(|t| !self.teams.contains_key(t))) {
             if let Some(id) = e.team.as_ref().and_then(|t| by_name.get(t.as_str())) {
                 e.team = Some(id.clone());
-                self.unsaved.borrow_mut().insert(e.id.clone());
+                moved.push(e.id.clone());
             }
+        }
+        // marked changed the one way, so a radio that has the line is sent it again
+        for id in moved {
+            self.touch(&id);
         }
         let strays: Vec<(String, String)> = self.sessions.iter().filter(|s| s.moved.is_none() && s.agent.name.is_none()).filter_map(|s| s.agent.cwd.clone().map(|cwd| (s.agent.id.clone(), cwd))).collect();
         for (id, cwd) in strays {

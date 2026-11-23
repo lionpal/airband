@@ -166,7 +166,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
         // one line for everything he says: its id (the same on the phone and at the relay), how it came, what
         // became of it and how long that took
         let took = began.elapsed();
-        log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", airband_core::prose::clip(&reply.say, 80)) }, if took > SLOW { ", which is slow" } else { "" }));
+        log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" ({} characters said back)", reply.say.chars().count()) }, if took > SLOW { ", which is slow" } else { "" }));
         // The answer is handed to the saver after the lines that came of it, and written with them in one go,
         // so it is never on record while they are not. The id stays among those being answered until it is
         // written: the same words sent again meanwhile are told they are taken, never answered a second time.

@@ -2,6 +2,9 @@
 //! and written as the same types on both ends.
 use super::*;
 
+/// Where the tower serves this page: the one place the path is written, for the route and for `airband status`.
+pub(crate) const STATUS_PATH: &str = "/v1/status";
+
 /// How the tower stands.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Status {

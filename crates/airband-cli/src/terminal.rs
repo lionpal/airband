@@ -152,9 +152,17 @@ fn roster(radio: &Radio) -> Result<Vec<Named>, String> {
     Ok(radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents.iter().map(|a| Named { id: a.id.clone(), team: a.team.clone(), shown: a.callsign.clone(), parts: a.parts() }).collect())
 }
 
-/// The id of the team called exactly `named`, from the agents in it. Names are distinct on one computer.
+/// The id of the one team whose agents are called by exactly `named`. Two teams whose agents' callsigns begin with
+/// the same word (folders that end alike) are not told apart by which agent is listed first: he is told.
 fn team_named(roster: &[Named], named: &str) -> Result<String, String> {
-    roster.iter().find(|a| a.parts.project == named).map(|a| a.team.clone()).ok_or(format!("No team called {named} has an agent here."))
+    let mut teams: Vec<&str> = roster.iter().filter(|a| a.parts.project == named).map(|a| a.team.as_str()).collect();
+    teams.sort_unstable();
+    teams.dedup();
+    match teams.as_slice() {
+        [] => Err(format!("No team called {named} has an agent here.")),
+        [one] => Ok((*one).to_string()),
+        _ => Err(format!("More than one team has agents called {named}.")),
+    }
 }
 
 /// The id of the one agent called exactly `named`. Two called alike are not told apart by a guess: he is told,
@@ -277,5 +285,9 @@ mod tests {
         // two answering to one name are not told apart by which came first
         let twins = [named("a", "/w/shop", "shop", "one"), named("b", "/v/shop", "shop", "one")];
         assert!(agent_named(&twins, "shop one").is_err());
+        // nor are two teams whose agents are called by the same word
+        assert!(team_named(&twins, "shop").is_err());
+        let one_team = [named("a", "/w/shop", "shop", "one"), named("b", "/w/shop", "shop", "two")];
+        assert_eq!(team_named(&one_team, "shop"), Ok("/w/shop".to_string()));
     }
 }

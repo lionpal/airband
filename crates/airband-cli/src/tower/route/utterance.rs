@@ -71,7 +71,8 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         to.rest = "Keep going.".into();
         shown = None;
     }
-    log(format!("← radio: \"{text}\" → {} {:?} \"{}\"", if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, to.rest));
+    // his words by their length only: what he says is never written in the log
+    log(format!("← radio: {} characters → {} {:?} ({} characters passed on)", text.chars().count(), if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, to.rest.chars().count()));
     if let Some(control) = control {
         return controlled(app, radio, control, &to).await;
     }
@@ -136,7 +137,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
-                log(format!("← radio: \"{text}\" → launch in {}", place.name));
+                log(format!("← radio: {} characters → launch in {}", text.chars().count(), place.name));
                 // the idea is let go only once an agent has started with it: a launch that refuses leaves it
                 // waiting, and he can answer again
                 return Some(match launch(app, &place, &idea).await {
@@ -241,6 +242,15 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     Ok(Addressed { rest, files, named, targets, roster, names, pending })
 }
 
+/// The one agent a control that reads one agent's line is for: none, or several, is said back to him.
+fn one_named(targets: &[Session]) -> Result<&Session, &'static str> {
+    match targets {
+        [] => Err("Nothing to repeat yet."),
+        [one] => Ok(one),
+        _ => Err("Say which one: more than one agent is named."),
+    }
+}
+
 /// A control button: the status, skip, hold, go on, or say more or again of whoever he last heard. A poke has
 /// become an ordinary message before this.
 async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addressed) -> Reply {
@@ -258,7 +268,12 @@ async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addresse
             say(if pending > 0 { format!("Go ahead. {pending} waiting.") } else { "Go ahead. Nothing waiting.".into() })
         }
         c @ (Control::More | Control::Repeat) => {
-            let last = to.targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.read().log.iter().find(|e| e.id == id).map(|e| (s, id, e.line())));
+            // one agent's last line: with several named, which one is not picked by the order they were named in
+            let one = match one_named(&to.targets) {
+                Ok(one) => one,
+                Err(why) => return say(why.into()),
+            };
+            let last = Some(one).and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.read().log.iter().find(|e| e.id == id).map(|e| (s, id, e.line())));
             let Some((s, last, said)) = last else { return say("Nothing to repeat yet.".into()) };
             let body = match c {
                 Control::Repeat => said,
@@ -379,12 +394,20 @@ fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, sent: Vec<Se
 mod tests {
     use super::*;
 
+    #[test]
+    fn say_more_with_several_agents_named_asks_which_and_never_takes_the_first() {
+        let one = |id: &str| Session::new(airband_core::agent::Agent { id: id.into(), ..crate::adapters::agent_with("", "t") }, airband_core::routing::Callsign { project: "shop".into(), number: id.into(), named: false }, Default::default());
+        assert!(one_named(&[]).is_err());
+        assert_eq!(one_named(&[one("a")]).map(|s| s.agent.id.clone()), Ok("a".into()));
+        assert!(one_named(&[one("a"), one("b")]).is_err());
+    }
+
     #[tokio::test]
     async fn repeat_of_a_line_with_no_short_version_says_its_words() {
         let app = crate::tower::http::tests::app("repeat");
         let s = {
             let mut inner = app.change();
-            let a = Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
             let _ = inner.check_in(&a);
             inner.log.push(Entry { id: "l1".into(), agent: Some("a".into()), full: "The deploy is done.".into(), ..Entry::default() });
             let s = inner.session("a").unwrap();
@@ -401,7 +424,7 @@ mod tests {
         let app = crate::tower::http::tests::app("reaped");
         {
             let mut inner = app.change();
-            let a = Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: Some(i32::MAX as u32), deliver: None, meta: Default::default() };
+            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), pid: Some(i32::MAX as u32), ..crate::adapters::agent_with("a", "test") };
             inner.check_in(&a).unwrap();
         }
         app.flush();
@@ -410,6 +433,22 @@ mod tests {
         assert!(app.read().sessions.is_empty());
         app.flush();
         assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_words_are_never_written_in_the_log() {
+        let app = crate::tower::http::tests::app("words-unlogged");
+        {
+            let mut inner = app.change();
+            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
+            inner.check_in(&a).unwrap();
+        }
+        crate::tower::logged::take();
+        let words = "please ship the secret plan";
+        let _ = on_utterance(&app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), ..Default::default() }).await;
+        let lines = crate::tower::logged::take();
+        assert!(!lines.is_empty(), "the utterance is logged, by its length");
+        assert!(lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

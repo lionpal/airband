@@ -1,7 +1,6 @@
 //! Pictures an agent looked at or made for him. The tower keeps a small copy of each (a JPEG, 1600 pixels at
 //! most on its long side) in `~/.airband/pictures`, named by what the original was, so the same file seen twice
 //! is kept once. A copy goes to the phone only when it asks, in parts.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 use airband_core::radio::{PICTURE_PART, Picture, PicturePart, wire::Refusal};
 use sha2::{Digest, Sha256};
@@ -37,7 +36,7 @@ fn file(id: &str) -> Option<PathBuf> {
 /// decodes and shrinks the picture): not for a thread that others wait on.
 pub(super) fn keep(path: &Path) -> Option<Picture> {
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
-    let modified = crate::adapters::written(path);
+    let modified = crate::adapters::written(path)?;
     let digest = Sha256::digest(format!("{}\n{}\n{modified}", path.display(), meta.len()));
     keep_as(airband_core::encode::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
 }
@@ -48,7 +47,7 @@ pub(super) fn pasted(told: &[crate::adapters::Told]) -> Vec<Vec<airband_core::ra
     told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| keep_bytes(bytes)).collect() } else { Vec::new() }).collect()
 }
 
-pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
+fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
     if bytes.len() as u64 > TOO_LARGE {
         return None;
     }
@@ -111,21 +110,14 @@ pub(super) fn for_message(seen: Vec<Seen>, named: Vec<Picture>) -> Vec<Picture> 
 /// One part of a kept copy, from byte `from`. A copy that is not there (never kept, or pruned) is gone; one that
 /// is there and cannot be read is trouble on this computer, said as such: the phone may ask again.
 pub(super) fn part(id: &str, from: usize) -> Result<PicturePart, Refusal> {
-    use std::io::{Read, Seek, SeekFrom};
     let path = file(id).ok_or(Refusal::Gone)?;
     let trouble = |e: std::io::Error| Refusal::NotNow { reason: format!("airband could not read that picture ({e}).") };
-    let mut f = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Refusal::Gone),
-        Err(e) => return Err(trouble(e)),
-    };
-    let len = f.metadata().map_err(trouble)?.len() as usize;
+    let gone_or = |e: std::io::Error| if e.kind() == std::io::ErrorKind::NotFound { Refusal::Gone } else { trouble(e) };
+    let len = std::fs::metadata(&path).map_err(gone_or)?.len() as usize;
     if from > len {
         return Err(Refusal::BadAsk { reason: format!("the picture is {len} bytes long, and the part asked for starts at {from}") });
     }
-    f.seek(SeekFrom::Start(from as u64)).map_err(trouble)?;
-    let mut buf = vec![0u8; PICTURE_PART.min(len - from)];
-    f.read_exact(&mut buf).map_err(trouble)?;
+    let buf = airband_io::files::read_part(&path, from as u64, PICTURE_PART.min(len - from) as u64).map_err(gone_or)?;
     let next = from + buf.len();
     Ok(PicturePart { data: airband_core::encode::base64(&buf), next: next as u32, done: next >= len })
 }
