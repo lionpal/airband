@@ -273,6 +273,26 @@ pub fn lock(path: &Path) -> std::io::Result<Lock> {
     Ok(Lock { _file: file })
 }
 
+/// Whether another process holds a lock on the file at `path` right now (`flock`, as [`lock`] takes one), asked
+/// without waiting and without taking one that stays. Nothing when the file is not there.
+#[cfg(unix)]
+pub fn locked(path: &Path) -> std::io::Result<Option<bool>> {
+    use std::os::fd::AsRawFd;
+    let file = match std::fs::File::open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        other => other?,
+    };
+    // SAFETY: the descriptor is the open file's own, and it is closed when the file drops, which lets go of a
+    // lock this took
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        return Ok(Some(false));
+    }
+    match std::io::Error::last_os_error() {
+        e if e.kind() == std::io::ErrorKind::WouldBlock => Ok(Some(true)),
+        e => Err(e),
+    }
+}
+
 /// A folder of its own in the system's temporary folder, for a test.
 #[cfg(test)]
 pub(crate) fn folder() -> PathBuf {
@@ -305,6 +325,22 @@ mod tests {
         }
         make_folder(&dir.join("z")).unwrap();
         assert!(dir.join("z").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_held_elsewhere_is_seen_and_asking_takes_none_that_stays() {
+        let dir = folder();
+        let f = dir.join("presence.lock");
+        assert_eq!(locked(&f).unwrap(), None);
+        let held = lock(&f).unwrap();
+        assert_eq!(locked(&f).unwrap(), Some(true));
+        drop(held);
+        assert_eq!(locked(&f).unwrap(), Some(false));
+        // asking took nothing that stays: it can be taken again at once
+        let again = lock(&f).unwrap();
+        assert_eq!(locked(&f).unwrap(), Some(true));
+        drop(again);
     }
 
     #[test]

@@ -18,7 +18,7 @@
 
 **Say your answer out loud.** It goes to the agent it's for.
 
-**Works with Claude Code, Codex and OpenCode.** Keep using them as you do. airband runs next to them.
+**Works with Claude Code, Codex, OpenCode and Antigravity CLI.** Keep using them as you do. airband runs next to them.
 
 ## What it does
 
@@ -48,7 +48,7 @@ It is one Rust program and uses about 6 MB of memory.
 
 ## Install
 
-You need a Mac or Linux computer with Claude Code, Codex or OpenCode, and an iPhone. With [Homebrew](https://brew.sh), on macOS or Linux:
+You need a Mac or Linux computer with Claude Code, Codex, OpenCode or Antigravity CLI, and an iPhone. With [Homebrew](https://brew.sh), on macOS or Linux:
 
 ```sh
 brew install lionpal/airband/airband && airband start
@@ -117,7 +117,7 @@ airband quick add "Make no mistakes"   # add a one-tap message
 
 ## Other agents
 
-Claude Code, Codex and OpenCode work out of the box. Anything else that can run a command can join with one line:
+Claude Code, Codex, OpenCode and Antigravity CLI work out of the box. Anything else that can run a command can join with one line:
 
 ```sh
 airband report --id "$SESSION" --harness codex --terminal tmux --pane "$TMUX_PANE" said "$LAST_MESSAGE"

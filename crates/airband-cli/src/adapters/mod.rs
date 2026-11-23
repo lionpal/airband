@@ -55,6 +55,16 @@ pub(crate) trait Harness: Sync {
     fn permission(&self, _notification: &Value) -> Option<PermissionAsk> {
         None
     }
+    /// For a tool held through the Agent Client Protocol whose requests for leave say what will be done in a
+    /// way of its own (its own tool names, its own fields): the request as he is asked it. The protocol's own
+    /// reading (`acp.rs`) is used for any other.
+    fn acp_leave(&self, _request: &Value, _agent: &Agent) -> AcpLeave {
+        AcpLeave::Protocol
+    }
+    /// What the tool wants printed by a hook that has nothing to tell it; nothing for a tool that wants nothing.
+    fn quiet(&self) -> Option<&'static str> {
+        None
+    }
     /// His answer to that request, as the harness wants it printed on standard output.
     fn permission_answer(&self, ask: &PermissionAsk, allow: bool, reason: &str) -> String {
         hooks::decision(allow, reason, ask.question.is_some())
@@ -114,6 +124,21 @@ pub(crate) trait Harness: Sync {
     fn worked(&self) -> Vec<Worked> {
         Vec::new()
     }
+}
+
+/// How a request for leave of an agent held through the Agent Client Protocol is put to him.
+pub(crate) enum AcpLeave {
+    /// By the protocol's own reading of it, the same for every tool.
+    Protocol,
+    /// By its tool's own reading: the request, or nothing when it says nothing he could answer (it is then not
+    /// asked, and so not allowed).
+    Own(Option<Box<PermissionAsk>>),
+}
+
+/// A request for leave of a held agent, as its tool reads it.
+#[cfg_attr(not(unix), allow(dead_code, reason = "agents are held on unix only"))]
+pub(crate) fn acp_leave(request: &Value, agent: &Agent) -> AcpLeave {
+    harness(&agent.harness).map(|h| h.acp_leave(request, agent)).unwrap_or(AcpLeave::Protocol)
 }
 
 /// A session its tool says is open: who it is, where, and how his words reach it.
@@ -414,8 +439,15 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     let unknown = || format!("there is an adapter for: {}. Any other harness can use `airband report`.", names().join(", "));
     let name = name.ok_or_else(|| format!("usage: airband hook <harness>; {}", unknown()))?;
     let adapter = harness(name).ok_or_else(|| format!("no adapter for \"{name}\"; {}", unknown()))?;
+    // what the tool wants to read from a hook that has nothing to say to it
+    let quiet = || {
+        if let Some(said) = adapter.quiet() {
+            println!("{said}");
+        }
+    };
     // the tower's own model calls, and an agent whose holder reports for it, must not report to the tower
     if env("AIRBAND_INTERNAL").is_some() {
+        quiet();
         return Ok(());
     }
     let mut input = String::new();
@@ -434,6 +466,7 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
         as_held(&mut event.agent);
         post(&event);
     }
+    quiet();
     Ok(())
 }
 

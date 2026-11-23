@@ -55,7 +55,7 @@ pairing link carries, opens `/v1/radio/` only.
 | `command` | Runs `argv` with the message on standard input and `AIRBAND_AGENT_ID` in the environment. |
 | `keys` | Types the message into a terminal's `pane` and presses Enter, as the terminal's row in `catalog/terminals/` says. Works for anything in a terminal. |
 | `held` | The tower runs this agent and holds its input: his words are written there as his own turn. |
-| `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server). The tower's adapter for the tool knows how. |
+| `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server; Antigravity CLI has none, so only one the tower holds is reached). The tower's adapter for the tool knows how. |
 | none | The agent can be heard but not answered. |
 
 ### Asking permission

@@ -120,12 +120,24 @@ pub(crate) const fn on(event: &'static str, timeout: u32) -> On {
     On { event, timeout, only: None }
 }
 
+/// How a tool's hooks file holds its hooks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Shape {
+    /// `{"hooks": {<event>: [{"matcher"?, "hooks": [<command>…]}…]}}`, everyone's hooks side by side in each
+    /// event's list (Claude Code, Codex).
+    Common,
+    /// `{<name>: {<event>: [<command>…]}}`: each named entry a set of hooks of its own, ours under this name,
+    /// an event's commands listed flat, or in a group with its `matcher` for an event that names tools.
+    Named(&'static str),
+}
+
 /// A tool's hooks file, and what of ours goes in it.
 pub(crate) struct File {
     /// The adapter's name: the hook is `airband hook <name>`.
     pub(crate) name: &'static str,
     pub(crate) path: PathBuf,
     pub(crate) events: &'static [On],
+    pub(crate) shape: Shape,
 }
 
 impl File {
@@ -150,6 +162,14 @@ impl File {
     }
     /// Take our hooks out, leaving everyone else's exactly as they were.
     pub(super) fn strip(&self, file: &mut Value, exe: &Path) {
+        if let Shape::Named(key) = self.shape {
+            if file.get(key).is_some_and(|ours| self.all_ours(ours, exe))
+                && let Some(whole) = file.as_object_mut()
+            {
+                whole.remove(key);
+            }
+            return;
+        }
         let Some(hooks) = file.get_mut("hooks").and_then(Value::as_object_mut) else { return };
         for groups in hooks.values_mut() {
             if let Some(list) = groups.as_array_mut() {
@@ -166,6 +186,20 @@ impl File {
             file.as_object_mut().unwrap().remove("hooks");
         }
     }
+    /// An entry of a named file whose every command is one of ours: an entry someone else gave the same name
+    /// is his, never ours to replace or take out.
+    fn all_ours(&self, entry: &Value, exe: &Path) -> bool {
+        let Some(events) = entry.as_object() else { return false };
+        let commands: Vec<&Value> = events.values().filter_map(Value::as_array).flatten().flat_map(|c| match c["hooks"].as_array() {
+            Some(inner) => inner.iter().collect::<Vec<_>>(),
+            None => vec![c],
+        }).collect();
+        !commands.is_empty() && commands.iter().all(|c| self.is_ours(c, exe))
+    }
+    /// One command of ours, as a hooks file of this tool's holds it.
+    fn ours(&self, exe: &Path, on: &On) -> Value {
+        json!({ "type": "command", "command": self.command(exe), "timeout": on.timeout })
+    }
     /// Put our hooks in, replacing any from an earlier install and leaving everyone else's as they were.
     /// Returns whether the file changed: a tool that asks him to trust its hooks asks again only then.
     pub(crate) fn install(&self, exe: &Path) -> Result<bool, String> {
@@ -174,6 +208,21 @@ impl File {
         let before = file.clone();
         self.strip(file, exe);
         let whole = file.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", self.path.display()))?;
+        if let Shape::Named(key) = self.shape {
+            if whole.contains_key(key) {
+                return Err(format!("{} already has hooks called \"{key}\" that airband did not put there", self.path.display()));
+            }
+            let events: serde_json::Map<String, Value> = self.events.iter().map(|on| {
+                let command = self.ours(exe, on);
+                let listed = match on.only {
+                    Some(only) => json!([{ "matcher": only(), "hooks": [command] }]),
+                    None => json!([command]),
+                };
+                (on.event.to_string(), listed)
+            }).collect();
+            whole.insert(key.to_string(), Value::Object(events));
+            return if *file == before { Ok(false) } else { kept.write().map(|()| true) };
+        }
         let hooks = whole.entry("hooks").or_insert_with(|| json!({})).as_object_mut().ok_or_else(|| format!("\"hooks\" in {} is not an object", self.path.display()))?;
         let command = self.command(exe);
         for on in self.events {
@@ -245,7 +294,7 @@ mod tests {
     }
     const EVENTS: &[On] = &[on("Stop", 5), On { event: "PostToolUse", timeout: 5, only: Some(read) }];
     fn file(dir: &Path) -> File {
-        File { name: "some-tool", path: dir.join("settings.json"), events: EVENTS }
+        File { name: "some-tool", path: dir.join("settings.json"), events: EVENTS, shape: Shape::Common }
     }
 
     #[test]
@@ -285,6 +334,30 @@ mod tests {
         f.uninstall(Path::new("/x/airband")).unwrap();
         let after: Value = serde_json::from_str(&std::fs::read_to_string(&f.path).unwrap()).unwrap();
         assert_eq!(after, json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }] } }));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_named_entry_of_ours_is_put_in_and_taken_out_and_one_of_his_by_that_name_is_never_touched() {
+        let dir = std::env::temp_dir().join(format!("airband-hooks-{}", crate::config::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = File { name: "some-tool", path: dir.join("hooks.json"), events: EVENTS, shape: Shape::Named("airband") };
+        std::fs::write(&f.path, r#"{"lint":{"PostToolUse":[{"matcher":"run_command","hooks":[{"command":"./lint.sh"}]}]}}"#).unwrap();
+        let exe = Path::new("/x/airband");
+        assert!(f.install(exe).unwrap());
+        assert!(!f.install(exe).unwrap());
+        let now: Value = serde_json::from_str(&std::fs::read_to_string(&f.path).unwrap()).unwrap();
+        assert_eq!(now["airband"]["Stop"][0]["command"], "\"/x/airband\" hook some-tool --put-there-by-airband");
+        assert_eq!((now["airband"]["Stop"][0]["timeout"].as_u64(), now["airband"]["PostToolUse"][0]["matcher"].as_str()), (Some(5), Some("Read")));
+        assert!(now["lint"].is_object());
+        f.uninstall(exe).unwrap();
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&f.path).unwrap()).unwrap();
+        assert_eq!(after, json!({ "lint": { "PostToolUse": [{ "matcher": "run_command", "hooks": [{ "command": "./lint.sh" }] }] } }));
+        // his own entry that happens to have our name stays his: installing says so and changes nothing
+        std::fs::write(&f.path, r#"{"airband":{"Stop":[{"command":"say done"}]}}"#).unwrap();
+        assert!(f.install(exe).is_err());
+        f.uninstall(exe).unwrap();
+        assert_eq!(std::fs::read_to_string(&f.path).unwrap(), r#"{"airband":{"Stop":[{"command":"say done"}]}}"#);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

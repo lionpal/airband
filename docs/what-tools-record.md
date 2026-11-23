@@ -2,7 +2,7 @@
 
 airband shows a pull request or a published page as a card only when the tool that made it wrote that down
 itself, as data. It never works out what an address is from how it reads. This is what each tool was found to
-write, from real sessions on 2026-11-21 (Claude Code 2.1.316, Codex CLI 0.171.0, OpenCode 2.3.2). Names in the
+write, from real sessions on 2026-11-21 (Claude Code 2.1.316, Codex CLI 0.171.0, OpenCode 2.3.2; Antigravity CLI 1.5.15 on 2026-11-23). Names in the
 examples are changed; the shapes are as captured.
 
 ## Claude Code
@@ -39,6 +39,17 @@ Nothing for a pull request. A command is a `tool` part whose state has `input`, 
 and `metadata`; the address is only in the output text and in the agent's message. A session has a `share_url`
 of its own, empty until he shares the session; sharing makes a public page, so it was not tried, and airband
 does not read it yet.
+
+## Antigravity CLI
+
+Nothing for a pull request was tried yet. Its transcript (`brain/<conversation>/.system_generated/logs/transcript_full.jsonl`
+under `~/.gemini/antigravity-cli/`) writes a command as a `tool_calls` entry of the model's `PLANNER_RESPONSE`
+step and what the command printed as the text of the `GENERIC` step after it:
+
+    {"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-4-neon-low","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"ls -1\"","toolSummary":"\"List workspace files\""}}]}
+    {"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 0.\n\nmade.txt"}
+
+So an address would be only in that text and in what the agent says: a plain link.
 
 ## Any other tool
 
