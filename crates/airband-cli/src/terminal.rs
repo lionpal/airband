@@ -41,7 +41,7 @@ impl RadioHost for Terminal {
         println!("{text}");
     }
     fn speak(&self, text: String) {
-        println!("🔊 {text}");
+        println!("Said: {text}");
     }
     fn listen(&self) -> Option<String> {
         self.listening.store(true, Ordering::SeqCst);
@@ -60,8 +60,8 @@ impl RadioHost for Terminal {
     }
     fn status(&self, status: RadioStatus) {
         match status {
-            RadioStatus::Offline => println!("· airband is not answering"),
-            RadioStatus::Listening => println!("🎙  (type a reply, or Enter for none)"),
+            RadioStatus::Offline => println!("airband is not answering."),
+            RadioStatus::Listening => println!("Type a reply, or press Enter for none."),
             _ => {}
         }
     }
@@ -197,9 +197,9 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
             println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
         }
         for m in &f.messages {
-            let to = if m.to.is_empty() { String::new() } else { format!(" → {}", m.to.join(", ")) };
-            let mark = if m.needs_you { "‼" } else if m.fyi { "·" } else { " " };
-            println!("{mark} [{}{to}] {}{}", m.from, m.text, if m.long { "  (+more)" } else { "" });
+            let to = if m.to.is_empty() { String::new() } else { format!(" to {}", m.to.join(", ")) };
+            let mark = if m.needs_you { "Needs you. " } else { "" };
+            println!("[{}{to}] {mark}{}{}", m.from, m.text, if m.long { " (more to read)" } else { "" });
             if !m.pictures.is_empty() {
                 println!("    {} picture{}", m.pictures.len(), if m.pictures.len() == 1 { "" } else { "s" });
             }

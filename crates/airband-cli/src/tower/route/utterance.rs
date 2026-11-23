@@ -91,8 +91,8 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
     let message_id = Some(said.id.as_str()).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.read().log.iter().any(|e| e.id == *id)).map(str::to_string).unwrap_or_else(|| config::random_hex(8));
-    let (sent, failed, queued) = send(app, &to, wordless, said.re.as_deref(), &message_id, &said.id).await;
-    kept(app, radio, &to, message_id, sent, failed, queued, shown, shown_files)
+    let reached = send(app, &to, wordless, said.re.as_deref(), &message_id, &said.id).await;
+    kept(app, radio, &to, message_id, reached, shown, shown_files)
 }
 
 /// An answer to a request for permission goes back to the harness that asked, not to the agent as a message. The
@@ -291,11 +291,11 @@ async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addresse
 
 /// His words to each agent they are for: as his own turn to one the tower runs or one reached through its own
 /// tool, and from outside with one line in front for the rest. What reached each, what did not, and which waited.
-async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, message_id: &str, uid: &str) -> (Vec<Session>, Vec<String>, Vec<String>) {
+async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, message_id: &str, uid: &str) -> Reached {
     let files = &to.files;
     let many = if to.targets.len() > 1 { format!(" Sent to {} agents.", to.targets.len()) } else { String::new() };
     let rest = if wordless { WORDLESS } else { to.rest.as_str() };
-    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg().name);
+    let content = format!("From {name}, on his phone.{many}\n\n{rest}{files}", name = app.cfg().name);
     let answering = answering(app, re);
     let (mut sent, mut failed, mut queued) = (Vec::new(), Vec::new(), Vec::new());
     for t in &to.targets {
@@ -340,7 +340,15 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
             }
         }
     }
-    (sent, failed, queued)
+    Reached { sent, failed, queued }
+}
+
+/// What came of sending his words: the agents they reached, the callsigns of those they did not, and the ids
+/// of the ones that took them to wait until they stop (among `sent`).
+struct Reached {
+    sent: Vec<Session>,
+    failed: Vec<String>,
+    queued: Vec<String>,
 }
 
 /// An answer to a question the agent has since spoken past (or he has since said other things to it) would reach
@@ -360,8 +368,7 @@ fn answering(app: &App, re: Option<&str>) -> impl Fn(&str) -> String {
 
 /// What reached its agents is kept in the chat as his, they are no longer waiting on him, and he is told who it
 /// reached.
-#[allow(clippy::too_many_arguments)]
-fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, sent: Vec<Session>, failed: Vec<String>, queued: Vec<String>, shown: Option<String>, shown_files: Vec<airband_core::radio::Picture>) -> Reply {
+fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, Reached { sent, failed, queued }: Reached, shown: Option<String>, shown_files: Vec<airband_core::radio::Picture>) -> Reply {
     let mut inner = app.change();
     for t in &sent {
         let id = t.agent.id.clone();

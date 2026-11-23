@@ -1,6 +1,6 @@
 //! The catalogue on this computer: a newer signed copy is fetched now and then and kept beside the settings,
 //! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`. Reading a
-//! kept copy and fetching a new one are the phone core's (`airband_io::catalog::load_kept`, `refresh`),
+//! kept copy and fetching a new one are `airband_io`'s (`airband_io::catalog::load_kept`, `refresh`),
 //! the same code the app runs.
 use crate::config;
 use airband_core::catalog;

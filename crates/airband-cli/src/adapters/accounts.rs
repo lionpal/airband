@@ -108,12 +108,12 @@ enum ByTower {
     Said(Result<Accounts, String>),
 }
 
-fn by_tower(sent: Result<airband_io::http::Said<Accounts>, ureq::Error>) -> ByTower {
-    use airband_io::http::Said;
+fn by_tower(sent: Result<airband_io::http::Said<Accounts>, airband_io::http::Error>) -> ByTower {
+    use airband_io::http::{Error, Said};
     ByTower::Said(match sent {
-        Err(ureq::Error::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => return ByTower::NotRunning,
-        Err(ureq::Error::ConnectionFailed) => return ByTower::NotRunning,
-        Err(ureq::Error::Timeout(_)) => Err("airband on this computer did not answer in time. It may still be doing it: look again with: airband accounts".into()),
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => return ByTower::NotRunning,
+        Err(Error::ConnectionFailed) => return ByTower::NotRunning,
+        Err(Error::Timeout(_)) => Err("airband on this computer did not answer in time. It may still be doing it: look again with: airband accounts".into()),
         Err(e) => Err(format!("airband on this computer could not be asked: {e}")),
         Ok(Said::Took(now)) => Ok(now),
         Ok(Said::No(no)) => Err(no.reason().map_or_else(|| format!("airband refused ({}).", no.status()), String::from)),
@@ -146,7 +146,7 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
     let show = |a: &Accounts| {
         for acct in &a.accounts {
             let limits: Vec<String> = acct.limits.iter().map(|l| format!("{} {:.0}%", l.name, l.used * 100.0)).collect();
-            println!("{} {:<34} {}", if acct.live { "▶" } else { " " }, acct.label, acct.problem.clone().unwrap_or_else(|| limits.join(", ")));
+            println!("{:<7}{:<34} {}", if acct.live { "in use" } else { "" }, acct.label, acct.problem.clone().unwrap_or_else(|| limits.join(", ")));
         }
         if let Some(note) = &a.note {
             println!("{note}");

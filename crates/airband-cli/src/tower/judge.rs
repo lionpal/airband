@@ -193,7 +193,7 @@ fn reading(cfg: &Config, item: &Item) -> String {
          then offered the whole message to read under that name. A line or two that says everything needs \
          nothing to read: null.\n\n\
          And \"own_session\": true only when the agent says it will not take the answer as a message passed on \
-         to it (relayed by another session, or sent through Airband) and that he must give it himself in the \
+         to it (relayed by another session, or sent from his phone) and that he must give it himself in the \
          agent\'s own session or terminal. Then give no choices, and say in \"say\" what it is waiting to be \
          told, without telling him to reply \"here\". Otherwise false.\n\n\
          And \"as_written\": true only when the whole message is already one or two short plain sentences that \

@@ -123,8 +123,10 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
         (None, Some(e)) => format!(" at {e} effort"),
         (None, None) => String::new(),
     };
+    // the chat line the task is written as, named before the agent is told it, so its taking it in marks that line
+    let line = config::random_hex(8);
     if launcher.held.is_some() {
-        return match held::start(app, &named, &cwd, model_id, effort_id, task).await {
+        return match held::start(app, &named, &cwd, model_id, effort_id, task, &line).await {
             Ok(_) if task.is_empty() => {
                 log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
                 Ok(say(format!("A new agent is ready in {project}{with}.")))
@@ -132,7 +134,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
             Ok(id) => {
                 // the task is his words: the log has its length only
                 log(format!("started {named}{with} in {project}, held by the tower, with a task of {} characters", task.chars().count()));
-                Ok(say(launched(app, place, &with, task, Some(id))))
+                Ok(say(launched(app, place, &with, task, Some(id), line)))
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
@@ -152,7 +154,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}), with a task of {} characters", task.chars().count()));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
-            Ok(say(launched(app, place, &with, task, None)))
+            Ok(say(launched(app, place, &with, task, None, line)))
         }
         Ok(Ok(out)) => {
             // what it wrote can hold its command line, and so his task: neither the log nor he is given it
@@ -176,11 +178,11 @@ pub(super) fn launch_label(project: &str) -> String {
 /// of the folder it was started in (made now, when the folder had none), and he is told it is on its way.
 /// `agent` is the new agent's id, when the tower runs it and so knows it: the task is then its first
 /// instruction.
-fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<String>) -> String {
+fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<String>, line: String) -> String {
     let mut inner = app.change();
     let project = &place.name;
     match inner.folder_team(&place.folder) {
-        Some(team) => inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team: Some(team), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
+        Some(team) => inner.record(Entry { id: line, from: HIM.into(), his: true, team: Some(team), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
         None => log(format!("the task for the new agent in {project} is not written in the chat: its folder has no name to give a team")),
     }
     format!("Launching in {project}{with}.")
@@ -217,9 +219,11 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("airband-launched-{}", config::random_hex(4))).join("shop");
         std::fs::create_dir_all(&folder).unwrap();
         let folder = folder.display().to_string();
-        launched(&app, &Place { name: "shop".into(), folder: folder.clone() }, "", "fix the cart", None);
+        launched(&app, &Place { name: "shop".into(), folder: folder.clone() }, "", "fix the cart", None, "t1".into());
         let inner = app.read();
         let line = inner.log.last().unwrap();
+        // under the id the agent was told it with, so its taking it in marks this line
+        assert_eq!(line.id, "t1");
         assert_eq!(line.team, Some(TeamId::new(edges::folders::Folders::real(&edges::folders::Disk, &folder))));
         assert_eq!(line.team.as_ref().and_then(|t| inner.team_name(t)), Some("shop"));
     }

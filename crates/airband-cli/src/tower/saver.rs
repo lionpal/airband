@@ -9,8 +9,8 @@ const RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 
 enum Job {
     Write(Batch),
-    /// Everything handed over before this is written; then the sender is told.
-    Flush(mpsc::SyncSender<()>),
+    /// Everything handed over before this is written, as far as it can be; then the sender is told whether it all was.
+    Flush(mpsc::SyncSender<bool>),
 }
 
 pub(crate) struct Saver {
@@ -82,7 +82,7 @@ impl Saver {
                             if let Some(batch) = unwritten.take() {
                                 attempt(batch, &mut unwritten);
                             }
-                            done.send(()).ok();
+                            done.send(unwritten.is_none()).ok();
                         }
                         None => {
                             if let Some(batch) = unwritten.take() {
@@ -112,12 +112,11 @@ impl Saver {
         Flusher { jobs: Mutex::new(self.jobs.clone()) }
     }
 
-    /// Wait until everything handed over so far is written: before the tower stops, and in tests.
-    pub(super) fn flush(&self) {
+    /// Wait until everything handed over so far is written, or tried once more: before the tower stops, before
+    /// an answer is given, and in tests. Whether it is all written; what is not is kept and tried again.
+    pub(super) fn flush(&self) -> bool {
         let (done, wait) = mpsc::sync_channel(1);
-        if self.jobs.send(Job::Flush(done)).is_ok() {
-            wait.recv().ok();
-        }
+        self.jobs.send(Job::Flush(done)).is_ok() && wait.recv().unwrap_or(false)
     }
 }
 
@@ -189,7 +188,7 @@ mod tests {
         });
         waited.recv_timeout(Duration::from_secs(5)).expect("the state was let go without waiting for the database");
         drop(busy);
-        app.flush();
+        assert!(app.saver.flush());
         assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1, "and written once the database was free");
     }
 

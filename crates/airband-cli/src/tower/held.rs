@@ -295,6 +295,10 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
     match told {
         Ok(()) => {
             for (line, _) in &waiting {
+                // a line said to several waits until the last of them has it
+                if inner.sessions.iter().any(|s| s.queue.iter().any(|(l, _)| l == line)) {
+                    continue;
+                }
                 if let Some(e) = inner.log.iter_mut().find(|e| e.id == *line && e.held == Some(Held::Queued)) {
                     e.held = None;
                 }
@@ -355,17 +359,21 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
 /// He took back something he said that had not been delivered yet.
 pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
     let mut inner = app.change();
-    let mut found = false;
+    let mut held_by: Vec<String> = Vec::new();
     for s in inner.sessions.iter_mut() {
         let before = s.queue.len();
         s.queue.retain(|(id, _)| id != line);
-        found |= s.queue.len() != before;
+        if s.queue.len() != before {
+            held_by.push(s.agent.id.clone());
+        }
     }
-    if !found {
+    if held_by.is_empty() {
         return Err("It has already been delivered.".into());
     }
+    // taken back from the ones still waiting for it; one said to others too stands as said to them
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == line) {
-        e.held = Some(Held::Cancelled);
+        let reached_others = e.to_agents.iter().any(|a| !held_by.contains(a));
+        e.held = if reached_others { None } else { Some(Held::Cancelled) };
     }
     inner.touch(line);
     inner.tell();
@@ -383,7 +391,8 @@ impl Inner {
 /// one that could not be started is an error that says why, and nothing is left on the radio. With no task it
 /// is left waiting for his first word, on the radio at once so he can see it and speak to it.
 /// `model` and `effort` are what he asked for it to be set to, as its tool takes them.
-pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str) -> Result<String, String> {
+/// `line` is the chat line the task is written as, so the agent taking it in marks that line seen.
+pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str, line: &str) -> Result<String, String> {
     let harness = app.cfg().launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
     // nothing is started that no team could hold: it would run with nobody able to speak to it
     if !a_team_can_hold(&app.read(), cwd) {
@@ -408,7 +417,7 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
     }
     if task.is_empty() {
         app.kick.notify_one();
-    } else if let Err(why) = tell(app, &kept.id, task, &[]).await {
+    } else if let Err(why) = tell(app, &kept.id, task, &[line.to_string()]).await {
         // started for this task and it could not be given: it is not left running without it
         end(app, &kept.id).await;
         return Err(why);
@@ -570,6 +579,27 @@ mod tests {
         assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);
     }
     use super::*;
+
+    #[test]
+    fn a_line_taken_back_from_one_agent_still_stands_for_another_it_reached() {
+        let app = crate::tower::http::tests::app("unsend-some");
+        {
+            let mut inner = app.change();
+            for id in ["a", "b"] {
+                inner.check_in(&airband_core::agent::Agent { cwd: Some("/w/shop".into()), ..crate::adapters::agent_with(id, "test") }).unwrap();
+            }
+            inner.session("a").unwrap().queue = vec![("l1".into(), "words".into()), ("l2".into(), "more".into())];
+            inner.log.push(Entry { id: "l1".into(), his: true, to_agents: vec!["a".into(), "b".into()], held: Some(Held::Queued), ..Entry::default() });
+            inner.log.push(Entry { id: "l2".into(), his: true, to_agents: vec!["a".into()], held: Some(Held::Queued), ..Entry::default() });
+        }
+        unsend(&app, "l1").unwrap();
+        unsend(&app, "l2").unwrap();
+        let inner = app.read();
+        let held = |id: &str| inner.log.iter().find(|e| e.id == id).unwrap().held.clone();
+        assert_eq!(held("l1"), None, "b has it: it stands as said to b");
+        assert_eq!(held("l2"), Some(Held::Cancelled));
+        assert!(inner.find("a").unwrap().queue.is_empty());
+    }
 
     #[test]
     fn words_count_as_given_only_when_the_holder_says_it_took_them() {

@@ -439,7 +439,7 @@ mod row_facts {
         // the tool ids each adapter is written for, and what each asks of its row: an empty answer would be a
         // made-up value (an empty home is his home folder itself)
         let asked: &[(&str, &[&str])] = &[
-            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
+            ("claude-code", &["home", "home_env", "pid_env", "entry_env", "inbox_env", "inbox_token_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
             ("codex", &["home", "home_env", "program", "control_socket", "hooks_file", "sessions"]),
             ("opencode", &["home", "home_env", "service", "user", "state"]),
         ];

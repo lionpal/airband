@@ -199,10 +199,8 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
     loop {
         let msg = match early.pop_front() {
             Some(msg) => msg,
-            None => match held.rx.recv() {
-                Ok(msg) => msg,
-                Err(_) => break,
-            },
+            // nothing more can come: as if the program had gone
+            None => held.rx.recv().unwrap_or(Msg::Gone),
         };
         match msg {
             Msg::Tell(Tell::Say(text, receipt)) => waiting.push_back((text, receipt)),
@@ -242,7 +240,13 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
                     _ => {}
                 }
             }
-            Msg::Gone => break,
+            // the program went in the middle of a turn: what it had said of it so far is what it said, as on End
+            Msg::Gone => {
+                if running.is_some() {
+                    post(me, cut_short(&mut said));
+                }
+                break;
+            }
         }
         if running.is_none()
             && let Some((text, receipt)) = waiting.pop_front() {

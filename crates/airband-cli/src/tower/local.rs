@@ -19,6 +19,23 @@ use std::sync::OnceLock;
 static PORT: OnceLock<u16> = OnceLock::new();
 /// The server this run started, and the model it has.
 static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
+/// Held while the program that runs a model is fetched, apart from `RUNNING`: a fetch takes minutes, and what
+/// only asks whether the model is ready is not kept waiting through it.
+static FETCHING: Mutex<()> = Mutex::new(());
+
+/// `fetch`, one at a time. A [`Patience::Long`] caller waits for one already under way; any other is told the
+/// program is still being fetched.
+fn fetched_apart<T>(patience: Patience, fetch: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _one = match patience {
+        Patience::Long => FETCHING.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+        Patience::Moment => match FETCHING.try_lock() {
+            Ok(one) => one,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Err("the program that runs the model is still being fetched".into()),
+        },
+    };
+    fetch()
+}
 
 pub(crate) fn listen_after(tower_port: u16) {
     PORT.set(tower_port.saturating_add(10)).ok();
@@ -138,15 +155,18 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
     let server = server_row(server)?;
     let at = address()?;
     let port = port()?;
-    {
+    let alive = || RUNNING.lock().unwrap().as_mut().is_some_and(|(has, child)| has == model && !ended(child));
+    if !alive() {
+        // fetched before `RUNNING` is held: a caller asking only whether it is ready is answered meanwhile
+        let program = fetched_apart(patience, || fetch(server))?;
         let mut running = RUNNING.lock().unwrap();
+        // started meanwhile by another caller
         let alive = running.as_mut().is_some_and(|(has, child)| has == model && !ended(child));
         if !alive {
             if let Some((_, mut old)) = running.take() {
                 end(&mut old);
             }
             end_the_last_one();
-            let program = fetch(server)?;
             log(format!("local model: starting {model} (the model is fetched the first time)"));
             let out = airband_io::files::for_writing(&dir().join("server.log")).map_err(|e| e.to_string())?;
             // The server is started under a small shell that ends it when this tower is gone, however the tower
@@ -158,8 +178,8 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
                 // what it is started with and in is its row's to say
-                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port.to_string())))
-                .envs(server.env.iter().map(|(name, value)| (name.clone(), value.replace("{models}", &dir().join("models").display().to_string()))))
+                .args(server.args.iter().map(|a| airband_core::template::filled(a, &[("model", model), ("port", &port.to_string())])))
+                .envs(server.env.iter().map(|(name, value)| (name.clone(), airband_core::template::filled(value, &[("models", &dir().join("models").display().to_string())]))))
                 .stdin(Stdio::null())
                 .stdout(out.try_clone().map_err(|e| e.to_string())?)
                 .stderr(out)
@@ -187,5 +207,29 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             return Err("the model on this computer is still getting ready".into());
         }
         std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_caller_asking_only_whether_the_model_is_ready_is_never_kept_waiting_through_a_fetch() {
+        let (started, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let fetching = std::thread::spawn(move || {
+            fetched_apart(Patience::Long, || {
+                started.0.send(()).unwrap();
+                release.1.recv().ok();
+                Ok(())
+            })
+        });
+        started.1.recv().unwrap();
+        // under way: told so at once, never fetched twice
+        let asked = fetched_apart(Patience::Moment, || Ok("fetched again"));
+        assert!(asked.is_err());
+        release.0.send(()).unwrap();
+        fetching.join().unwrap().unwrap();
+        assert_eq!(fetched_apart(Patience::Moment, || Ok("fetched")), Ok("fetched"));
     }
 }

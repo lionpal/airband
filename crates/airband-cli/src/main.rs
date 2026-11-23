@@ -20,7 +20,7 @@
 //!                              the chat in this terminal: every message, cut to a line or two
 //!   airband send "@shop2 ..."    say something; @group and @all work too
 //!   airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]
-//!                              start a new agent in one of his teams (`airband status` lists them)
+//!                              start a new agent in one of his teams that has an agent here (`airband status` lists them)
 //!   airband keys [add <provider> | remove <name>]
 //!                              the keys he gave, one per provider
 //!   airband hook <tool>          run by a coding tool's own hooks, as its row names them

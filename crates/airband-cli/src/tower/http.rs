@@ -130,7 +130,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     }
     let mut req = req;
     // A radio must say which one it is. A caller with the tower's own token (the hooks, `airband status`) is no
-    // radio: it may ask what any radio may ask that is not kept per radio (accounts, the feed), naming none.
+    // radio: it may ask, naming none, what is not kept per radio (accounts); the feed is per radio, and needs one.
     let named = req.headers().get(RADIO_HEADER).is_some();
     if req.uri().path().starts_with(airband_core::radio::PATH) && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {

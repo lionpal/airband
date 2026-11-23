@@ -189,12 +189,13 @@ pub(crate) fn unpair(cfg: Config, name: Option<&str>) -> Result<(), String> {
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
         use crate::tower::RelaySaid;
         match crate::tower::close_channel(relay, &keys) {
-            Ok(RelaySaid::Done | RelaySaid::Nothing | RelaySaid::Unknown) => {}
+            // already closed is closed
+            Ok(RelaySaid::Done | RelaySaid::Nothing | RelaySaid::Unknown | RelaySaid::Closed) => {}
             Ok(said) => eprintln!("{relay} did not close its channel ({said:?}). The phone is cut off all the same."),
             Err(e) => eprintln!("Could not reach {relay} to close its channel ({e}). The phone is cut off all the same."),
         }
     }
-    println!("\"{name}\" is cut off. airband stops answering it within ten seconds.");
+    println!("\"{name}\" is cut off. airband stops answering it within a minute.");
     Ok(())
 }
 
