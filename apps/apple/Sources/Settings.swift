@@ -84,6 +84,11 @@ struct SetupView: View {
                     }
                     if let problem = model.problem { Text(problem).foregroundStyle(.red) }
                 }
+                Section {
+                    NavigationLink("Acknowledgments") {
+                        List(acknowledgments(), id: \.self) { Text($0) }.navigationTitle("Acknowledgments").navigationBarTitleDisplayMode(.inline)
+                    }
+                }
             }
             .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
             .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)

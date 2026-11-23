@@ -157,7 +157,7 @@ pub struct PhoneModel {
     /// For a voice model: the name of the voice used until he picks one. One of `voices`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub usual_voice: String,
-    /// Who made it and under what licence, for the screen that offers it.
+    /// Who made it and under what license, for the phone's Acknowledgments list (`airband_radio::acknowledgments`).
     #[serde(default)]
     pub credit: String,
     /// What its engine is told about this model, so that another model for the same engine is a row and no
