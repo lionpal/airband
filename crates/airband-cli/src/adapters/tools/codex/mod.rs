@@ -19,8 +19,8 @@
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 #![expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol")]
-use super::env;
-use super::hooks::{On, on, text};
+use crate::adapters::env;
+use crate::adapters::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -35,45 +35,45 @@ fn agent_of(hook: &Value) -> Option<Agent> {
     }
     Some(Agent {
         // What he says is queued for the session with the tool's own command (`deliver` below). The session takes
-        // it as a turn of his. One the tower holds is reached through its holder (`super::as_held`).
+        // it as a turn of his. One the tower holds is reached through its holder (`crate::adapters::as_held`).
         deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
         meta,
-        ..super::agent_with(id, NAME)
+        ..crate::adapters::agent_with(id, NAME)
     })
 }
 
 pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
-    let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
+    let events = crate::adapters::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
         Some(at @ ("SubagentStart" | "SubagentStop")) => vec![Event::Subagent { done: at == "SubagentStop", what: text(hook, "agent_type").unwrap_or_default() }],
         _ => Vec::new(),
     });
-    super::hooks::from_agent(agent_of(hook), events)
+    crate::adapters::hooks::from_agent(agent_of(hook), events)
 }
 
 /// What it runs on, which every event of its says. What it is doing is not known without reading its record.
-pub(crate) fn glance(agent: &Agent) -> super::Glance {
-    super::Glance { doing: None, model: agent.meta.get("model").and_then(Value::as_str).map(String::from), effort: None }
+pub(crate) fn glance(agent: &Agent) -> crate::adapters::Glance {
+    crate::adapters::Glance { doing: None, model: agent.meta.get("model").and_then(Value::as_str).map(String::from), effort: None }
 }
 
 /// A request for leave, as he is asked it: whole, never cut, because what he reads is what will run.
 pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
-    let (tool, input) = super::hooks::permission_hook(hook)?;
+    let (tool, input) = crate::adapters::hooks::permission_hook(hook)?;
     // the row's words for one of Codex's own tools; any other says what it is doing itself
-    let what = super::hooks::asking(NAME, tool, input, text(input, "description"));
+    let what = crate::adapters::hooks::asking(NAME, tool, input, text(input, "description"));
     // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
-    super::hooks::leave(agent_of(hook)?, tool, what, input, super::hooks::AT_KEYBOARD, None)
+    crate::adapters::hooks::leave(agent_of(hook)?, tool, what, input, crate::adapters::hooks::AT_KEYBOARD, None)
 }
 
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
-    let program = super::row_says(NAME, "program");
-    let argv = super::tool_row(NAME).map(|t| t.command("deliver", &[("program", &program), ("session", session), ("words", words)])).unwrap_or_default();
+    let program = crate::adapters::row_says(NAME, "program");
+    let argv = crate::adapters::tool_row(NAME).map(|t| t.command("deliver", &[("program", &program), ("session", session), ("words", words)])).unwrap_or_default();
     let (program, args) = argv.split_first().ok_or("its row gives no way to hand it words")?;
     // what it writes on failing is its own, and can hold his words: never read to him or logged
-    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
-    if done.success() { Ok(()) } else { Err(didnt_take(&super::called(NAME).0, program)) }
+    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| format!("{} could not be started: {e}", crate::adapters::called(NAME).0))?;
+    if done.success() { Ok(()) } else { Err(didnt_take(&crate::adapters::called(NAME).0, program)) }
 }
 
 /// What he is told when the tool's own command would not take his words: that it failed, and where to look.
@@ -139,18 +139,18 @@ fn threads(server: &mut Server) -> Option<Vec<Value>> {
 
 /// The sessions open now: the threads Codex's server has loaded, each read for where it is.
 #[cfg(unix)]
-fn open() -> Option<Vec<super::Open>> {
+fn open() -> Option<Vec<crate::adapters::Open>> {
     Some(threads(&mut Server::connect()?)?.iter().filter_map(open_of).collect())
 }
 #[cfg(not(unix))]
-fn open() -> Option<Vec<super::Open>> {
+fn open() -> Option<Vec<crate::adapters::Open>> {
     None
 }
 
 /// One of Codex's threads, as it describes it, as a session on the radio. A subagent's thread is its
 /// parent's business, and one that keeps no record is a one-off run: neither is his to talk to. The name
 /// a thread has is one Codex made up from its first words, so it is not taken for a name he gave.
-fn open_of(thread: &Value) -> Option<super::Open> {
+fn open_of(thread: &Value) -> Option<crate::adapters::Open> {
     if !thread["parentThreadId"].is_null() || thread["ephemeral"] == true {
         return None;
     }
@@ -159,8 +159,8 @@ fn open_of(thread: &Value) -> Option<super::Open> {
     if let Some(model) = text(thread, "model") {
         meta.insert("model".into(), Value::String(model));
     }
-    Some(super::Open {
-        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), cwd: text(thread, "cwd"), meta, ..super::agent_with(id, NAME) },
+    Some(crate::adapters::Open {
+        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), cwd: text(thread, "cwd"), meta, ..crate::adapters::agent_with(id, NAME) },
         idle: thread["status"]["type"] == "idle",
     })
 }
@@ -210,7 +210,7 @@ fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
             input.insert(key.into(), said.into());
         }
     }
-    super::hooks::leave(agent, "shell", super::hooks::to_run(NAME, command), &Value::Object(input), super::hooks::AT_KEYBOARD, None)
+    crate::adapters::hooks::leave(agent, "shell", crate::adapters::hooks::to_run(NAME, command), &Value::Object(input), crate::adapters::hooks::AT_KEYBOARD, None)
 }
 
 /// Put a session's pending request for leave to him and give Codex his answer. The server sends a request to
@@ -218,7 +218,7 @@ fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
 /// meanwhile: then the server says it is settled and the question is taken back from the phone. Nothing is
 /// answered unless he answered. Runs for as long as he takes.
 #[cfg(unix)]
-fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Asking>>) {
+fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<crate::adapters::Asking>>) {
     use std::cell::{Cell, RefCell};
     let thread = agent.id.clone();
     let mut key = thread.clone();
@@ -241,7 +241,7 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Askin
         }
         let request = request?;
         key = request_key(&request, &thread);
-        let Some(ask) = leave_of(agent.clone(), &request) else { return Some(super::Answer::Unanswered) };
+        let Some(ask) = leave_of(agent.clone(), &request) else { return Some(crate::adapters::Answer::Unanswered) };
         server.socket.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(200))).ok();
         let (server, settled) = (RefCell::new(server), Cell::new(false));
         // read what the server has said since: it says so when the request was answered somewhere else
@@ -264,8 +264,8 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Askin
             }
             !settled.get()
         };
-        let answer = super::ask_him_while(&ask, Some(&still));
-        if let super::Answer::Said(allow, _) = &answer
+        let answer = crate::adapters::ask_him_while(&ask, Some(&still));
+        if let crate::adapters::Answer::Said(allow, _) = &answer
             && !settled.get()
         {
             // his answer counts once the server has it; one that could not be sent is put to him again
@@ -293,11 +293,11 @@ fn request_key(request: &Value, thread: &str) -> String {
 /// hooks report says the same turns by them; the tower takes each once. Blocks: run it on a thread of its
 /// own.
 #[cfg(unix)]
-fn watch(tower: super::Tower) {
+fn watch(tower: crate::adapters::Tower) {
     // each thread seen: its newest turn as far as the tower has been told, and whether that turn was over.
     // Something the tower did not take is not marked, and is told again on the next look.
     let mut heard: std::collections::HashMap<String, Option<(String, bool)>> = Default::default();
-    let asking: std::sync::Arc<std::sync::Mutex<super::Asking>> = Default::default();
+    let asking: std::sync::Arc<std::sync::Mutex<crate::adapters::Asking>> = Default::default();
     let asking_for_threads = asking.clone();
     // the first look that reached the server: what it finds was said before the tower started
     let mut first = true;
@@ -371,24 +371,24 @@ fn first_seen(first: bool, newest: &Option<(String, bool)>) -> FirstSeen {
     }
 }
 #[cfg(not(unix))]
-fn watch(_tower: super::Tower) {}
+fn watch(_tower: crate::adapters::Tower) {}
 
 /// The folders Codex has had sessions in: each session's file starts with a line that says where it was.
 /// The newest few hundred files are asked.
-fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
+fn worked_in(codex: &std::path::Path) -> Vec<crate::adapters::Worked> {
     // sessions/<year>/<month>/<day>/<one file per session>
     let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
     // newest first by when each was last written, read as a time, never by how its path sorts as text. A
     // session's file is known by its first line (`session_meta`), never by its name's ending
-    let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter_map(|p| Some((super::written(&p)?, p))).collect();
+    let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(crate::adapters::row_says(NAME, "sessions"))])))).into_iter().filter_map(|p| Some((crate::adapters::written(&p)?, p))).collect();
     files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     let found = files.iter().take(300).filter_map(|(at, file)| {
         let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
         let line: Value = serde_json::from_str(&first).ok()?;
         let folder = line["payload"]["cwd"].as_str().filter(|c| !c.is_empty() && line["type"] == "session_meta")?.to_string();
-        Some(super::Worked { folder, at: *at })
+        Some(crate::adapters::Worked { folder, at: *at })
     });
-    super::newest(found)
+    crate::adapters::newest(found)
 }
 
 // ---- setting Codex up to report: its hooks, in its own hooks file ----
@@ -397,15 +397,15 @@ const HOOKS: &[On] = &[on("SessionStart", 5), on("UserPromptSubmit", 5), on("Sto
 
 /// The socket Codex's app server listens on, under its home, as its row has it.
 fn control_socket() -> PathBuf {
-    home().join(super::row_says(NAME, "control_socket"))
+    home().join(crate::adapters::row_says(NAME, "control_socket"))
 }
 fn home() -> PathBuf {
-    super::tool_home(NAME)
+    crate::adapters::tool_home(NAME)
 }
 
 pub(crate) struct Codex;
 
-impl super::Harness for Codex {
+impl crate::adapters::Harness for Codex {
     fn name(&self) -> &'static str {
         NAME
     }
@@ -413,30 +413,30 @@ impl super::Harness for Codex {
         events(hook)
     }
     /// Only when Codex is on this computer.
-    fn hooks(&self) -> Option<super::hooks::File> {
-        home().is_dir().then(|| super::hooks::File { name: NAME, path: home().join(super::row_says(NAME, "hooks_file")), events: HOOKS })
+    fn hooks(&self) -> Option<crate::adapters::hooks::File> {
+        home().is_dir().then(|| crate::adapters::hooks::File { name: NAME, path: home().join(crate::adapters::row_says(NAME, "hooks_file")), events: HOOKS })
     }
     /// Codex runs a hook only once he has trusted it, and asks again whenever the file changes.
-    fn installed(&self, file: &super::hooks::File, changed: bool) -> String {
-        let name = super::called(NAME).0;
+    fn installed(&self, file: &crate::adapters::hooks::File, changed: bool) -> String {
+        let name = crate::adapters::called(NAME).0;
         if changed { format!("{name} reports to airband once you allow it: open a new {name} session and trust airband\u{2019}s hooks when it asks. (Set in {}.)", file.path.display()) } else { format!("{name} reports to airband (set in {}).", file.path.display()) }
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
     }
-    fn glance(&self, agent: &Agent) -> super::Glance {
+    fn glance(&self, agent: &Agent) -> crate::adapters::Glance {
         glance(agent)
     }
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)
     }
-    fn open(&self) -> Option<Vec<super::Open>> {
+    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
         open()
     }
-    fn watch(&self, tower: super::Tower) {
+    fn watch(&self, tower: crate::adapters::Tower) {
         watch(tower)
     }
-    fn worked(&self) -> Vec<super::Worked> {
+    fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked_in(&home())
     }
 }
@@ -556,8 +556,8 @@ mod tests {
     fn a_codex_permission_request_is_put_to_him_whole() {
         let ask = permission(&json!({ "session_id": "t1", "cwd": "/x", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "npm run deploy" } })).unwrap();
         assert_eq!(ask.what, "run `npm run deploy`");
-        assert!(super::super::Harness::permission_answer(&Codex, &ask, true, "").contains("\"behavior\":\"allow\""));
-        assert!(super::super::Harness::permission_answer(&Codex, &ask, false, "not now").contains("not now"));
+        assert!(crate::adapters::Harness::permission_answer(&Codex, &ask, true, "").contains("\"behavior\":\"allow\""));
+        assert!(crate::adapters::Harness::permission_answer(&Codex, &ask, false, "not now").contains("not now"));
         assert!(permission(&json!({ "session_id": "t1", "hook_event_name": "Stop" })).is_none());
     }
 

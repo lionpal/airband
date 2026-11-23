@@ -29,7 +29,7 @@ const ITEM_NOT_FOUND: i32 = 44;
 /// which always uses his login keychain.
 #[cfg(not(test))]
 fn stand_in_keychain() -> Option<String> {
-    super::super::stand_in("AIRBAND_STAND_IN_KEYCHAIN")
+    crate::adapters::stand_in("AIRBAND_STAND_IN_KEYCHAIN")
 }
 
 /// The keychain file every `security` call names. Under test, the one the test made for itself
@@ -37,7 +37,7 @@ fn stand_in_keychain() -> Option<String> {
 /// writes his login keychain.
 fn keychain_file() -> Option<String> {
     #[cfg(test)]
-    return Some(tests_keychain::get().expect("a test keeps logins in a keychain file of its own (claude_accounts::vault::tests_keychain::set)"));
+    return Some(tests_keychain::get().expect("a test keeps logins in a keychain file of its own (accounts::vault::tests_keychain::set)"));
     #[cfg(not(test))]
     stand_in_keychain()
 }

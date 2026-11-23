@@ -35,7 +35,7 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
 /// (`sessions/<process>.json` in its folder: the session, its folder, the socket it takes messages on) and
 /// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
 /// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
-pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<super::super::Open>> {
+pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<crate::adapters::Open>> {
     let dir = claude.join(said("sessions"));
     let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     // no folder of records at all: Claude Code cannot say what is open
@@ -63,7 +63,7 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
             .map(|(_, k)| k);
         let token = key.and_then(|k| k["peerToken"].as_str().filter(|t| !t.is_empty()).map(String::from));
         let transcript = transcript_of(claude, &id);
-        open.push(super::super::Open {
+        open.push(crate::adapters::Open {
             agent: Agent {
                 harness: HARNESS.into(),
                 cwd: field("cwd"),
@@ -93,18 +93,18 @@ pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<S
 /// The folders Claude Code has had sessions in: it keeps a folder of transcripts for each, and a transcript
 /// says on its lines which folder the session was in. The newest transcript of each is asked, and only its
 /// first lines are read.
-pub(super) fn worked_in(claude: &std::path::Path) -> Vec<super::super::Worked> {
+pub(super) fn worked_in(claude: &std::path::Path) -> Vec<crate::adapters::Worked> {
     let Ok(projects) = airband_io::files::entries(&claude.join(said("projects"))) else { return Vec::new() };
     let found = projects.into_iter().filter_map(|project| {
         // newest first by when each was last written, read as a time: one whose time cannot be read is not it.
         // A transcript is known by what its lines say (the folder the session was in), never by its name's ending
-        let mut files: Vec<(u64, std::path::PathBuf)> = airband_io::files::entries(&project).ok()?.into_iter().filter_map(|p| Some((super::super::written(&p)?, p))).collect();
+        let mut files: Vec<(u64, std::path::PathBuf)> = airband_io::files::entries(&project).ok()?.into_iter().filter_map(|p| Some((crate::adapters::written(&p)?, p))).collect();
         files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
         files.into_iter().find_map(|(at, file)| {
             let lines = airband_io::files::first_lines(&file, 40).ok()?;
             let folder = lines.iter().find_map(|line| serde_json::from_str::<Value>(line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
-            Some(super::super::Worked { folder, at })
+            Some(crate::adapters::Worked { folder, at })
         })
     });
-    super::super::newest(found)
+    crate::adapters::newest(found)
 }

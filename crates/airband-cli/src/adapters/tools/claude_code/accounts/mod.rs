@@ -31,16 +31,16 @@ use std::time::Duration;
 
 type Res<T> = Result<T, String>;
 
-use super::claude_code::HARNESS;
+use super::HARNESS;
 const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts add";
 
 /// What Claude Code's row says about it.
 fn row(what: &str) -> String {
-    super::row_says(HARNESS, what)
+    crate::adapters::row_says(HARNESS, what)
 }
 /// The arguments that start a sign-in, as the row lists them; nothing when it lists none, never the tool run bare.
-pub(super) fn sign_in_args() -> Option<Vec<String>> {
-    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>()).filter(|a| !a.is_empty())
+pub(crate) fn sign_in_args() -> Option<Vec<String>> {
+    crate::adapters::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>()).filter(|a| !a.is_empty())
 }
 
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
@@ -49,10 +49,10 @@ pub(super) fn login_key() -> String {
 }
 /// What the tool is called, and who makes it, as its row has them: for what he is told.
 fn tool() -> String {
-    super::called(HARNESS).0
+    crate::adapters::called(HARNESS).0
 }
 fn maker() -> String {
-    super::called(HARNESS).1
+    crate::adapters::called(HARNESS).1
 }
 
 /// Where everything is for one run: the keychain, the service, the files. The environment can point them
@@ -85,7 +85,7 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
     }
 }
 
-use super::stand_in;
+use crate::adapters::stand_in;
 
 impl Here {
     /// This computer's keychain, account service and files. The end-to-end suites put a stand-in in place of the
@@ -93,7 +93,7 @@ impl Here {
     /// airband he installs never does, so nothing set in his shell can send his logins anywhere else.
     fn this_computer() -> Here {
         let place = |key: &str, default: String| stand_in(key).unwrap_or(default);
-        let moved = super::moved_home(HARNESS);
+        let moved = crate::adapters::moved_home(HARNESS);
         let live_service = stand_in("AIRBAND_STAND_IN_LIVE_ITEM").unwrap_or_else(|| login_item(moved.as_deref()));
         Here {
             vault: Box::new(vault::Keychain),
@@ -178,10 +178,10 @@ fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
 fn identity(here: &Here, email: &str, live: bool) -> airband_core::identity::AccountIdentity {
     if live {
         let folder = here.account_file.parent().map(PathBuf::from).unwrap_or_default();
-        let at = super::Looking { tool_home: folder.clone(), user_home: folder, env: &|_| None, keychain: &|_| None };
-        return super::identity_of(HARNESS, &at);
+        let at = crate::adapters::Looking { tool_home: folder.clone(), user_home: folder, env: &|_| None, keychain: &|_| None };
+        return crate::adapters::identity_of(HARNESS, &at);
     }
-    saved::saved(here, email).ok().flatten().map(|d| super::identity_in_copy(HARNESS, &row("account_file"), &d)).unwrap_or_default()
+    saved::saved(here, email).ok().flatten().map(|d| crate::adapters::identity_in_copy(HARNESS, &row("account_file"), &d)).unwrap_or_default()
 }
 
 fn account(email: String, identity: airband_core::identity::AccountIdentity, live: bool, checked: Result<Vec<airband_core::radio::Limit>, Unchecked>) -> Account {

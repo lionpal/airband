@@ -10,12 +10,10 @@
 //!   which of its sessions are open now (`open`) and which folders it has worked in (`worked`).
 //!   Its row in `catalog/tools/` says what it is called and how the tower starts one. `claude_code.rs` is the
 //!   model for hooks, `opencode.rs` for a server.
-pub(crate) mod claude_accounts;
-pub(crate) mod claude_code;
-pub(crate) mod codex;
 pub(crate) mod hooks;
-pub(crate) mod opencode;
 pub(crate) mod report;
+mod tools;
+use tools::*;
 mod accounts;
 mod tower_client;
 pub(crate) use accounts::*;
@@ -496,7 +494,7 @@ mod row_facts {
             }
         }
         // a sign-in is started by the arguments the row lists, none written in the code
-        assert_eq!(super::claude_accounts::sign_in_args().unwrap(), ["auth", "login"]);
+        assert_eq!(super::claude_code::accounts::sign_in_args().unwrap(), ["auth", "login"]);
         // Codex is handed words by the command its row gives, his words one whole word of it
         let run = super::tool_row("codex").unwrap().command("deliver", &[("program", "codex"), ("session", "t1"), ("words", "--yes {session}")]);
         assert_eq!(run.first().map(String::as_str), Some("codex"));
