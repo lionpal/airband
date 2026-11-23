@@ -22,7 +22,10 @@
 //!   DELETE /v1/channels/{c}             tower: close it, when its radio has been cut off
 //!   GET    /v1/channels/{c}/pull        tower: the next sealed request, held up to 25 s (204 when none); one
 //!                                       kept while it was away carries x-airband-kept. Each pull carries
-//!                                       x-airband-pull: 2 and names in x-airband-got what the one before got
+//!                                       x-airband-pull (2 or 3) and names in x-airband-got what the one before
+//!                                       got; a 3 also names its tower (x-airband-tower) and the kept message it
+//!                                       is still answering for (x-airband-answering). 426 or 409 with a
+//!                                       PullRefused when it is not taken
 //!   POST   /v1/channels/{c}/reply/{id}  tower: the sealed answer to request id; with x-airband-kept, that it
 //!                                       took the kept message id, and no body
 //!   POST   /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
@@ -34,7 +37,7 @@
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
-use airband_core::relay::{ADMISSION_HEADER, GOT_HEADER, ID_HEADER, ORDERED_HEADER, PULL_HEADER, PULL_VERSION, RADIO_HASH_HEADER, REQUEST_HEADER, Route};
+use airband_core::relay::{ADMISSION_HEADER, ANSWERING_HEADER, GOT_HEADER, ID_HEADER, ORDERED_HEADER, PULL_HEADER, PullRefused, RADIO_HASH_HEADER, REQUEST_HEADER, Route, TOWER_HEADER};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};

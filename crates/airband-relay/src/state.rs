@@ -32,6 +32,9 @@ pub(super) struct Channel {
     /// Which pull is the tower's latest. A tower pulls one at a time, so an older pull still held open is one
     /// whose connection died: it is let go and takes nothing.
     pub(super) pulls: u64,
+    /// The pull held open now, and the tower it is from ([`airband_core::relay::TOWER_HEADER`]). Another tower's
+    /// pull is refused while it is: two computers with one pairing never take each other's place for ever.
+    pub(super) live: Option<(Option<String>, u64)>,
     /// The hash of the token the paired radio proves itself with, as the tower gave it when it opened the
     /// channel.
     pub(super) radio_hash: String,
@@ -45,7 +48,7 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     pub(super) fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, live: None, radio_hash: saved.radio_hash, pushed: None }
     }
 }
 
@@ -55,28 +58,35 @@ impl Channel {
     pub(super) fn kept_due(&self) -> Option<u64> {
         (self.has_held && self.holding.is_none()).then_some(self.keeps)
     }
-    /// A new pull from the tower, which says it got `got` from the one before. Every older pull is let go
-    /// (the number this one goes by is returned). What was handed over and not got went to a pull whose
-    /// connection died: a radio's request goes back to the front of the line while its radio still waits, and
-    /// a kept message is handed over again.
-    pub(super) fn pulled(&mut self, got: Option<&str>) -> u64 {
+    /// A new pull from the tower, saying what it got from the one before and (in version 3) which kept message
+    /// it is still answering for. Every older pull is let go (the number this one goes by is returned). What was
+    /// handed over and not got went to a pull whose connection died: a radio's request goes back to the front of
+    /// the line while its radio still waits, and a kept message is handed over again. So is a kept message the
+    /// tower got and no longer says it is answering for: its answer did not reach the relay, and the relay keeps
+    /// it still.
+    pub(super) fn pulled(&mut self, said: Said) -> u64 {
         self.pulls += 1;
         for (id, sealed) in std::mem::take(&mut self.handed).into_iter().rev() {
-            if Some(id.as_str()) != got && self.waiting.contains_key(&id) && !self.queue.iter().any(|(queued, _)| queued == &id) {
+            if Some(id.as_str()) != said.got && self.waiting.contains_key(&id) && !self.queue.iter().any(|(queued, _)| queued == &id) {
                 self.queue.push_front((id, sealed));
             }
         }
         match &mut self.holding {
-            Some((id, at)) if Some(id.as_str()) == got => *at = Got::Got,
+            Some((id, at)) if Some(id.as_str()) == said.got => *at = Got::Got,
             Some((_, Got::Handed)) => self.holding = None,
             _ => {}
+        }
+        if let (Some(answering), Some((id, Got::Got))) = (said.answering, &self.holding)
+            && answering != Some(id.as_str())
+        {
+            self.holding = None;
         }
         self.wake.notify_waiters();
         self.pulls
     }
     /// The tower opened its channel again: it started over, so nothing handed to it before is in its hands.
     pub(super) fn reopened(&mut self) {
-        self.pulled(None);
+        self.pulled(Said::default());
         self.holding = None;
     }
     /// The store had nothing kept, as looked at when `seen` keeps had come in. Unmarked only if none came since:
@@ -92,6 +102,16 @@ impl Channel {
         self.has_held = true;
         self.wake.notify_one();
     }
+}
+
+/// What a pull said about the pulls before it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Said<'a> {
+    /// What the pull before it was handed and the tower read ([`airband_core::relay::GOT_HEADER`]).
+    pub(super) got: Option<&'a str>,
+    /// The kept message the tower is still answering for ([`airband_core::relay::ANSWERING_HEADER`]). `None`
+    /// for a pull in version 2, which does not say.
+    pub(super) answering: Option<Option<&'a str>>,
 }
 
 /// Where a kept message handed to the tower stands.

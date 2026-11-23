@@ -337,7 +337,7 @@ with the hash it holds, in constant time.
 
 | Who | Routes | Token |
 |---|---|---|
-| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s; `x-airband-pull`, `x-airband-got`), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token: whose a channel is is what the relay's records say, so two towers opening one name at once are told the same. A closed channel is remembered as closed: opening it again is 410, and only a new pairing (a new channel) opens one. |
+| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s; `x-airband-pull`, `x-airband-got`, `x-airband-tower`, `x-airband-answering`), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token: whose a channel is is what the relay's records say, so two towers opening one name at once are told the same. A closed channel is remembered as closed: opening it again is 410, and only a new pairing (a new channel) opens one. |
 | The radio | `POST …/call`, `POST …/queue` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
 
 The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel; a channel
@@ -378,11 +378,19 @@ the relay: `POST …/queue`, the same sealed request, with the utterance's own i
 keeps at most 200 per channel for a week, and one left twice under the same id is kept once; one left again
 after its week is kept again, as new. When the tower pulls again it is handed them oldest first, one at a time,
 each marked `x-airband-kept`; its reply, with the same header, takes that one off the relay. A tower pulls
-one at a time, and each pull says it speaks this (`x-airband-pull: 2`, or 426) and names the request its
-previous pull got (`x-airband-got`). A request handed over that the next pull does not name never reached the
-tower (its connection gone on the way): it goes back to the front of the line while its radio still waits, and a
-kept one is handed over again. An older pull still held open when a newer one comes is answered 204 and takes
-nothing. Opening the channel again (a tower that started over) hands again whatever it had been handed. The tower takes a kept request only if it is an utterance with an id,
+one at a time. Each pull says the version it speaks (`x-airband-pull: 3`; the relay takes 2 and 3) and names
+the request its previous pull got and read whole (`x-airband-got`, said again until a pull is taken: 200 or
+204). A 3 also names the tower, a random id it makes each time it starts (`x-airband-tower`), and the kept
+request it is still answering for (`x-airband-answering`). A request handed over that the next pull does not
+name never reached the tower (its connection gone on the way, or the body cut off): it goes back to the front of
+the line while its radio still waits, and a kept one is handed over again. A kept one the tower got and a later
+pull no longer names as being answered is handed over again too: its answer did not reach the relay, and the
+relay still keeps it. Nothing else kept is handed over meanwhile. An older pull still held open when a newer one
+comes is answered 204 and takes nothing. Opening the channel again (a tower that started over) hands again
+whatever it had been handed. A pull the relay does not take is answered with a `PullRefused` that says why:
+426 `{"refused":"other_version","older":"tower"|"relay"}` names the side to update, and 409
+`{"refused":"another_tower"}` is a pull from a second tower with the same pairing while the first has a pull
+held open (its settings copied to another computer): it takes nothing, and the first is not let go. The tower takes a kept request only if it is an utterance with an id,
 and tells the radio in its feed when it will not take one (`rejected`). The radio shows a kept message as with
 the relay until the tower's outcome for it arrives.
 While some are still kept, the relay turns back a new utterance (409 to a call that carries
