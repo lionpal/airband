@@ -90,7 +90,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-timings-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
         let at = dir.display().to_string();
-        let m = crate::models::models(&HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 }).next().unwrap();
+        let m = crate::models::models(&HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0, os_build: String::new() }).next().unwrap();
         let t = Timings::open(&at);
         t.note(&m, Did::Downloaded { bytes: 66_000_000, ms: 41_260 });
         t.note(&m, Did::Readied { ms: 192_000 });

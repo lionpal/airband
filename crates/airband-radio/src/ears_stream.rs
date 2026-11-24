@@ -14,12 +14,26 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Connector, Message, WebSocket};
+#[cfg(feature = "stand-ins")]
+use tungstenite::client::IntoClientRequest;
 
 pub(crate) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
 /// A WebSocket to `host`, over the same TLS as every other request this library makes, with the same roots.
 /// Reads and writes give up after six seconds until the caller says otherwise.
 pub(crate) fn dial(host: &str, req: tungstenite::handshake::client::Request) -> Result<Socket, ()> {
+    // a build for the end-to-end suites reaches a stand-in on this machine in the service's place
+    #[cfg(feature = "stand-ins")]
+    if let Some(to) = airband_io::http::stand_in(&req.uri().to_string()) {
+        let mut there = to.as_str().into_client_request().map_err(|_| ())?;
+        *there.headers_mut() = req.headers().clone();
+        let at = there.uri().authority().map(|a| a.to_string()).ok_or(())?;
+        there.headers_mut().insert("host", at.parse().map_err(|_| ())?);
+        let tcp = TcpStream::connect(at.as_str()).map_err(|_| ())?;
+        tcp.set_read_timeout(Some(Duration::from_secs(6))).ok();
+        let (socket, _) = tungstenite::client(there, MaybeTlsStream::Plain(tcp)).map_err(|_| ())?;
+        return Ok(socket);
+    }
     let address = (host, 443).to_socket_addrs().map_err(|_| ())?.next().ok_or(())?;
     let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(6)).map_err(|_| ())?;
     tcp.set_nodelay(true).ok();
@@ -34,8 +48,14 @@ pub(crate) fn dial(host: &str, req: tungstenite::handshake::client::Request) -> 
 
 /// From here on a read waits only a moment, so audio keeps going out while answers are looked for.
 pub(crate) fn read_briefly(socket: &Socket) {
-    if let MaybeTlsStream::Rustls(stream) = socket.get_ref() {
-        stream.get_ref().set_read_timeout(Some(Duration::from_millis(12))).ok();
+    match socket.get_ref() {
+        MaybeTlsStream::Rustls(stream) => {
+            stream.get_ref().set_read_timeout(Some(Duration::from_millis(12))).ok();
+        }
+        MaybeTlsStream::Plain(tcp) => {
+            tcp.set_read_timeout(Some(Duration::from_millis(12))).ok();
+        }
+        _ => {}
     }
 }
 
@@ -48,9 +68,10 @@ pub(crate) struct Wire {
     pub audio: fn(&str, &[u8]) -> Message,
     /// No more sound is coming: say what you have.
     pub end: fn(&str) -> Message,
-    /// What one of its messages says: the unfinished stretch if it changed. Finished stretches go into the
-    /// list; the flag is set when it has ended its turn.
-    pub read: fn(&Message, &mut Vec<String>, &mut bool) -> Option<String>,
+    /// What one of its messages says: the unfinished stretch if it changed, given the one so far (a service
+    /// that sends only what is new adds it to that). Finished stretches go into the list; the flag is set when
+    /// it has ended its turn.
+    pub read: fn(&Message, &mut Vec<String>, &mut bool, &str) -> Option<String>,
     /// A recording's header goes first, before any sound.
     pub header: bool,
     /// When it ends a turn while he still has the microphone open, a new connection is needed to go on.
@@ -58,14 +79,14 @@ pub(crate) struct Wire {
 }
 
 /// Whatever the service has said since last asked, without waiting for more. `kept` gathers finished stretches;
-/// returns the unfinished one, if it changed. Err when the connection has gone.
-fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut bool) -> Result<Option<String>, ()> {
-    let mut hypothesis = None;
+/// returns the unfinished one, if it changed from `so_far`. Err when the connection has gone.
+fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut bool, so_far: &str) -> Result<Option<String>, ()> {
+    let mut hypothesis: Option<String> = None;
     loop {
         match socket.read() {
             Ok(m) if m.is_close() => return Err(()),
             Ok(m) if m.is_text() || m.is_binary() => {
-                if let Some(now) = (wire.read)(&m, kept, ended) {
+                if let Some(now) = (wire.read)(&m, kept, ended, hypothesis.as_deref().unwrap_or(so_far)) {
                     hypothesis = Some(now);
                 }
             }
@@ -93,7 +114,7 @@ pub(crate) fn live(wire: &'static Wire, pass: PassFor, host: &dyn RadioHost, rat
     // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
     // being read here: he does not wait for either before he can talk.
     let opening = connect(wire, &pass, &request);
-    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header_unsent: header.len(), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new(), sent: 0, rate };
+    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header_unsent: header.len(), header, request, opening, socket: None, kept: Vec::new(), unfinished: String::new(), ended: false, shown: String::new(), sent: 0, rate };
     listen(&mut stream, wire, host, rate, manual)
 }
 
@@ -176,6 +197,8 @@ struct Stream<'a> {
     /// Audio from just before he was judged to be speaking, and whatever is said before the connection is up.
     waiting: VecDeque<Vec<u8>>,
     kept: Vec<String>,
+    /// The stretch it has not finished, as it last said.
+    unfinished: String,
     /// The service ended its turn.
     ended: bool,
     shown: String,
@@ -251,7 +274,7 @@ impl Stream<'_> {
         }
         let sent = self.send_waiting();
         let Some(s) = self.socket.as_mut() else { return Ok(()) };
-        match sent.and_then(|()| drain(self.wire, s, &mut self.kept, &mut self.ended)) {
+        match sent.and_then(|()| drain(self.wire, s, &mut self.kept, &mut self.ended, &self.unfinished)) {
             Ok(Some(now)) => self.tell(&now),
             Ok(None) => {}
             // it ended its turn and closed: everything it heard is final, and a new connection takes what he
@@ -270,6 +293,7 @@ impl Stream<'_> {
     /// Tell the host what he has said so far, when it has changed: for showing only. What is sent is only ever
     /// what the service finished.
     fn tell(&mut self, now: &str) {
+        self.unfinished = now.to_string();
         let all = [self.kept.join(" "), now.to_string()].join(" ").trim().to_string();
         if all != self.shown {
             self.shown = all.clone();
@@ -324,7 +348,7 @@ impl Stream<'_> {
         // finish all of it.
         let until = Instant::now() + Duration::from_millis((self.sent * 1000 / (u64::from(self.rate) * 2)).max(5000));
         while !self.ended && Instant::now() < until {
-            if let Some(now) = drain(self.wire, &mut s, &mut self.kept, &mut self.ended).map_err(|()| Unheard::Dropped)? {
+            if let Some(now) = drain(self.wire, &mut s, &mut self.kept, &mut self.ended, &self.unfinished).map_err(|()| Unheard::Dropped)? {
                 self.tell(&now);
             }
         }
@@ -402,13 +426,13 @@ mod tests {
     use super::*;
 
     /// A wire that never connects: what is kept is all there is.
-    const NOWHERE: Wire = Wire { connect: |_, _| Err(()), audio: |_, _| Message::text(""), end: |_| Message::text(""), read: |_, _, _| None, header: false, reopens: false };
+    const NOWHERE: Wire = Wire { connect: |_, _| Err(()), audio: |_, _| Message::text(""), end: |_| Message::text(""), read: |_, _, _, _| None, header: false, reopens: false };
 
     #[test]
     fn only_the_final_words_for_the_whole_recording_are_what_he_said() {
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
-        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), sent: 0, rate: 16000 };
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], unfinished: String::new(), ended: false, shown: String::new(), sent: 0, rate: 16000 };
         // words it had not finished are shown and never kept
         stream.tell("and deploy");
         assert_eq!(stream.kept, ["ship it"]);
@@ -442,7 +466,7 @@ mod tests {
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let (h, a, b) = (vec![0u8], vec![1u8], vec![2u8]);
-        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), sent: 0, rate: 16000 };
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), unfinished: String::new(), ended: false, shown: String::new(), sent: 0, rate: 16000 };
         // the header and the first piece went before the connection failed
         stream.waiting.pop_front();
         stream.header_unsent = 0;

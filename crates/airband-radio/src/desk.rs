@@ -407,10 +407,15 @@ impl Desk {
         warm_passes(Arc::downgrade(&desk.shared));
         // a model chosen here that came down while the app was away, or was not got ready before it closed, is
         // got ready now, behind everything else, so it is ready before he first uses it
+        // A model chosen here that was got ready on this build of the system is loaded, quietly. One that was
+        // not (fetched while the app was away, a system update since, a try that failed) is got ready now, on
+        // its own, shown as being got ready from the start.
+        let todo = desk.shared.chooser.queue_chosen();
         let shared = Arc::downgrade(&desk.shared);
         thread::spawn(move || {
             if let Some(shared) = shared.upgrade() {
-                shared.chooser.prepare_chosen(&*shared.host, &shared.senses);
+                shared.chooser.load_chosen(&*shared.host, &shared.senses);
+                shared.chooser.prepare_chosen(todo, &*shared.host, &shared.senses);
             }
         });
         desk

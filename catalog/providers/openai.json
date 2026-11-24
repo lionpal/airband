@@ -113,18 +113,20 @@
       "id": "transcribe",
       "job": "ears",
       "by": {
-        "interface": "transcribe",
+        "interface": "realtime",
         "with": {
+          "pass": "{url}/realtime/client_secrets",
+          "stream": "wss://api.openai.com/v1/realtime?intent=transcription",
           "auth": {
             "header": "authorization",
             "prefix": "Bearer "
           }
         }
       },
-      "label": "OpenAI GPT Transcribe",
+      "label": "OpenAI GPT Live Transcribe",
       "preferred": true,
-      "price": "About $0.27 per hour of speech",
-      "priced": "2026-11-20",
+      "price": "About $1 per hour of speech",
+      "priced": "2026-11-24",
       "asks": [
         {
           "field": "url",
@@ -135,7 +137,7 @@
         {
           "field": "model",
           "question": "Model",
-          "usual": "gpt-transcribe"
+          "usual": "gpt-live-transcribe"
         }
       ]
     }

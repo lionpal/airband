@@ -49,6 +49,9 @@ pub struct HostDevice {
     /// The operating system, as a model's row names it under `min_os` ("ios"), and its major version.
     pub os: String,
     pub os_version: u32,
+    /// The build of that system ("23A341"): what a model got ready for this device was got ready for. Work an
+    /// engine keeps for a model (Core ML's compiled models) can be dropped when the system is updated.
+    pub os_build: String,
     /// How many team colours the host draws with: the phone hands out places in that list, and no more.
     pub team_colours: u8,
 }
@@ -119,11 +122,26 @@ pub(crate) struct Held {
     pub(crate) m: Model,
     folder: PathBuf,
     loaded: Mutex<Option<Box<dyn Loaded>>>,
+    /// What its engine needs before first use is done on this device (for a Core ML model, compiling it for
+    /// this phone's Neural Engine, which takes minutes): running it now takes moments, or as long as loading
+    /// what was compiled, which the run waits for. Set from what is kept ([`crate::models::prepared`]) when it
+    /// is made, and once it has run.
+    ready: std::sync::atomic::AtomicBool,
 }
 
 impl Held {
     pub(crate) fn of(m: &Model, folder: PathBuf) -> Arc<Held> {
-        Arc::new(Held { m: m.clone(), folder, loaded: Mutex::new(None) })
+        Arc::new(Held { m: m.clone(), folder, loaded: Mutex::new(None), ready: std::sync::atomic::AtomicBool::new(false) })
+    }
+
+    /// It can be run now without the engine first doing minutes of work: its row names no such work, or that
+    /// work is done.
+    pub(crate) fn ready(&self) -> bool {
+        !crate::models::needs_preparing(&self.m) || self.ready.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// What is kept says that work is done, or its engine could no longer load it.
+    pub(crate) fn set_ready(&self, ready: bool) {
+        self.ready.store(ready, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Is this that model, from that folder? Then it need not be loaded again.
@@ -131,14 +149,17 @@ impl Held {
         self.m == *m && self.folder == folder
     }
 
-    /// Do something with the model, loading it first if it is not loaded. One thing at a time.
+    /// Do something with the model, loading it first if it is not loaded. One thing at a time for an engine
+    /// in this build; a host's engine keeps the model itself, and is asked for each run as it comes (so
+    /// getting it ready, which takes minutes, holds up nothing here: the quiet load at launch, getting it ready
+    /// and his dictation each wait only on the host's engine).
     pub(crate) fn with<T>(&self, f: impl FnOnce(&mut dyn Loaded) -> T) -> Result<T, Fault> {
+        let Some((_, engine)) = HERE.iter().find(|(name, _)| *name == self.m.engine) else {
+            return Ok(f(&mut Hosted { engine: self.m.engine.clone(), folder: self.folder.display().to_string() }));
+        };
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
         if loaded.is_none() {
-            *loaded = Some(match HERE.iter().find(|(name, _)| *name == self.m.engine) {
-                Some((_, engine)) => engine.load(&self.folder, &self.m).map_err(Fault::Load)?,
-                None => Box::new(Hosted { engine: self.m.engine.clone(), folder: self.folder.display().to_string() }),
-            });
+            *loaded = Some(engine.load(&self.folder, &self.m).map_err(Fault::Load)?);
         }
         Ok(f(loaded.as_mut().unwrap().as_mut()))
     }
@@ -184,7 +205,7 @@ mod tests {
 
     #[test]
     fn a_model_is_offered_only_where_its_engine_and_its_system_are() {
-        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18, team_colours: 0 };
+        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18, team_colours: 0, os_build: String::new() };
         // an engine nobody here has: not offered
         assert!(!runs(&row("unheard-of", serde_json::json!({})), &phone));
         // the host's own, with nothing said about the system

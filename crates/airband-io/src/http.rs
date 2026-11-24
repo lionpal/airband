@@ -176,6 +176,8 @@ impl Client {
     /// Send `ask`. An error is only a place that could not be reached, or a body that could not be written.
     pub fn send(&self, ask: Ask) -> Result<Response, Error> {
         let Ask { verb, url, headers, body } = ask;
+        #[cfg(feature = "stand-ins")]
+        let url = stand_in(&url).unwrap_or(url);
         let body = body?;
         self.sent(verb, &url, &headers, body).map(Response::of).map_err(|e| Error::of(e).without_secrets_of(&url))
     }
@@ -395,4 +397,19 @@ mod tests {
             assert!(!shown.contains(secret), "{shown}");
         }
     }
+}
+
+/// Where a request to `url` goes instead in a build made for the end-to-end suites: to the stand-in this
+/// machine runs for its host, as `AIRBAND_STAND_IN_HOSTS` names them (`host=127.0.0.1:port`, separated by
+/// commas), over plain HTTP or WebSocket. Nothing for a host it does not name. A build he installs has none.
+#[cfg(feature = "stand-ins")]
+pub fn stand_in(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(end);
+    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
+    let hosts = std::env::var("AIRBAND_STAND_IN_HOSTS").ok()?;
+    let to = hosts.split(',').find_map(|pair| pair.split_once('=').filter(|(h, _)| *h == host).map(|(_, to)| to.to_string()))?;
+    let plain = if scheme.starts_with("ws") { "ws" } else { "http" };
+    Some(format!("{plain}://{to}{path}"))
 }

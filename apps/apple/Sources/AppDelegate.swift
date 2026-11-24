@@ -1,4 +1,5 @@
 // The app's own start, and where the system hands it the address to wake the phone at.
+import BackgroundTasks
 import UIKit
 import UserNotifications
 
@@ -6,6 +7,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // before the launch ends, so an answer given on a notification while the app was not running is handled
         UNUserNotificationCenter.current().delegate = Push.shared
+        Preparing.register()
         return true
     }
     /// The system woke the app because transfers of a model it was moving have ended: they are told to the core,

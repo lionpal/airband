@@ -231,6 +231,22 @@ impl Desk {
         went
     }
 
+    /// Get ready the models chosen for this phone that are here and not ready on this build of the system,
+    /// shown as being got ready while it happens. Blocks until each has been tried: for the host to call from
+    /// work the system lets it do in the background, so it can finish while the app is away.
+    pub fn prepare_models(&self) {
+        let chooser = &self.shared.chooser;
+        let todo = chooser.queue_chosen();
+        self.shared.host.changed();
+        chooser.prepare_chosen(todo, &*self.shared.host, &self.shared.senses);
+    }
+
+    /// Whether a model chosen for this phone is not ready on this build of the system: the host asks for
+    /// time in the background to get it ready ([`Desk::prepare_models`]).
+    pub fn models_unprepared(&self) -> bool {
+        !self.shared.chooser.unprepared().is_empty()
+    }
+
     /// What a first run asks once before it downloads anything: the models chosen for this phone that are not
     /// on it, with their size in all. Nothing when there are none.
     pub fn downloads_wanted(&self) -> Option<DownloadAsk> {

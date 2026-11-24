@@ -68,7 +68,8 @@ impl Mouth {
     }
 
     /// The model to speak with, from that folder: the one already in use when it is the same, so that
-    /// changing only its voice loads nothing.
+    /// changing only its voice loads nothing. (The app's own come from [`crate::choices::Chooser::held`].)
+    #[cfg(all(test, feature = "phonon"))]
     pub(crate) fn held(&self, m: &crate::models::Model, folder: std::path::PathBuf) -> Arc<Held> {
         match self.using() {
             Some(Own::Model { held, .. }) if held.is(m, &folder) => held,

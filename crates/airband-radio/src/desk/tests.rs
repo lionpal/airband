@@ -1277,3 +1277,76 @@ fn words_waiting_to_be_told_who_they_are_for_stay_when_he_says_something_else() 
     assert_eq!(now.len(), 1);
     assert!(now[0].id != unplaced.id && now[0].to == ["shop two"] && now[0].text == "ship it");
 }
+
+/// A microphone held open until the test lets go, which says each status it is given.
+#[derive(Default)]
+struct HeldOpen {
+    open: Mutex<bool>,
+    let_go: Condvar,
+    statuses: Mutex<Vec<RadioStatus>>,
+    moved: Condvar,
+}
+impl RadioHost for HeldOpen {
+    fn told(&self, _: String) {}
+    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+    fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
+    fn speak(&self, _: String) {}
+    fn listen(&self) -> Option<String> {
+        None
+    }
+    fn status(&self, status: RadioStatus) {
+        self.statuses.lock().unwrap().push(status);
+        self.moved.notify_all();
+    }
+    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+    fn record_start(&self, _: u32) -> bool {
+        *self.open.lock().unwrap() = true;
+        true
+    }
+    fn record_read(&self) -> Vec<u8> {
+        let mut open = self.open.lock().unwrap();
+        while *open {
+            open = self.let_go.wait(open).unwrap();
+        }
+        Vec::new()
+    }
+    fn record_stop(&self) {}
+    fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+    fn hearing(&self, _: String) {}
+    fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+        None
+    }
+}
+impl HeldOpen {
+    /// Wait until it has been given `n` statuses.
+    fn until(&self, n: usize) -> Vec<RadioStatus> {
+        let (got, _) = self.moved.wait_timeout_while(self.statuses.lock().unwrap(), Duration::from_secs(10), |s| s.len() < n).unwrap();
+        got.clone()
+    }
+}
+
+#[test]
+fn hearing_him_however_long_it_takes_never_holds_up_the_radios_other_work() {
+    // A listening model that took minutes once held every job of the radio behind it: his next dictation by
+    // any service, and everything read to him. Dictation has a lane of its own.
+    let host = Arc::new(HeldOpen::default());
+    let senses = Arc::new(Senses::default());
+    // a listening model the host runs, not ready yet: the microphone is read to his end all the same
+    let m = crate::models::Model { kind: "tiny".into(), name: "Tiny".into(), job: airband_core::providers::Job::Ears, engine: "host-only".into(), version: "1".into(), base: "https://airband.dev/models/tiny".into(), files: Vec::new(), voices: Vec::new(), usual_voice: String::new(), credit: String::new(), with: [(crate::models::field::PREPARE.to_string(), serde_json::json!("Getting it ready"))].into() };
+    senses.ears.set(Some(crate::ears::Own::Model(crate::engines::Held::of(&m, "/models/tiny/1".into()))));
+    let radio = Radio::start_with("airband://pair?url=http%3A%2F%2F127.0.0.1%3A1&token=t&name=Mac".into(), host.clone(), senses, Kept::open("", host.clone()), None).unwrap();
+    let (heard, got) = std::sync::mpsc::channel();
+    radio.dictate(crate::takes::Aim::default(), Box::new(move |l| heard.send(matches!(l, Listened::Nothing)).unwrap()));
+    // he is talking: the microphone is open and stays open
+    assert_eq!(host.until(1), vec![RadioStatus::Listening]);
+    // meanwhile the radio's other work goes on: something arrives to be read, and is dealt with at once
+    let t: airband_core::radio::Transmission = serde_json::from_value(serde_json::json!({ "id": "t1", "callsign": "a", "kind": "report", "say": "done" })).unwrap();
+    radio.jobs.lock().unwrap().send(Job::Transmission(t)).unwrap();
+    assert_eq!(host.until(2)[1], RadioStatus::Idle);
+    assert!(got.try_recv().is_err(), "the dictation ended before he did");
+    // he closes the microphone: what he said is handed over
+    *host.open.lock().unwrap() = false;
+    host.let_go.notify_all();
+    assert!(got.recv_timeout(Duration::from_secs(10)).unwrap());
+    radio.stop();
+}

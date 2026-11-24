@@ -55,6 +55,7 @@ pub(super) fn service_id(provider: &str, offer: &str) -> String {
 pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     let working = |id: &str| facts.work.as_ref().filter(|w| w.0 == id).map(|w| ChoiceState::Working { label: w.1.clone(), fraction: w.2 });
     let of_service = |s: Service, chosen: bool, has_key: bool, voice: String, state: ChoiceState| Choice {
+        live: job == ChoiceJob::Ears && airband_core::providers::Use::of(&s.kind, &s.offer).offer(Job::Ears).is_some_and(|(_, o)| crate::ears::live(&o).is_some()),
         line: line(&s, has_key),
         id: service_id(&s.kind, &s.offer),
         place: ChoicePlace::Service,
@@ -150,6 +151,8 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             // with none named, the voice the row names as its usual one
             voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
             action,
+            // what it has heard so far is read again while he talks
+            live: job == ChoiceJob::Ears,
         });
     }
     // the model this job starts with, when this device cannot run it: shown, with why, so he knows to pick
@@ -174,6 +177,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             voices: Vec::new(),
             voice: String::new(),
             action: None,
+            live: false,
         });
     }
     for s in crate::services::services(job.job()) {

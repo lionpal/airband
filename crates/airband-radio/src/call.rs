@@ -9,9 +9,25 @@ pub(crate) enum Job {
     Transmission(Transmission),
     /// He wants to speak: the message he is answering, if he picked one, and the room he is looking at.
     Talk(Option<String>, Option<String>),
-    /// He opened the microphone himself: listen until he closes it, and hand over what he said. Nothing is sent
-    /// from here; where it goes is the caller's to work out, and is kept with the recording as aimed.
-    Dictate(crate::takes::Aim, Box<dyn FnOnce(Listened) + Send>),
+}
+
+/// He opened the microphone himself: listen until he closes it, and hand over what he said. Nothing is sent
+/// from here; where it goes is the caller's to work out, and is kept with the recording as aimed. Done in a
+/// lane of its own ([`dictation`]): however long hearing him takes, nothing else this radio does waits on it.
+pub(crate) struct Dictate(pub(crate) crate::takes::Aim, pub(crate) Box<dyn FnOnce(Listened) + Send>);
+
+/// The lane his own dictation is heard in, one at a time, apart from the radio's other jobs.
+pub(crate) fn dictation(asked: Receiver<Dictate>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, calling: Arc<AtomicBool>, senses: Arc<Senses>) {
+    let ears = ears::Ears::new(senses);
+    while let Ok(Dictate(aim, done)) = asked.recv() {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let _here = still_here(&link, &calling);
+        host.status(RadioStatus::Listening);
+        done(ears.hear(&*host, true, aim));
+        host.status(RadioStatus::Idle);
+    }
 }
 
 /// Everything the polling thread is given to work with.
@@ -132,11 +148,6 @@ pub(crate) fn work(with: Working) {
             Job::Talk(re, scope) => {
                 let _here = still_here(&link, &calling);
                 converse(&CallLine { link: &link, session: &session, store: &store, wake: &wake }, &*host, &ears, &senses.mouth, re, scope)
-            }
-            Job::Dictate(aim, done) => {
-                let _here = still_here(&link, &calling);
-                host.status(RadioStatus::Listening);
-                done(ears.hear(&*host, true, aim));
             }
         }
         busy.store(false, Ordering::SeqCst);

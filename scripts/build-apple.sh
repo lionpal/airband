@@ -12,8 +12,15 @@ export IPHONEOS_DEPLOYMENT_TARGET=18.0
 rust="${CARGO_TARGET_DIR:-target}"
 case "$rust" in /*) ;; *) rust="$PWD/$rust" ;; esac
 cargo build --release -p airband-radio --target aarch64-apple-ios
-# and for the simulator, which the project links when it builds for one
-cargo build --release -p airband-radio --target aarch64-apple-ios-sim
+# and for the simulator, which the project links when it builds for one. For the end-to-end suites
+# (tools/e2e-phone.py) with the stand-ins in it, which reach this machine in the listening services' place: only
+# ever into the folder those suites build in, never one a build he installs is made from
+if [ -n "$AIRBAND_STAND_INS" ]; then
+  case "$rust" in */stand-ins) ;; *) echo "AIRBAND_STAND_INS builds only into a target folder named stand-ins" >&2; exit 1 ;; esac
+  cargo build --release -p airband-radio --target aarch64-apple-ios-sim --features stand-ins
+else
+  cargo build --release -p airband-radio --target aarch64-apple-ios-sim
+fi
 # the generator reads the API out of a host build of the same library
 cargo build -p airband-radio
 rm -rf apps/apple/Generated && mkdir -p apps/apple/Generated

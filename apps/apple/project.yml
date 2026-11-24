@@ -94,7 +94,9 @@ targets:
               - UISceneClassName: CPTemplateApplicationScene
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
                 UISceneConfigurationName: CarPlay
-        UIBackgroundModes: [audio, remote-notification]
+        UIBackgroundModes: [audio, remote-notification, processing]
+        # getting a listening or voice model ready on this phone (Sources/Preparing.swift)
+        BGTaskSchedulerPermittedIdentifiers: [dev.airband.prepare-models]
         # the banner for an agent that is waiting on him (Live/NeedsYou.swift, Widgets/)
         NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

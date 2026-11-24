@@ -62,7 +62,7 @@ fn chunk(bytes: &[u8], commit: bool) -> Message {
 }
 
 /// A partial replaces the one before it; a committed stretch is final, and the next partial starts from nothing.
-fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
+fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool, _: &str) -> Option<String> {
     let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
     match v["message_type"].as_str()? {
         // one without its text says nothing about what was heard, and is passed over

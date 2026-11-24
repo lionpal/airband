@@ -28,3 +28,5 @@ ptts = { version = "0.7.1", features = ["hf"], optional = true }
 [features]
 default = ["phonon"]
 phonon = ["dep:ptts"]
+# the end-to-end suites' stand-ins for the services a phone reaches; never in a build he installs
+stand-ins = ["airband-io/stand-ins"]

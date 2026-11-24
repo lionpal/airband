@@ -59,7 +59,7 @@ fn connect(grant: &Pass, request: &str) -> Result<Socket, ()> {
 
 /// What one message from the service says: an unfinished stretch (replacing the last), a finished one
 /// (into `kept`), or that its turn is over.
-fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
+fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool, _: &str) -> Option<String> {
     match m.to_text().ok().and_then(parse) {
         Some((path, v)) if path == "speech.hypothesis" => v["Text"].as_str().map(String::from),
         Some((path, v)) if path == "speech.phrase" => {

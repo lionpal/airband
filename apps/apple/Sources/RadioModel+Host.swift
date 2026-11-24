@@ -1,7 +1,6 @@
 // The app's side of the core's host: sound in and out, what changed, the keys he gave, and the models this phone
 // runs itself. The core calls these on its own threads.
 import AVFoundation
-import PhononCoreML
 import Foundation
 import SwiftUI
 import UIKit
@@ -34,32 +33,12 @@ extension RadioModel {
     }
 
     func device() -> HostDevice {
-        HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), teamColours: UInt8(TeamColours.rgb.count))
+        HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), osBuild: NeuralEngineListening.systemBuild, teamColours: UInt8(TeamColours.rgb.count))
     }
-
-    /// The engine this app runs its listening model with, by the name the model's row in the catalogue gives
-    /// it (`engine`): the package that runs it on the Neural Engine. The row and this name are one contract.
-    static let neuralEngine = "phonon-coreml"
 
     /// The core asks for a model to be run by one of the engines above.
     func runModel(engine: String, folder: String, job: ChoiceJob, input: Data) -> Data? {
         engines[engine]?(folder, job, input)
-    }
-
-    /// The listening model this app runs on the Neural Engine: a recording (16 kHz, 16-bit, mono) turned into words.
-    func neuralEngineListening(folder: String, job: ChoiceJob, input pcm: Data) -> Data? {
-        guard job == .ears else { return nil }
-        hearLock.lock()
-        defer { hearLock.unlock() }
-        do {
-            let model = try heardWith[folder] ?? Transcriber(bundle: URL(fileURLWithPath: folder))
-            heardWith[folder] = model
-            let samples: [Float] = pcm.withUnsafeBytes { raw in raw.bindMemory(to: Int16.self).map { Float($0) / 32768 } }
-            return Data(try model.transcribe(samples).text.utf8)
-        } catch {
-            NSLog("airband: the listening model failed: \(error.localizedDescription)")
-            return nil
-        }
     }
 
     /// How far the voice has got in what it is saying, in characters, by the clock of the sound itself.

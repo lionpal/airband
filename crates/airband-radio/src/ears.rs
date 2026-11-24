@@ -25,6 +25,7 @@ pub(crate) const KEPT: &str = "Your recording is in the chat to try again.";
 
 mod bidi;
 mod chunks;
+mod realtime;
 mod usp;
 mod pass;
 pub(crate) use pass::*;
@@ -61,7 +62,7 @@ pub(crate) struct Listener {
 }
 
 /// Every live dialect this build speaks.
-pub(crate) const LISTENERS: &[Listener] = &[usp::LISTENER, bidi::LISTENER, chunks::LISTENER];
+pub(crate) const LISTENERS: &[Listener] = &[usp::LISTENER, bidi::LISTENER, chunks::LISTENER, realtime::LISTENER];
 
 /// The live dialect an offer names, when this build speaks it and can do what the offer needs.
 pub(crate) fn live(offer: &Offer) -> Option<&'static Listener> {
@@ -126,14 +127,6 @@ impl Chosen {
                 Some(ms) => now = self.moved.wait_timeout(now, Duration::from_millis(ms)).unwrap_or_else(|e| e.into_inner()).0,
                 None => now = self.moved.wait(now).unwrap_or_else(|e| e.into_inner()),
             }
-        }
-    }
-
-    /// The model to listen with, from that folder: the one already in use when it is the same.
-    pub(crate) fn held(&self, m: &crate::models::Model, folder: std::path::PathBuf) -> Arc<crate::engines::Held> {
-        match self.using() {
-            Some(Own::Model(held)) if held.is(m, &folder) => held,
-            _ => crate::engines::Held::of(m, folder),
         }
     }
 
@@ -388,6 +381,13 @@ impl Ears {
     /// it heard is kept for Settings to show; he is told of a recording that was not heard where it is shown.
     fn by(&self, host: &dyn RadioHost, mic: Mic, manual: bool) -> Got {
         let got = match mic {
+            // Not ready yet: running it now could keep him waiting many minutes with nothing shown (Core ML
+            // compiles a model for the phone the first time it is loaded, on any part of it). The recording is
+            // kept whole, to hear once it is ready, and nothing else listens in its place.
+            Mic::Model(held) if !held.ready() => match record(host, manual) {
+                None => Got::Words(None),
+                Some(_) => Got::Failed(Unheard::NotReady { model: held.m.name.clone() }),
+            },
             Mic::Model(held) => {
                 let name = held.m.name.clone();
                 match by_model(host, &held, manual) {

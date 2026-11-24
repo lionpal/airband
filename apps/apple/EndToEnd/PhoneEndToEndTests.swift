@@ -369,6 +369,18 @@ struct Tower {
         try JSONDecoder().decode([Heard].self, from: call("GET", "heard"))
     }
 
+    /// What each listening service's stand-in was given, by provider: seconds of sound, how many unfinished
+    /// answers it gave, whether it gave its final words, and anything wrong with what it was sent.
+    struct Listened: Decodable {
+        let seconds: Double
+        let partials: Int
+        let final: Bool
+        let wrong: [String]
+    }
+    func listening() throws -> [String: Listened] {
+        try JSONDecoder().decode([String: Listened].self, from: call("GET", "listening"))
+    }
+
     /// The script could not do what it was asked, and what it said.
     struct Refused: Error, CustomStringConvertible {
         let path: String
@@ -392,12 +404,23 @@ struct Tower {
 
 /// The phone: a Desk of its own in a throwaway folder, with a host that has no sound and keeps no keys.
 final class Phone {
-    let host: Host
     let desk: Desk
+    /// Until the host is told something changed, or until then; and what he was told.
+    private let wait: (Date) -> Void
+    private let told: () -> [String]
 
     /// `front`: whether the app says the chat is in front of him.
-    init(front: Bool = true) {
-        host = Host(front: front)
+    convenience init(front: Bool = true) {
+        let host = Host(front: front)
+        self.init(host: host, wait: { host.wait(until: $0) }, told: { host.told() })
+    }
+    /// With a host that speaks and listens.
+    convenience init(host: Speaking) {
+        self.init(host: host, wait: { host.wait(until: $0) }, told: { host.told() })
+    }
+    private init(host: DeskHost, wait: @escaping (Date) -> Void, told: @escaping () -> [String]) {
+        self.wait = wait
+        self.told = told
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("airband-e2e-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         desk = Desk.open(dataDir: dir.path, host: host)
@@ -412,9 +435,9 @@ final class Phone {
         while true {
             if let it = found(desk.view()) { return it }
             if Date() >= end { break }
-            host.wait(until: min(end, Date().addingTimeInterval(1)))
+            wait(min(end, Date().addingTimeInterval(1)))
         }
-        throw Failed(what: what, seconds: seconds, notes: host.told())
+        throw Failed(what: what, seconds: seconds, notes: told())
     }
 
     /// The computer answers, and the stand-in agent is on it: its id.
@@ -468,7 +491,7 @@ final class Host: DeskHost, @unchecked Sendable {
     func words(text: String, starts: [UInt32], atMs: [UInt32]) {}
     func watching() -> Bool { front }
     func device() -> HostDevice {
-        HostDevice(engines: [], os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), teamColours: UInt8(TeamColours.rgb.count))
+        HostDevice(engines: [], os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), osBuild: NeuralEngineListening.systemBuild, teamColours: UInt8(TeamColours.rgb.count))
     }
     func runModel(engine: String, folder: String, job: ChoiceJob, input: Data) -> Data? { nil }
     func secret(name: String) -> String? { nil }

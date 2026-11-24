@@ -2,8 +2,15 @@
 """End to end, for the phone: the app's own radio core (its Desk), in the simulator, against a tower and a relay
 on this machine.
 
+    export CARGO_TARGET_DIR=target/stand-ins
     cargo build --release -p airband-cli -p airband-relay --features airband-cli/stand-ins && tools/e2e-phone.py
                                                        a few minutes the first time (the app is built), no model calls
+
+Listening (ListeningEndToEndTests): a recording of this Mac's voice is given to the app's core as its microphone
+would give it. The listening model on the phone is fetched from the catalogue's address and run by the app's own
+engine on the simulator's CPU; every listening service in the catalogue is stood in for on this machine by
+tools/listening_stand_ins.py, each speaking its own protocol, which the phone's core reaches in their place only
+because the app is built for this run with the `stand-ins` feature (into the stand-ins target folder alone).
 
 A relay and a tower in a throwaway folder, each on a port nothing else is on, with a stand-in agent that answers
 what it is given; a simulator made for this run alone and deleted at the end, so no pairing of his is ever on it.
@@ -21,8 +28,9 @@ with the extension's own code (the simulator runs no extension for a push it is 
 shown for a report, a question, a request for leave, a request for leave too long to allow unread, and one no
 pairing on the phone can open.
 """
-import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse
+import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, wave
 import wire
+from listening_stand_ins import Listening
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -53,13 +61,14 @@ relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_REL
 tower_log, relay_log = os.path.join(work, "tower.log"), os.path.join(work, "relay.log")
 
 # The stand-in agent, as a delivery command: what it is given is kept in a file, and it answers "Done: " and the
-# first line of it (as the stand-in of tools/e2e-held.py does), reporting to the tower like any agent.
+# last line of it, reporting to the tower like any agent.
 AGENT = os.path.join(work, "agent.py")
 open(AGENT, "w").write(r'''
 import json, subprocess, sys
 BIN, ID, CWD, HEARD = sys.argv[1:5]
 words = sys.stdin.read()
-said = "Done: " + words.strip().splitlines()[0][:60]
+# what he said is the last line (the first says who it is from, the same each time), so each answer is its own
+said = "Done: " + words.strip().splitlines()[-1][:60]
 with open(HEARD, "a") as f: f.write(json.dumps({"heard": words, "said": said}) + "\n")
 # on its own: the tower is waiting for this program to end before it counts the message delivered
 subprocess.Popen([BIN, "report", "--id", ID, "--harness", "script", "--cwd", CWD, "said", said], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -163,6 +172,9 @@ class Control(http.server.BaseHTTPRequestHandler):
             return self.answer({"wakeable": "can be woken with a notification" in logged()})
         if self.path == "/heard":
             return self.answer([json.loads(l) for l in open(heard)] if os.path.exists(heard) else [])
+        if self.path == "/listening":
+            with services.lock:
+                return self.answer(services.seen)
         self.answer({"wrong": self.path}, 404)
 
     def do_POST(self):
@@ -207,6 +219,7 @@ class Control(http.server.BaseHTTPRequestHandler):
         self.answer({"wrong": self.path}, 404)
 
 
+services = Listening("")
 control = http.server.ThreadingHTTPServer(("127.0.0.1", CONTROL_PORT), Control)
 threading.Thread(target=control.serve_forever, daemon=True).start()
 
@@ -219,8 +232,19 @@ try:
         raise SystemExit(f"iOS {runtime['version']} has no {SIM_TYPE}: set AIRBAND_E2E_SIMULATOR to one it has")
     sim = subprocess.run(["xcrun", "simctl", "create", "airband-e2e-" + os.urandom(4).hex(), SIM_TYPE, runtime["identifier"]], capture_output=True, text=True, check=True).stdout.strip()
     # the Rust core for the simulator, the Swift it is reached by, and the Xcode project
-    subprocess.run([os.path.join(ROOT, "scripts", "build-apple.sh")], env=dict(os.environ, CARGO_TARGET_DIR=TARGET), check=True, stdout=open(os.path.join(work, "build.log"), "w"), stderr=subprocess.STDOUT)
-    test_env = dict(os.environ, TEST_RUNNER_AIRBAND_E2E_CONTROL=f"http://127.0.0.1:{CONTROL_PORT}")
+    subprocess.run([os.path.join(ROOT, "scripts", "build-apple.sh")], env=dict(os.environ, CARGO_TARGET_DIR=TARGET, AIRBAND_STAND_INS="1"), check=True, stdout=open(os.path.join(work, "build.log"), "w"), stderr=subprocess.STDOUT)
+    # what he says to the listening checks (ListeningEndToEndTests): this Mac's own voice saying it, as the
+    # microphone gives it to the core (16 kHz, 16-bit, mono, no header)
+    words = "please ship the new build to the store today"
+    aiff, wav, speech = (os.path.join(work, f) for f in ("speech.aiff", "speech.wav", "speech.pcm"))
+    subprocess.run(["say", "-o", aiff, words], check=True)
+    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", aiff, wav], check=True)
+    with wave.open(wav) as w:
+        open(speech, "wb").write(w.readframes(w.getnframes()))
+    # every listening service in the catalogue, stood in for on this machine, each saying those words
+    services.words = words.split()
+    test_env = dict(os.environ, TEST_RUNNER_AIRBAND_E2E_CONTROL=f"http://127.0.0.1:{CONTROL_PORT}", TEST_RUNNER_AIRBAND_E2E_SPEECH=speech, TEST_RUNNER_AIRBAND_E2E_SPEECH_WORDS=words,
+                    TEST_RUNNER_AIRBAND_STAND_IN_HOSTS=services.hosts())
     print(f"The phone's core in a simulator of its own (iOS {runtime['version']}), against this run's tower and relay", flush=True)
     r = subprocess.run(["xcodebuild", "test", "-project", os.path.join(ROOT, "apps", "apple", "Airband.xcodeproj"), "-scheme", "AirbandEndToEnd", "-destination", f"id={sim}",
                         "-derivedDataPath", DERIVED, "-collect-test-diagnostics", "never", f"AIRBAND_RUST_TARGET={TARGET}"], env=test_env, capture_output=True, text=True)
@@ -233,6 +257,7 @@ try:
 finally:
     control.shutdown()
     apns.shutdown()
+    services.shutdown()
     for p in (tower, relay):
         p.terminate()
         try:

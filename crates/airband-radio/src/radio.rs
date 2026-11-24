@@ -30,6 +30,8 @@ impl Kept {
 
 pub struct Radio {
     pub(crate) jobs: Mutex<Sender<Job>>,
+    /// His own dictation, heard in a lane of its own ([`call::dictation`]).
+    pub(crate) dictations: Mutex<Sender<call::Dictate>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) calling: Arc<AtomicBool>,
     pub(crate) link: Arc<Link>,
@@ -138,12 +140,17 @@ impl Radio {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
             thread::spawn(move || poll(call::Polling { jobs: tx, link, host, stop, busy, calling, wake, senses }));
         }
+        let (said, asked) = channel();
+        {
+            let (link, host, stop, calling, senses) = (link.clone(), host.clone(), stop.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || call::dictation(asked, link, host, stop, calling, senses));
+        }
         store.prune_pictures();
         {
             let (link, session, store, host, stop, wake, senses) = (link.clone(), session.clone(), store.clone(), host.clone(), stop.clone(), wake.clone(), senses.clone());
             thread::spawn(move || deliver_outbox(link, session, store, host, stop, wake, senses));
         }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), dictations: Mutex::new(said), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
     /// What this radio keeps for him that outlasts it: the next radio started for this computer takes it over.
@@ -190,7 +197,7 @@ impl Radio {
     /// He opened the microphone himself: listen until the host closes it and hand over what he said. Nothing
     /// is sent; the caller decides where it goes.
     pub(crate) fn dictate(&self, aim: crate::takes::Aim, done: Box<dyn FnOnce(Listened) + Send>) {
-        self.jobs.lock().unwrap().send(Job::Dictate(aim, done)).ok();
+        self.dictations.lock().unwrap().send(call::Dictate(aim, done)).ok();
     }
 
     /// Put something in the outbox to go to the tower. What it takes with it is said by `carry`: his own next

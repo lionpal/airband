@@ -22,7 +22,7 @@ fn connect(pass: &Pass, _: &str) -> Result<Socket, ()> {
     }
     Ok(socket)
 }
-fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
+fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool, _: &str) -> Option<String> {
     match m {
         Message::Text(t) => Some(t.to_string()),
         Message::Binary(b) => {
@@ -55,10 +55,13 @@ struct Mic {
     stopped: Mutex<bool>,
     /// How many times he was told something went wrong: the tone, and the banner.
     told: Mutex<usize>,
+    /// What the host's model engine gives back (nothing: it could not), and how many times it was asked.
+    model: Mutex<Option<Vec<u8>>>,
+    asked: Mutex<usize>,
 }
 impl Mic {
     fn of(sound: &[u8], pause: Duration) -> Mic {
-        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false), told: Mutex::new(0) }
+        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false), told: Mutex::new(0), model: Mutex::new(None), asked: Mutex::new(0) }
     }
 }
 impl RadioHost for Mic {
@@ -85,9 +88,16 @@ impl RadioHost for Mic {
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
     fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
     fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-        None
+        *self.asked.lock().unwrap() += 1;
+        self.model.lock().unwrap().clone()
     }
     fn hearing(&self, _: String) {}
+}
+
+/// A listening model the host runs, whose row says the phone gets it ready before first use.
+fn host_model() -> Arc<crate::engines::Held> {
+    let m = crate::models::Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Ears, engine: "host-only".into(), version: "1".into(), base: "https://airband.dev/models/tiny".into(), files: Vec::new(), voices: Vec::new(), usual_voice: String::new(), credit: String::new(), with: [(crate::models::field::PREPARE.to_string(), serde_json::json!("Getting it ready"))].into() };
+    crate::engines::Held::of(&m, "/models/tiny/1".into())
 }
 
 fn ears_in(dir: &Folder) -> Ears {
@@ -245,4 +255,45 @@ fn a_take_ends_at_the_longest_one_is() {
     assert_eq!(read, longest);
     let rec = tape.done();
     assert_eq!(kept(&ears, &dir, &rec.id).1, Some(longest));
+}
+
+#[test]
+fn a_model_not_ready_yet_is_not_run_and_what_he_said_waits_with_why() {
+    // Getting a Core ML model ready takes minutes on a phone, on the Neural Engine and the graphics processor
+    // alike. Run then, it kept him waiting with no words and no error: now it is not run at all until it is.
+    let dir = Folder::new();
+    let ears = ears_in(&dir);
+    let held = host_model();
+    assert!(!held.ready());
+    let sound = speech(2);
+    let mic = Mic::of(&sound, Duration::ZERO);
+    *mic.model.lock().unwrap() = Some(b"ship it".to_vec());
+    let Listened::Unheard { take, why } = ears.hear_by(&mic, super::Mic::Model(held.clone()), true, Aim::default()) else { panic!("not kept as unheard") };
+    assert_eq!(why, Unheard::NotReady { model: "Tiny".into() });
+    assert_eq!(*mic.asked.lock().unwrap(), 0, "the engine was asked while it was not ready");
+    // all of it is kept, with the reason the chat shows beside it, and he is told once
+    assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why: why.clone() }), Some(sound.len())));
+    assert_eq!(*mic.told.lock().unwrap(), 1);
+    assert_eq!(why.told(), "Tiny isn\u{2019}t ready yet.");
+    // once it has been got ready, the take is heard again by it
+    held.set_ready(true);
+    ears.takes().again(&take, false);
+    let got = ears.by(&crate::takes::Replay::of(&mic, &ears.takes().replay(&take).unwrap(), false), super::Mic::Model(held), true);
+    let Listened::Said { text, .. } = ears.takes().heard_again(&take, got) else { panic!("not heard once ready") };
+    assert_eq!(text, "ship it");
+}
+
+#[test]
+fn a_model_that_gives_back_nothing_leaves_what_he_said_unheard_and_says_so() {
+    let dir = Folder::new();
+    let ears = ears_in(&dir);
+    let held = host_model();
+    // it was got ready, and now its engine gives back nothing
+    held.set_ready(true);
+    let sound = speech(2);
+    let mic = Mic::of(&sound, Duration::ZERO);
+    let Listened::Unheard { take, why } = ears.hear_by(&mic, super::Mic::Model(held), true, Aim::default()) else { panic!("its silence was taken for his") };
+    assert!(matches!(&why, Unheard::Model { why } if why.starts_with("Tiny did not run on this phone")), "{why:?}");
+    assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why }), Some(sound.len())));
+    assert_eq!(*mic.told.lock().unwrap(), 1);
 }

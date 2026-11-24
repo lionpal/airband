@@ -5,7 +5,6 @@
 // +Agents, the core's host calls (speaker, microphone, keys) in +Host, calling the core in +Calls, his computers
 // in +Computers, the banners in +Banners, and what he attaches in AttachPrepare.
 import AVFoundation
-import PhononCoreML
 import Foundation
 import ActivityKit
 import SwiftUI
@@ -79,7 +78,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
         voiceDir = dir.path
-        engines = [Self.neuralEngine: { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
+        engines = [NeuralEngineListening.name: { [ownListening] folder, job, input in job == .ears ? ownListening.hear(folder: folder, pcm: input) : nil }]
         // the newest catalogue of services and models this phone has kept, before anything is listed from it
         loadCatalog(dir: dir.path)
         Self.protectTakes(dataDir: dir.path)
@@ -147,6 +146,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
     /// through headphones or a car. From the phone's own speaker it stops.
     private func wentAway() {
+        Preparing.whileAway()
         guard calling else { return }
         let onPhone: [AVAudioSession.Port] = [.builtInSpeaker, .builtInReceiver]
         let handsFree = AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { !onPhone.contains($0.portType) })
@@ -362,9 +362,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// Set once in `init`, before the core is opened and can ask from its own threads.
     private(set) var engines: [String: (String, ChoiceJob, Data) -> Data?] = [:]
 
-    /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
-    var heardWith: [String: Transcriber] = [:]
-    let hearLock = NSLock()
+    /// The listening model this app runs itself.
+    let ownListening = NeuralEngineListening()
 
 }
 

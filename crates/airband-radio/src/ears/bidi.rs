@@ -58,7 +58,7 @@ fn audio(_request: &str, bytes: &[u8]) -> Message {
 }
 
 /// Its messages come as JSON, in a text frame or a binary one.
-fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
+fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool, _: &str) -> Option<String> {
     let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
     let content = &v["serverContent"];
     if content["turnComplete"] == true || content["generationComplete"] == true {

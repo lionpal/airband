@@ -85,20 +85,21 @@ pub(crate) fn fetched(dir: &str, m: &Model) -> bool {
 }
 
 /// Left in a version's folder once the device has done the work its row says it does before first use
-/// ([`field::PREPARE`]), and it went.
+/// ([`field::PREPARE`]): it holds the build of the system it was done on, as the host says it
+/// ([`crate::HostDevice::os_build`]). On another build it is done again.
 pub(super) const READY: &str = ".ready";
 
 /// The device has work of its own to do with this model before first use (its row says what, in words).
 pub(crate) fn needs_preparing(m: &Model) -> bool {
     !m.told(field::PREPARE).is_empty()
 }
-/// That work is done for the version in use, or there is none to do.
-pub(crate) fn prepared(dir: &str, m: &Model) -> bool {
-    !needs_preparing(m) || usable(dir, m).is_some_and(|f| f.join(READY).exists())
+/// That work is done for the version in use on this build of the system, or there is none to do.
+pub(crate) fn prepared(dir: &str, m: &Model, os_build: &str) -> bool {
+    !needs_preparing(m) || usable(dir, m).and_then(|f| airband_io::files::read_text(&f.join(READY)).ok().flatten()).is_some_and(|on| on.trim() == os_build)
 }
-/// Say that work is done for the version in use.
-pub(crate) fn mark_prepared(dir: &str, m: &Model) -> bool {
-    usable(dir, m).is_some_and(|f| airband_io::files::write_atomic(&f.join(READY), "").is_ok())
+/// Say that work is done for the version in use, on this build of the system.
+pub(crate) fn mark_prepared(dir: &str, m: &Model, os_build: &str) -> bool {
+    usable(dir, m).is_some_and(|f| airband_io::files::write_atomic(&f.join(READY), os_build).is_ok())
 }
 
 /// One of the voices a voice model can speak in.
@@ -191,7 +192,7 @@ mod tests {
         let (dir, kind) = (std::env::var("AIRBAND_MODEL_DIR").unwrap(), std::env::var("AIRBAND_MODEL").unwrap());
         let began = std::time::Instant::now();
         // a phone that has every engine the catalogue names
-        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 };
+        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0, os_build: String::new() };
         let m = model(&kind, &device).unwrap();
         let _one = one_fetching_test();
         fetch_local_model(dir.clone(), &m, None).unwrap();

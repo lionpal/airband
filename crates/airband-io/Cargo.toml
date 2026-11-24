@@ -15,3 +15,8 @@ ureq.workspace = true
 # telling a failure to read that passes from one that stays (kept.rs)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+# the end-to-end suites' stand-ins for the services a phone reaches (AIRBAND_STAND_IN_HOSTS); never in a build he
+# installs
+stand-ins = []
