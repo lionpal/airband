@@ -127,6 +127,7 @@ pub(crate) trait Harness: Sync {
 }
 
 /// How a request for leave of an agent held through the Agent Client Protocol is put to him.
+#[cfg_attr(not(unix), allow(dead_code, reason = "agents are held on unix only"))]
 pub(crate) enum AcpLeave {
     /// By the protocol's own reading of it, the same for every tool.
     Protocol,

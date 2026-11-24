@@ -206,7 +206,6 @@ fn transcript_of(id: &str) -> PathBuf {
 
 /// The conversations open now: each holds a lock on its file in `presence/` for as long as it is open. Nothing
 /// when that folder cannot be read (it is not on this computer).
-#[cfg(unix)]
 fn open() -> Option<Vec<crate::adapters::Open>> {
     let dir = state().join(crate::adapters::row_says(NAME, "presence"));
     if !dir.is_dir() {
@@ -231,10 +230,6 @@ fn open() -> Option<Vec<crate::adapters::Open>> {
         open.push(crate::adapters::Open { agent: agent(id, cwd, None), idle: waiting(&transcript_of(id)) });
     }
     Some(open)
-}
-#[cfg(not(unix))]
-fn open() -> Option<Vec<crate::adapters::Open>> {
-    None
 }
 
 /// The folders it has had conversations in, by its record of the latest in each, with when that one was last
@@ -298,8 +293,8 @@ impl crate::adapters::Harness for AntigravityCli {
     fn glance(&self, agent: &Agent) -> crate::adapters::Glance {
         glance(agent)
     }
-    fn open(&self) -> Option<Vec<crate::adapters::Open>> {
-        open()
+    fn open(&self) -> Option<crate::adapters::Listing> {
+        open().map(crate::adapters::Listing::whole)
     }
     fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked()

@@ -34,7 +34,7 @@ fn what_antigravity_cli_reports_is_what_it_reported_before() {
     let presence = s.path("home/.gemini/antigravity-cli/presence");
     let held = airband_io::files::lock(&presence.join("c1.lock")).unwrap();
     drop(airband_io::files::lock(&presence.join("c2.lock")).unwrap());
-    let open: Vec<serde_json::Value> = adapter.open().unwrap_or_default().iter().map(|o| json!({ "agent": o.agent, "idle": o.idle })).collect();
+    let open: Vec<serde_json::Value> = adapter.open().map(|l| l.open).unwrap_or_default().iter().map(|o| json!({ "agent": o.agent, "idle": o.idle })).collect();
     drop(held);
     let made = json!({
         "reported": reported,
@@ -47,7 +47,7 @@ fn what_antigravity_cli_reports_is_what_it_reported_before() {
         "put_away": put_away(NAME, "c1"),
         "deliver": adapter.deliver("c1", "hello"),
         "open": open,
-        "open_when_closed": adapter.open().map(|o| o.len()),
+        "open_when_closed": adapter.open().map(|l| l.open.len()),
     });
     s.hold(NAME, &made, include_str!("fixtures/golden.json"));
 }
