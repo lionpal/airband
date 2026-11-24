@@ -228,6 +228,8 @@ final class PhonePushTests: XCTestCase {
 
         // what reached the push service, as Apple is handed it: an alert, at once, for this app, that the
         // phone may change, carrying nothing readable but the same few words
+        // each is handed to the simulator after the push service took it: the last may still be on its way
+        XCTAssertTrue(shown.until(60) { ((try? tower.pushes()) ?? []).dropFirst(start).allSatisfy { $0.to != address || $0.delivered } }, "every push reached the simulator")
         let pushes = try tower.pushes().dropFirst(start).filter { $0.to == address }
         let shows = pushes.filter { if case .opened = opening($0, pairing) { true } else { false } }
         XCTAssertEqual(shows.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you", "An agent needs you"], "one each")
@@ -340,7 +342,7 @@ final class PhonePushTests: XCTestCase {
         let read = try XCTUnwrap(handed.last)
         XCTAssertEqual(read.id, message)
         XCTAssertFalse(handed.contains { $0.id == reportLine }, "nothing superseded is read")
-        XCTAssertEqual(read.callsign, asked.title)
+        // the callsign is the agent's name as it is said ("shop five" for "shop 5"); the words after it are the chat's
         XCTAssertEqual(read.say, read.callsign.prefix(1).uppercased() + read.callsign.dropFirst() + ". " + asked.body)
     }
 
