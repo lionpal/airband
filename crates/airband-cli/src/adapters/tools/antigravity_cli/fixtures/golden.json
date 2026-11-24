@@ -1,0 +1,204 @@
+{
+  "reported": [
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "c1",
+            "harness": "antigravity-cli",
+            "cwd": "/x/shop",
+            "meta": {
+              "model": "gemini-4-neon-low"
+            }
+          },
+          "event": {
+            "type": "checkin"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "c1",
+            "harness": "antigravity-cli",
+            "cwd": "/x/shop",
+            "meta": {
+              "model": "gemini-4-neon-low"
+            }
+          },
+          "event": {
+            "type": "working"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "c1",
+            "harness": "antigravity-cli",
+            "cwd": "/x/shop",
+            "meta": {
+              "model": "gemini-4-neon-low"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Two files: made.txt and note.txt."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "c1",
+            "harness": "antigravity-cli",
+            "cwd": "/x/shop"
+          },
+          "event": {
+            "type": "stopped",
+            "why": "quota exhausted"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    }
+  ],
+  "installed_before_it_is_here": null,
+  "installed": {
+    "path": "<tmp>/home/.gemini/config/hooks.json",
+    "changed": [
+      true,
+      false
+    ],
+    "file": {
+      "lint": {
+        "PostToolUse": [
+          {
+            "matcher": "run_command",
+            "hooks": [
+              {
+                "command": "./lint.sh"
+              }
+            ]
+          }
+        ]
+      },
+      "airband": {
+        "SessionStart": [
+          {
+            "type": "command",
+            "command": "\"/x/airband\" hook antigravity-cli --put-there-by-airband",
+            "timeout": 5
+          }
+        ],
+        "PreInvocation": [
+          {
+            "type": "command",
+            "command": "\"/x/airband\" hook antigravity-cli --put-there-by-airband",
+            "timeout": 5
+          }
+        ],
+        "Stop": [
+          {
+            "type": "command",
+            "command": "\"/x/airband\" hook antigravity-cli --put-there-by-airband",
+            "timeout": 5
+          }
+        ]
+      }
+    },
+    "told": [
+      "Antigravity CLI now reports to airband (set in <tmp>/home/.gemini/config/hooks.json).",
+      "Antigravity CLI now reports to airband (set in <tmp>/home/.gemini/config/hooks.json)."
+    ],
+    "after_uninstall": {
+      "lint": {
+        "PostToolUse": [
+          {
+            "matcher": "run_command",
+            "hooks": [
+              {
+                "command": "./lint.sh"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "looked": {
+    "glance": {
+      "doing": null,
+      "model": "gemini-4-neon-low",
+      "effort": null
+    },
+    "touched": [],
+    "steps": [],
+    "told": 0
+  },
+  "worked": [
+    {
+      "folder": "/x/garden",
+      "at": 1000000
+    },
+    {
+      "folder": "/x/shop",
+      "at": 2000000
+    }
+  ],
+  "accounts": false,
+  "puts_away": false,
+  "put_away": {
+    "Err": "Only an agent airband runs can be ended from here."
+  },
+  "deliver": {
+    "Err": "antigravity-cli sessions cannot be reached this way."
+  },
+  "open": [
+    {
+      "agent": {
+        "id": "c1",
+        "harness": "antigravity-cli",
+        "cwd": "/x/shop"
+      },
+      "idle": true
+    }
+  ],
+  "open_when_closed": 0
+}

@@ -1,0 +1,57 @@
+{
+  "id": "antigravity-cli",
+  "name": "Antigravity CLI",
+  "maker": "Google",
+  "launchers": [
+    {
+      "name": "antigravity-cli",
+      "models": {
+        "Gemini 4 Neon": "gemini-4-neon"
+      },
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "held": {
+        "by": "acp",
+        "program": [
+          "agy",
+          "acp"
+        ]
+      }
+    }
+  ],
+  "with": {
+    "program": "agy",
+    "home": ".gemini",
+    "state": "antigravity-cli",
+    "hooks_file": "config/hooks.json",
+    "presence": "presence",
+    "conversations": "conversations",
+    "brain": "brain",
+    "transcript": ".system_generated/logs/transcript_full.jsonl",
+    "last_conversations": "cache/last_conversations.json",
+    "tools": {
+      "run_command": {
+        "asks": "run `{CommandLine}`"
+      },
+      "write_file": {
+        "asks": "write the file {Path}"
+      }
+    },
+    "account_id": [
+      {
+        "place": {
+          "kind": "env",
+          "name": "GEMINI_API_KEY"
+        },
+        "take": {
+          "kind": "key",
+          "provider": "gemini"
+        }
+      }
+    ]
+  }
+}

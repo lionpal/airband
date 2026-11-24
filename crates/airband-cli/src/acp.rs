@@ -290,7 +290,12 @@ fn on_update(update: &Value, said: &mut String, me: &Agent) {
 fn ask_leave(held: &Held, params: Value, request: Value, me: Agent) {
     let to_program = held.to_program.clone();
     std::thread::spawn(move || {
-        let outcome = leave(&params, me).and_then(|ask| adapters::ask_him(&ask)).and_then(|(allow, _)| option(&params, allow));
+        // read by its tool's own code where it has its own way of saying what it wants to do, else by the protocol's
+        let ask = match adapters::acp_leave(&params, &me) {
+            adapters::AcpLeave::Protocol => leave(&params, me),
+            adapters::AcpLeave::Own(ask) => ask.map(|ask| *ask),
+        };
+        let outcome = ask.and_then(|ask| adapters::ask_him(&ask)).and_then(|(allow, _)| option(&params, allow));
         let answer = json!({ "jsonrpc": "2.0", "id": request, "result": { "outcome": match outcome {
             Some(option) => json!({ "outcome": "selected", "optionId": option }),
             // No answer chooses nothing: waiting never becomes a yes.

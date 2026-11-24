@@ -415,7 +415,7 @@ impl crate::adapters::Harness for Codex {
     }
     /// Only when Codex is on this computer.
     fn hooks(&self) -> Option<crate::adapters::hooks::File> {
-        home().is_dir().then(|| crate::adapters::hooks::File { name: NAME, path: home().join(crate::adapters::row_says(NAME, "hooks_file")), events: HOOKS })
+        home().is_dir().then(|| crate::adapters::hooks::File { name: NAME, path: home().join(crate::adapters::row_says(NAME, "hooks_file")), events: HOOKS, shape: crate::adapters::hooks::Shape::Common })
     }
     /// Codex runs a hook only once he has trusted it, and asks again whenever the file changes.
     fn installed(&self, file: &crate::adapters::hooks::File, changed: bool) -> String {

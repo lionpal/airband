@@ -202,7 +202,7 @@ impl crate::adapters::Harness for ClaudeCode {
         events(hook)
     }
     fn hooks(&self) -> Option<crate::adapters::hooks::File> {
-        Some(crate::adapters::hooks::File { name: self.name(), path: claude_home().join(crate::adapters::row_says(HARNESS, "hooks_file")), events: HOOKS })
+        Some(crate::adapters::hooks::File { name: self.name(), path: claude_home().join(crate::adapters::row_says(HARNESS, "hooks_file")), events: HOOKS, shape: crate::adapters::hooks::Shape::Common })
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
