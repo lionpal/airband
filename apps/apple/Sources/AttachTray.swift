@@ -1,7 +1,5 @@
-// The tray of what he attached and the strip of his recent photos above the composer.
+// The tray of what he attached, above the composer.
 import AVFoundation
-import Photos
-import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -100,83 +98,5 @@ private struct TrayThumb: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(item.video ? "Video" : "Photo")
         .accessibilityValue(failed ? "did not send" : ready ? "ready" : "sending")
-    }
-}
-
-/// His four newest photos and videos, across the top of the + panel. A tap attaches one and marks it; a tap
-/// on a marked one takes it off again. The panel stays open, so he can take several. The whole library is the
-/// button under this. Shown once he has let the app see his photos; asked the first time the panel opens.
-struct RecentStrip: View {
-    @EnvironmentObject var model: RadioModel
-    @State private var recent: [PHAsset] = []
-
-    var body: some View {
-        Group {
-            if !recent.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(recent, id: \.localIdentifier) { asset in
-                        // the tray says which are in it, however often the panel was closed since
-                        let item = model.tray.first { $0.asset == asset.localIdentifier }
-                        Button {
-                            if let item { model.detach(item) } else { model.attach(asset) }
-                        } label: {
-                            RecentThumb(asset: asset, chosen: item != nil)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(asset.mediaType == .video ? "Recent video" : "Recent photo")
-                        .accessibilityValue(item != nil ? "Attached" : "")
-                        .accessibilityHint(item != nil ? "Takes it off again" : "Attaches it")
-                    }
-                    // fewer than four: the ones there keep their size
-                    ForEach(0..<max(0, 4 - recent.count), id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
-                }
-            }
-        }
-        .task {
-            let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-            guard status == .authorized || status == .limited else { return }
-            let newest = PHFetchOptions()
-            newest.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            newest.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-            newest.fetchLimit = 4
-            var found: [PHAsset] = []
-            PHAsset.fetchAssets(with: newest).enumerateObjects { asset, _, _ in found.append(asset) }
-            recent = found
-        }
-    }
-}
-
-private struct RecentThumb: View {
-    let asset: PHAsset
-    let chosen: Bool
-    @State private var image: UIImage?
-
-    var body: some View {
-        // a square a quarter of the row wide, whatever the picture's own shape
-        Color.clear.aspectRatio(1, contentMode: .fit)
-            .overlay { if let image { Image(uiImage: image).resizable().scaledToFill() } else { Palette.raised } }
-            .overlay(alignment: .bottomLeading) {
-                if asset.mediaType == .video {
-                    Image(systemName: "video.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                        .padding(5).background(.black.opacity(0.45), in: Capsule()).padding(5)
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if chosen {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 22, weight: .bold))
-                        .symbolRenderingMode(.palette).foregroundStyle(Palette.ground, Palette.ink).padding(5)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay { if chosen { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.ink, lineWidth: 2.5) } }
-        .task {
-            let wanted = PHImageRequestOptions()
-            wanted.isNetworkAccessAllowed = true
-            wanted.deliveryMode = .opportunistic
-            // called with a rough picture first and the sharp one after
-            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 264, height: 264), contentMode: .aspectFill, options: wanted) { got, _ in
-                if let got { DispatchQueue.main.async { image = got } }
-            }
-        }
     }
 }

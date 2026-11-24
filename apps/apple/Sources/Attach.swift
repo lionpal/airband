@@ -1,5 +1,3 @@
-import AVFoundation
-import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -20,6 +18,30 @@ struct AttachTile: View {
             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.read.opacity(0.55), lineWidth: 1))
         }
+    }
+}
+
+/// His photos, newest first, as one row across the top of the + panel: the system's own picker, embedded. It
+/// runs apart from the app and hands over only what he taps, so nothing is asked of him to see his library. A
+/// tap attaches that one at once, the way one picked from the whole library is.
+struct RecentStrip: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var picked: [PhotosPickerItem] = []
+    let done: () -> Void
+
+    var body: some View {
+        PhotosPicker(selection: $picked, maxSelectionCount: 1, selectionBehavior: .continuous, matching: .any(of: [.images, .videos])) {}
+            .photosPickerStyle(.compact)
+            .photosPickerAccessoryVisibility(.hidden, edges: .all)
+            .photosPickerDisabledCapabilities([.search, .collectionNavigation, .stagingArea, .selectionActions])
+            .frame(height: 92)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .onChange(of: picked) { _, items in
+                guard !items.isEmpty else { return }
+                model.attach(items)
+                picked = []
+                done()
+            }
     }
 }
 

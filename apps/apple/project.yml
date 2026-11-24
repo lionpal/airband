@@ -102,7 +102,6 @@ targets:
         NSMicrophoneUsageDescription: airband listens when you press Talk, and for your reply after an agent speaks.
         NSLocalNetworkUsageDescription: airband reaches your computer directly when they are on the same network.
         NSCameraUsageDescription: airband uses the camera to scan the pairing code your computer shows.
-        NSPhotoLibraryUsageDescription: airband shows your newest photos so you can send one to an agent with one tap.
         CFBundleURLTypes:
           - CFBundleURLName: dev.airband.pair
             CFBundleURLSchemes: [airband]
