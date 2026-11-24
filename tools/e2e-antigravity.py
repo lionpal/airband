@@ -12,6 +12,9 @@ Nobody is signed in to anything.
 - An agent the tower starts and holds (`agy acp`), on what agy itself starts on: it says what it runs on, its request to run a
   command is put to him as the command itself, his yes lets it run and his no stops it, what it says arrives, and
   a long report arrives summarized with the whole of it kept.
+- One started on Gemini 4 Neon: a file it writes (`write_file`) and a file it edits (`edit_file`, one change or several)
+  are put to him as that file, and his yes lets each happen. (Asked for a tool that reads a web page, agy 1.5.15 has
+  none to offer: it reads one only through its shell or a browser of its own.)
 - A session he opened himself in a terminal (here a tmux of the test's own): it reports through airband's entry in
   Antigravity's hooks file, is on the radio while its lock in `presence/` is held, says its last answer when its
   turn is over, and leaves the radio when it closes.
@@ -129,6 +132,44 @@ try:
     whole = long and (http("GET", "/v1/radio/message/" + long[-1]["id"])[1] or {})
     check("a long report it writes arrives summarized, shorter, with the whole of it kept (model)", long and whole and len(long[-1]["text"]) < len(whole.get("text", "")), [(m["text"][:80], bool(m.get("long"))) for m in said_by(agy(True))])
     check("it can be ended, and it leaves the radio", http("POST", "/v1/radio/end", {"agent": held["id"]})[1] == {} and until(lambda: agy(True) is None, 30), feed()["roster"])
+
+    print("An agent on Gemini 4 Neon, writing and editing files with its own tools")
+    # the tools and fields its requests come with, as they arrive: its row's words for each make the card
+    open(os.path.join(shop, "notes.txt"), "w").write("alpha\nbeta\ngamma\n")
+    told = say("New agent in shop", act={"kind": "launch", "team": shop, "tool": "antigravity-cli", "model": "gemini-4-neon",
+                                         "task": "Use your file-writing tool (not the shell) to create a new file named hello.txt in the current folder containing exactly: hi there\nThen reply with exactly the word done."})
+    check("once agy has said what it runs on, an agent can be started on Gemini 4 Neon", told == "Launching in shop with Gemini 4 Neon.", told)
+    neon = until(lambda: agy(True), 60)
+    asked_for = lambda has: [c for c in cards(agy(True)) if has in c["text"]]
+    card = until(lambda: asked_for("hello.txt"), 120)
+    check("a file it writes is put to him as that file (write_file, its Path)", card and card[0]["text"] == f"Wants to write the file {os.path.join(shop, 'hello.txt')}. Allow?" and card[0]["options"] == ["Allow", "Deny"], cards(agy(True)))
+    if card:
+        say("Allow", re=card[0]["id"], act={"kind": "verdict", "allow": True})
+    check("his yes lets it write it", until(lambda: os.path.exists(os.path.join(shop, "hello.txt")) and open(os.path.join(shop, "hello.txt")).read().strip() == "hi there", 60))
+    until(lambda: agy(True) and agy(True)["state"] not in ("working", "asking"), 120)
+    call = "@" + neon["callsign"].replace(" ", "") + " "
+    edited = f"Wants to edit the file {os.path.join(shop, 'notes.txt')}. Allow?"
+    say(call + "Use your file-editing tool (not the shell) to change the line beta to BETA in notes.txt.\nThen reply with exactly the word done.")
+    card = until(lambda: [c for c in asked_for("notes.txt") if c["open"]], 120)
+    check("a file it edits is put to him as that file (edit_file, its Path)", card and card[0]["text"] == edited, cards(agy(True)))
+    if card:
+        say("Allow", re=card[0]["id"], act={"kind": "verdict", "allow": True})
+    check("his yes lets it edit it", until(lambda: "BETA" in open(os.path.join(shop, "notes.txt")).read(), 60))
+    until(lambda: agy(True) and agy(True)["state"] not in ("working", "asking"), 120)
+    say(call + "Use your file-editing tool (not the shell) to change alpha to ALPHA and gamma to GAMMA in notes.txt, in one call.\nThen reply with exactly the word done.")
+    # several changes to one file are the same tool, one request or one for each: each is put as that file
+    put = []
+    for _ in range(3):
+        card = until(lambda: [c for c in asked_for("notes.txt") if c["open"]], 120)
+        if not card: break
+        put.append(card[0]["text"])
+        say("Allow", re=card[0]["id"], act={"kind": "verdict", "allow": True})
+        if until(lambda: open(os.path.join(shop, "notes.txt")).read().split() == ["ALPHA", "BETA", "GAMMA"], 20): break
+    check("several changes to a file are put to him as that file", put and all(t == edited for t in put), put)
+    check("and they are made", until(lambda: open(os.path.join(shop, "notes.txt")).read().split() == ["ALPHA", "BETA", "GAMMA"], 60), open(os.path.join(shop, "notes.txt")).read())
+    check("none of its requests is put as a tool its row has no words for", not [c for c in cards(agy(True)) if not c["text"].startswith("Wants to run `") and not c["text"].startswith("Wants to write the file ") and not c["text"].startswith("Wants to edit the file ")], [c["text"] for c in cards(agy(True))])
+    http("POST", "/v1/radio/end", {"agent": neon["id"]})
+    until(lambda: agy(True) is None, 30)
 
     print("A session he opened himself, in a terminal")
     subprocess.run(TMUX + ["new-session", "-d", "-s", "barn", "-x", "200", "-y", "50", "-c", barn, "agy", "--model", "gemini-4-neon", "--effort", "low"], env=env, check=True)

@@ -33,17 +33,8 @@
       "write_file": {
         "asks": "write the file {Path}"
       },
-      "write_to_file": {
-        "asks": "write the file {TargetFile}"
-      },
-      "replace_file_content": {
-        "asks": "edit the file {TargetFile}"
-      },
-      "multi_replace_file_content": {
-        "asks": "edit the file {TargetFile}"
-      },
-      "read_url_content": {
-        "asks": "fetch {Url}"
+      "edit_file": {
+        "asks": "edit the file {Path}"
       }
     },
     "account_id": [

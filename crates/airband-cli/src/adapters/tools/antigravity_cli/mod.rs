@@ -507,11 +507,10 @@ mod tests {
         assert_eq!(ask.what, "write the file /x/shop/note.txt");
         // the row's words for it, with what they need missing: not asked, so not allowed
         assert!(matches!(acp_leave(&json!({ "toolCall": { "name": "run_command", "rawInput": {} } }), &me), crate::adapters::AcpLeave::Own(None)));
-        // a file it writes and a page it reads, in the row's words for them (field names as `agy` 1.5.15 has them)
-        let crate::adapters::AcpLeave::Own(Some(ask)) = acp_leave(&json!({ "toolCall": { "name": "write_to_file", "title": "File note.txt", "rawInput": { "TargetFile": "/x/shop/note.txt", "CodeContent": "hello" } } }), &me) else { panic!("not read as a file") };
-        assert_eq!(ask.what, "write the file /x/shop/note.txt");
-        let crate::adapters::AcpLeave::Own(Some(ask)) = acp_leave(&json!({ "toolCall": { "name": "read_url_content", "title": "Read example.com", "rawInput": { "Url": "https://example.com/a" } } }), &me) else { panic!("not read as a page") };
-        assert_eq!(ask.what, "fetch https://example.com/a");
+        // a file it edits, as `agy acp` 1.5.15 asks it on Gemini 4 Neon: one change or several in one call, the same tool
+        let edit = json!({ "toolCall": { "name": "edit_file", "kind": "edit", "title": "File notes.txt", "rawInput": { "Path": "/x/shop/notes.txt", "Replacement": "ALPHA\nBETA", "Target": "alpha\nbeta" } } });
+        let crate::adapters::AcpLeave::Own(Some(ask)) = acp_leave(&edit, &me) else { panic!("not read as a file") };
+        assert_eq!(ask.what, "edit the file /x/shop/notes.txt");
         // a tool its row has no words for is put as itself, with exactly what it was given, never by its title
         let crate::adapters::AcpLeave::Own(Some(ask)) = acp_leave(&json!({ "toolCall": { "name": "send_command_input", "title": "Input", "rawInput": { "Input": "y\n" } } }), &me) else { panic!("not put as itself") };
         assert_eq!(ask.what, r#"send_command_input {"Input":"y\n"}"#);
