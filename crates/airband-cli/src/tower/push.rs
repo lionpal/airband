@@ -30,12 +30,14 @@ const ADDRESSES: usize = 3;
 #[derive(Default)]
 pub(super) struct Wake {
     targets: Mutex<BTreeMap<String, Vec<PushTarget>>>,
+    /// The radios woken for a line that holds an agent, by the line's id: they are told when it is over.
+    woke: Mutex<BTreeMap<String, Vec<String>>>,
 }
 
 impl Wake {
     /// The addresses kept, each under its radio's channel.
     pub(super) fn load(store: &Store) -> Result<Wake, String> {
-        Ok(Wake { targets: Mutex::new(store.push_targets()?) })
+        Ok(Wake { targets: Mutex::new(store.push_targets()?), woke: Mutex::default() })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
@@ -111,7 +113,38 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     // A request for leave that does not fit is still a request for leave, shown by its opening: it offers no
     // Allow from the lock screen. He opens it, reads all of what would run, and answers there.
     let cut = m.permission && m.text.chars().count() > MOST;
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission, cut }
+    // an agent waits on his answer to it: a request for leave or a question through its tool, not yet over
+    let held = e.permit.as_ref().and_then(|id| inner.permits.get(id)).filter(|p| p.decided.is_none());
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission, cut, holding: held.is_some(), over: false, until: held.and_then(|p| p.until) }
+}
+
+/// Requests that ended without his answer from here: each phone woken for one gets a notification in its
+/// place, quiet and with nothing to answer, that says how it ended. Runs for the tower's life.
+pub(super) async fn close_ended(app: Arc<App>) {
+    let mut changes = app.watch_changes();
+    loop {
+        let ended = std::mem::take(&mut app.change().ended);
+        let station = config::station(&app.cfg());
+        for id in ended {
+            let Some(radios) = app.push.woke.lock().unwrap().remove(&id) else { continue };
+            let note = {
+                let inner = app.read();
+                let Some(e) = inner.log.iter().find(|e| e.id == id) else { continue };
+                Notice { over: true, holding: false, options: Vec::new(), permission: false, cut: false, ..notice(&inner, e, &station) }
+            };
+            let to: Vec<(String, Vec<PushTarget>)> = {
+                let targets = app.push.targets.lock().unwrap();
+                radios.into_iter().filter_map(|r| targets.get(&r).map(|t| (r, t.clone()))).collect()
+            };
+            for (radio, targets) in to {
+                let (app, note) = (app.clone(), note.clone());
+                tokio::task::spawn_blocking(move || send(&app, &radio, &targets, note)).await.ok();
+            }
+        }
+        if changes.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.
@@ -182,7 +215,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     // only a radio paired through a relay can be woken: the relay is what holds the push service's key
     let (Some(relay), Some(pairing)) = (cfg.relay.clone(), cfg.pairings.iter().find(|p| channel_of(p).as_deref() == Some(radio))) else { return };
     let Ok(keys) = Keys::derive(&pairing.secret) else { return };
-    let what = format!("line {} ({})", note.id, if note.permission { "permission" } else if note.kind == Some(Kind::NeedsYou) { "question" } else { "report" });
+    let what = format!("line {} ({})", note.id, if note.over { "its request is over" } else if note.permission { "permission" } else if note.kind == Some(Kind::NeedsYou) { "question" } else { "report" });
     let sealed = loop {
         let sealed = keys.seal(Direction::Push, &serde_json::to_vec(&note).unwrap());
         if sealed.len() <= PUSH_MOST {
@@ -200,7 +233,10 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     let sealed = airband_core::encode::base64(&sealed);
     let client = airband_io::http::Client::new(Duration::from_secs(20));
     for target in targets {
-        let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
+        // one that holds an agent, and the one that says it is over, are kept under the line's id: the second
+        // takes the place of the first
+        let replaces = (note.holding || note.over).then(|| note.id.clone());
+        let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) && !note.over, replaces, quiet: note.over, until: note.until };
         let res = client.send(airband_io::http::Ask::post(keys.to(&relay, Route::Push)).header("authorization", keys.as_tower()).json(&ask));
         let outcome = match res {
             Err(e) => format!("the relay could not be reached ({e})"),
@@ -208,7 +244,20 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                 let status = res.status().as_u16();
                 // what the relay says, typed
                 match res.body_mut().read_json::<PushAnswer>() {
-                    Ok(answer) if answer.sent => "sent".into(),
+                    Ok(answer) if answer.sent => {
+                        if note.holding {
+                            let mut woke = app.push.woke.lock().unwrap();
+                            // only what is recent can still be waiting
+                            if woke.len() > 400 {
+                                woke.clear();
+                            }
+                            let radios = woke.entry(note.id.clone()).or_default();
+                            if !radios.iter().any(|r| r == radio) {
+                                radios.push(radio.to_string());
+                            }
+                        }
+                        "sent".into()
+                    }
                     Ok(PushAnswer { why: Some(NotPushed::Gone), .. }) => {
                         let mut all = app.push.targets.lock().unwrap();
                         if let Some(mine) = all.get_mut(radio) {
@@ -282,7 +331,9 @@ mod tests {
         assert!(!deserves(&line(&mut inner, "s", Some(Kind::Stalled), Some("Next I will ship.")), t));
         // not before it has been read and cut down, and not long after it was said
         assert!(!deserves(&line(&mut inner, "u", None, None), t));
-        assert!(!deserves(&line(&mut inner, "o", Some(Kind::NeedsYou), Some("Ship it?")), t + STALE_MS + 1));
+        // measured from when the line was said, not from when this test read the clock
+        let old = line(&mut inner, "o", Some(Kind::NeedsYou), Some("Ship it?"));
+        assert!(deserves(&old, old.at + STALE_MS - 1) && !deserves(&old, old.at + STALE_MS));
         // and never his own words
         let to = vec![inner.sessions[0].clone()];
         inner.record(Entry { kind: Some(Kind::NeedsYou), ..Entry::his("h".into(), &to, "ship it".into()) });
@@ -325,8 +376,8 @@ mod tests {
         let mut inner = tower();
         let s = inner.sessions[0].clone();
         let what = format!("cd /x && {}", "echo step; ".repeat(40));
-        let request = permit::Request { what: Some(what.clone()), at_keyboard: false, settled: false };
-        inner.permits.insert("p".into(), permit::Permit { agent_id: s.agent.id.clone(), entry: "c".into(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false });
+        let request = permit::Request::waiting(&what);
+        inner.permits.insert("p".into(), permit::Permit { agent_id: s.agent.id.clone(), entry: "c".into(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false, until: None });
         inner.record(Entry { short: request.line(), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some("p".into()), leave: Some(request), ..Entry::said("c".into(), &s, Some(Kind::NeedsYou), what) });
         let n = notice(&inner, inner.log.last().unwrap(), "mini");
         assert!(n.permission && n.cut, "{n:?}");
@@ -335,6 +386,22 @@ mod tests {
         inner.log.last_mut().unwrap().short = Some("Wants to run `ls`. Allow?".into());
         let n = notice(&inner, inner.log.last().unwrap(), "mini");
         assert!(n.permission && !n.cut);
+        // it holds an agent while it waits, until the time its tool gives it, and not once he answered
+        assert!(n.holding && !n.over && n.until.is_none(), "{n:?}");
+        inner.permits.get_mut("p").unwrap().until = Some(4_000_000_000);
+        assert_eq!(notice(&inner, inner.log.last().unwrap(), "mini").until, Some(4_000_000_000));
+        inner.permits.get_mut("p").unwrap().decided = Some((true, String::new()));
+        let n = notice(&inner, inner.log.last().unwrap(), "mini");
+        assert!(!n.holding && n.until.is_none(), "{n:?}");
+    }
+
+    #[test]
+    fn a_report_or_a_plain_question_holds_nobody_up() {
+        let mut inner = tower();
+        let report = line(&mut inner, "r", Some(Kind::Report), Some("Done."));
+        let question = line(&mut inner, "q", Some(Kind::NeedsYou), Some("Which one?"));
+        assert!(!notice(&inner, &report, "mini").holding);
+        assert!(!notice(&inner, &question, "mini").holding);
     }
 
     #[test]

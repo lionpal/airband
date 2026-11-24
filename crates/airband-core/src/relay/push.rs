@@ -23,6 +23,16 @@ pub struct PushRequest {
     /// It is a question to him. All the relay and the push service learn about what is inside.
     #[serde(default)]
     pub question: bool,
+    /// Which notification this one takes the place of: an opaque id the tower makes up, the same for every
+    /// notification about one line. The push service keeps only the newest under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<String>,
+    /// Shown without a sound: it closes what an earlier one asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
+    /// Not worth delivering after this, in seconds since 1970: what it asks will be over by then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
 }
 
 /// The most characters a phone's address at a push service has.
@@ -39,7 +49,9 @@ impl PushRequest {
     /// base64 of no more than [`PUSH_MOST`] bytes?
     pub fn well_formed(&self) -> bool {
         let base64 = !self.sealed.is_empty() && self.sealed.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b));
-        push_address(&self.to) && base64 && self.sealed.len() <= PUSH_MOST.div_ceil(3) * 4
+        // a replacing id is short and plain, as the push services take one (64 bytes at most)
+        let replaces = self.replaces.as_ref().is_none_or(|r| !r.is_empty() && r.len() <= 64 && r.bytes().all(|b| b.is_ascii_alphanumeric()));
+        push_address(&self.to) && base64 && replaces && self.sealed.len() <= PUSH_MOST.div_ceil(3) * 4
     }
 }
 

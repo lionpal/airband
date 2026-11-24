@@ -355,7 +355,7 @@ pub(super) async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): P
     if !ask.well_formed() {
         return not(StatusCode::BAD_REQUEST, NotPushed::WrongShape);
     }
-    match relay.push.send(ask.provider, &ask.to, &ask.sealed, ask.question).await {
+    match relay.push.send(&ask).await {
         None => not(StatusCode::SERVICE_UNAVAILABLE, NotPushed::NoSuchService),
         Some(push::Outcome::Sent) => (StatusCode::OK, axum::Json(PushAnswer { sent: true, ..PushAnswer::default() })).into_response(),
         Some(push::Outcome::Gone) => not(StatusCode::GONE, NotPushed::Gone),
@@ -959,7 +959,7 @@ mod tests {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();
             headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
-            let body = serde_json::to_vec(&PushRequest { provider, to: to.into(), sealed: "c2VhbGVk".into(), question: true }).unwrap();
+            let body = serde_json::to_vec(&PushRequest { provider, to: to.into(), sealed: "c2VhbGVk".into(), question: true, replaces: None, quiet: false, until: None }).unwrap();
             async move {
                 let res = wake_phone(State(relay), Path(channel), headers, Bytes::from(body)).await;
                 let status = res.status().as_u16();

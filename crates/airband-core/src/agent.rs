@@ -131,6 +131,10 @@ pub struct PermissionAsk {
     /// to allow or deny.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<Asked>,
+    /// When the tool stops waiting and settles the request itself, in seconds since 1970, if the tool says.
+    /// Nothing when it waits for as long as it takes. Past it, an answer from him would do nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
 }
 
 /// A question an agent put through its harness's own asking tool.

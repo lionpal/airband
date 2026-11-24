@@ -65,6 +65,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app
         PRODUCT_NAME: Airband
+        # both files carry Time Sensitive Notifications: a request that holds an agent comes through a focus
         CODE_SIGN_ENTITLEMENTS: Airband$(AIRBAND_COMMUNICATION_SUFFIX).entitlements
         # set by scripts/testflight.sh; empty for a build signed automatically
         PROVISIONING_PROFILE_SPECIFIER: $(AIRBAND_APP_PROFILE)

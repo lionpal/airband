@@ -213,6 +213,9 @@ pub enum Withdrawn {
     Unanswered,
     /// The tool says the request is settled already: answered at its keyboard, or refused by the tool itself.
     SettledThere,
+    /// The time the tool gave the request ran out (its [`crate::agent::PermissionAsk::until`]): the tool
+    /// settles it itself.
+    RanOut,
 }
 
 /// `GET permission/{id}`: how many seconds to wait for his answer.

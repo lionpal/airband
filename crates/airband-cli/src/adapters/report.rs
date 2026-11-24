@@ -10,6 +10,7 @@ use std::io::Read;
 ///   echo "long message" | airband report --id build-7 --harness my-tool said -
 ///   airband report --id build-7 --harness my-tool show chart.png      (a picture for him, shown with what it says next)
 ///   airband report --id build-7 --harness my-tool permission "run the production migration"   (waits for his yes or no)
+///   airband report --id build-7 --harness my-tool --within 120 permission "run it"   (the script stops waiting after 120 seconds)
 ///   airband report --id build-7 --harness my-tool made https://example.com/preview/7 "Checkout preview"   (a card for it)
 ///   airband report --id build-7 --harness my-tool signoff
 ///
@@ -18,6 +19,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut agent = airband_core::agent::Agent { cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), ..crate::adapters::agent_with(String::new(), String::new()) };
     let mut rest = Vec::new();
     let (mut terminal, mut pane) = (None, None);
+    // how long a script waits on a request for leave before it settles it itself, if it says
+    let mut within: Option<u64> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().cloned().ok_or(format!("{flag} needs a value"));
@@ -33,6 +36,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 let (k, v) = pair.split_once('=').ok_or("--meta takes key=value")?;
                 agent.meta.insert(k.to_string(), v.into());
             }
+            "--within" => within = Some(value("--within")?.parse().ok().filter(|s| *s > 0).ok_or("--within needs a number of seconds")?),
             "--terminal" => terminal = Some(value("--terminal")?),
             "--pane" => pane = Some(value("--pane")?),
             // the tower started this agent and holds its input
@@ -82,7 +86,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         if what.is_empty() {
             return Err("say what it wants to do: permission \"run the production migration\"".into());
         }
-        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new(), question: None };
+        let until = within.map(|s| airband_core::clock::now_secs() + s);
+        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new(), question: None, until };
         match super::ask_him(&ask) {
             Some((true, _)) => return Ok(()),
             Some((false, reason)) => {

@@ -79,6 +79,18 @@ pub struct Notice {
     /// the lock screen: he reads all of what would run first.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cut: bool,
+    /// An agent is held, waiting on his answer to this: a request for leave, or a question put through its
+    /// tool's own asking. Shown so it breaks through a focus he has on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub holding: bool,
+    /// What this line asked of him is over without his answer from here: it takes the place of the
+    /// notification that asked, quietly, with nothing left to answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub over: bool,
+    /// When the tool stops waiting on it, in seconds since 1970, if the tool said. Past it the notification is
+    /// worth nothing, and is not kept for a phone that is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
 }
 
 /// What deserves a notification: a message that needs him, a report, or one no model read. Never chatter, a

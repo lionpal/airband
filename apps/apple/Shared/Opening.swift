@@ -30,6 +30,14 @@ enum Opening {
         // added to what came, not in place of it: the system needs its own part of a notification left alone
         content.userInfo.merge(["station": note.station, "message": note.message, "room": note.room, "agent": note.agent, "options": note.options]) { _, mine in mine }
         content.categoryIdentifier = NoticeButtons.name(for: note.buttons, options: note.options)
+        // how hard it breaks in on him, as the core decided from what the notification is
+        switch note.level {
+        case .timeSensitive: content.interruptionLevel = .timeSensitive
+        case .active: content.interruptionLevel = .active
+        case .passive:
+            content.interruptionLevel = .passive
+            content.sound = nil
+        }
         let picture = badgeImage(note.badge, colour: note.colour)
         let opened = NoticeHow.opened(message: note.message, buttons: note.buttons, permission: note.permission)
         // a question's own answers have to be registered as buttons before it is shown. Where they could not

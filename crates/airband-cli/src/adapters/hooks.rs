@@ -268,7 +268,8 @@ pub(crate) fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsew
         n if n > DETAIL => format!("{}\n\n(The first 6,000 of {n} characters.{elsewhere})", whole.chars().take(DETAIL).collect::<String>()),
         _ => whole,
     };
-    Some(PermissionAsk { schema: SCHEMA.into(), agent, what, detail: format!("{tool}\n{detail}"), question })
+    // none of these tools says how long it waits on a request: it waits as long as he takes
+    Some(PermissionAsk { schema: SCHEMA.into(), agent, what, detail: format!("{tool}\n{detail}"), question, until: None })
 }
 
 /// His answer to a request, as a tool with hooks of this shape wants it printed. A refusal carries his reason.

@@ -325,7 +325,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false };
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false, holding: false, over: false, until: None };
     let open = |links: Vec<String>, sealed: String, colours: HashMap<String, u8>| match open_notice(links, Some(sealed), colours) {
         NoticeOpening::Opened { notice } => Ok(notice),
         NoticeOpening::Plain { why } => Err(why),
@@ -348,6 +348,18 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     assert!(long.permission);
     assert_eq!(long.buttons, NoticeButtonSet::PermitAfterReading);
     assert_eq!(open(vec![link(&laptop)], seal(&Notice { options: Vec::new(), ..question.clone() }), Default::default()).unwrap().buttons, NoticeButtonSet::Reply);
+    // a request that holds an agent comes through a focus he has on; a report or a question that holds
+    // nothing up does not, and one saying a request is over is quiet and offers nothing
+    assert_eq!(card.level, NoticeLevel::Active, "a card the tower does not say holds an agent");
+    let held = open(vec![link(&laptop)], seal(&Notice { permission: true, holding: true, ..question.clone() }), Default::default()).unwrap();
+    assert_eq!((held.level, held.buttons), (NoticeLevel::TimeSensitive, NoticeButtonSet::Permit));
+    let asked = open(vec![link(&laptop)], seal(&Notice { holding: true, ..question.clone() }), Default::default()).unwrap();
+    assert_eq!((asked.level, asked.buttons), (NoticeLevel::TimeSensitive, NoticeButtonSet::Answers));
+    assert_eq!(got.level, NoticeLevel::Active);
+    let report = open(vec![link(&laptop)], seal(&Notice { kind: Some(Kind::Report), options: Vec::new(), ..question.clone() }), Default::default()).unwrap();
+    assert_eq!(report.level, NoticeLevel::Active);
+    let over = open(vec![link(&laptop)], seal(&Notice { permission: true, over: true, text: "Wants to run `ls`. Settled at the keyboard.".into(), ..question.clone() }), Default::default()).unwrap();
+    assert_eq!((over.level, over.buttons, over.permission, over.question), (NoticeLevel::Passive, NoticeButtonSet::Nothing, false, false));
     // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all: each
     // with its own reason
     assert_eq!(open(vec![link(&mini), link(&stranger)], seal(&question), Default::default()), Err(NoticeTrouble::NoPairingOpensIt));

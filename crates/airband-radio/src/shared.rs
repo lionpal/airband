@@ -164,6 +164,7 @@ impl NoticeShown {
                     crate::NoticeButtonSet::PermitAfterReading => "Deny only (too long to allow unread)",
                     crate::NoticeButtonSet::Answers => "its answers",
                     crate::NoticeButtonSet::Reply => "a reply box",
+                    crate::NoticeButtonSet::Nothing => "nothing: what it asked is over",
                 };
                 format!("{when} {what} {message} shown with {with}")
             }

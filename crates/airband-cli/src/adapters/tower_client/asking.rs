@@ -80,7 +80,8 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     if asked.state != airband_core::agent::Leave::Pending {
         return Answer::Nobody;
     }
-    let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
+    // the tower's wait already ends no later than the tool's own time for it
+    let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(1));
     while std::time::Instant::now() < until {
         if still.is_some_and(|still| !still()) {
             break;
@@ -98,7 +99,14 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     }
     // he did not answer, or it was settled at the tool: take the question back at once, saying which, so the feed
     // does not offer an answer that no longer does anything
-    let why = if still.is_some_and(|still| !still()) { wire::Withdrawn::SettledThere } else { wire::Withdrawn::Unanswered };
+    let ran_out = request.until.is_some_and(|t| airband_core::clock::now_secs() >= t);
+    let why = if still.is_some_and(|still| !still()) {
+        wire::Withdrawn::SettledThere
+    } else if ran_out {
+        wire::Withdrawn::RanOut
+    } else {
+        wire::Withdrawn::Unanswered
+    };
     here.call::<at::PermissionWithdraw>(Some(&asked.id), &wire::WithdrawQuery { why }, None).ok();
     Answer::Unanswered
 }

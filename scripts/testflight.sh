@@ -22,6 +22,8 @@
 # And once, for the folder the app and its extension share: developer.apple.com → Identifiers → App Groups → +
 # → group.dev.airband, then tick it under App Groups on dev.airband.app and on dev.airband.app.notify. Apple's
 # API cannot do either. This script stops when a profile does not carry it.
+# And once, for a request from an agent to come through a focus he has on: Identifiers → dev.airband.app →
+# Time Sensitive Notifications. This script stops when the app's profile does not carry it.
 #
 # The signing profiles are regenerated each time against whichever distribution certificate this Mac holds, so the
 # script does not depend on a profile made on one particular machine.
@@ -109,6 +111,7 @@ in_group airband_appstore || { echo "✗ the app's profile does not have the App
 in_group airband_notify_appstore || { echo "✗ the notification extension's profile does not have the App Group group.dev.airband (see the top of this script)"; exit 1; }
 # the car's screen: the capability is a tick box on the identifier at developer.apple.com (Capability Requests)
 entitled com.apple.developer.carplay-voice-based-conversation || { echo "✗ the app's profile has no CarPlay voice conversation capability"; exit 1; }
+entitled com.apple.developer.usernotifications.time-sensitive || { echo "✗ the app's profile has no Time Sensitive Notifications (see the top of this script)"; exit 1; }
 if entitled com.apple.developer.usernotifications.communication; then
   COMMUNICATION=(AIRBAND_COMMUNICATION=YES AIRBAND_COMMUNICATION_SUFFIX=-communication)
   echo "✓ Communication Notifications is on: a notification carries the agent's badge"

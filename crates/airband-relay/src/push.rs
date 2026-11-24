@@ -11,7 +11,7 @@
 //!   APNS_TOPIC     the app's bundle id
 //!   APNS_HOST      where to send (default https://api.push.apple.com; a development build needs the sandbox)
 #![expect(clippy::disallowed_macros, reason = "Apple's own token and notification shapes")]
-use airband_core::relay::PushService;
+use airband_core::relay::{PushRequest, PushService};
 use airband_core::encode::base64_url;
 use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair};
@@ -104,11 +104,41 @@ impl Push {
         if self.apns.is_some() { "can wake iPhones (Apple's push service)" } else { "has no push service: phones are not woken" }
     }
     /// Hand a sealed notification to the service an address belongs to. Nothing when this relay has no such service.
-    pub(crate) async fn send(&self, provider: PushService, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
-        match provider {
-            PushService::Apns => Some(self.apns.as_ref()?.send(to, sealed, question).await),
+    pub(crate) async fn send(&self, ask: &PushRequest) -> Option<Outcome> {
+        match ask.provider {
+            PushService::Apns => Some(self.apns.as_ref()?.send(ask).await),
         }
     }
+}
+
+/// What Apple is handed for a notification, and until when it keeps it for a phone that is off. What shows if
+/// the phone cannot open it (the app's extension did not run) is the same few words every time.
+fn apple_body(ask: &PushRequest, now: u64) -> (String, u64) {
+    let body = if ask.quiet {
+        "That request is over"
+    } else if ask.question {
+        "An agent needs you"
+    } else {
+        "New message"
+    };
+    let mut aps = serde_json::json!({ "alert": { "title": "airband", "body": body }, "mutable-content": 1 });
+    if !ask.quiet {
+        aps["sound"] = "default".into();
+    }
+    // kept by Apple for a phone that is off: a question for a day, anything else for an hour, and never past
+    // the time the tower says it is worth something
+    let kept = now + if ask.question { 86_400 } else { 3600 };
+    let until = ask.until.map_or(kept, |u| u.min(kept));
+    (serde_json::json!({ "aps": aps, "sealed": ask.sealed }).to_string(), until)
+}
+
+/// The header that has Apple keep only the newest notification under one id.
+fn collapse(ask: &PushRequest) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(id) = ask.replaces.as_deref().and_then(|r| reqwest::header::HeaderValue::from_str(r).ok()) {
+        headers.insert("apns-collapse-id", id);
+    }
+    headers
 }
 
 /// Apple's push service, with a signing key (token-based authentication, HTTP/2).
@@ -153,15 +183,9 @@ impl Apns {
         Ok(made)
     }
 
-    async fn send(&self, to: &str, sealed: &str, question: bool) -> Outcome {
-        // what shows if the phone cannot open it (the app's extension did not run): the same words every time
-        let body = serde_json::json!({
-            "aps": { "alert": { "title": "airband", "body": if question { "An agent needs you" } else { "New message" } }, "sound": "default", "mutable-content": 1 },
-            "sealed": sealed,
-        })
-        .to_string();
-        // kept by Apple for a phone that is off: a question for a day, anything else for an hour
-        let until = airband_core::clock::now_secs() + if question { 86_400 } else { 3600 };
+    async fn send(&self, ask: &PushRequest) -> Outcome {
+        let to = &ask.to;
+        let (body, until) = apple_body(ask, airband_core::clock::now_secs());
         let mut tried_again = false;
         loop {
             let pass = match self.pass() {
@@ -177,6 +201,7 @@ impl Apns {
                 .header("apns-priority", "10")
                 .header("apns-expiration", until.to_string())
                 .header("content-type", "application/json")
+                .headers(collapse(ask))
                 .body(body.clone())
                 .send()
                 .await;
@@ -252,6 +277,26 @@ pub(crate) mod tests {
         assert!(Apns::new("not a key", "K", "T", "t", "http://x").is_err());
     }
 
+    /// A notification that closes what an earlier one asked takes its place quietly, under the id the tower
+    /// gave; one about something with a deadline is not kept past it.
+    #[test]
+    fn what_apple_is_handed_follows_the_typed_request() {
+        let ask = PushRequest { provider: PushService::Apns, to: "ab".into(), sealed: "c2VhbGVk".into(), question: true, replaces: None, quiet: false, until: None };
+        let (body, until) = apple_body(&ask, 1000);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!((v["aps"]["sound"].as_str(), v["aps"]["alert"]["body"].as_str(), until), (Some("default"), Some("An agent needs you"), 1000 + 86_400));
+        assert!(collapse(&ask).is_empty());
+        let over = PushRequest { replaces: Some("c0ffee12".into()), quiet: true, until: Some(1100), ..ask };
+        let (body, until) = apple_body(&over, 1000);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(v["aps"].get("sound").is_none(), "{v}");
+        assert_eq!((v["aps"]["alert"]["body"].as_str(), v["sealed"].as_str(), until), (Some("That request is over"), Some("c2VhbGVk"), 1100));
+        assert_eq!(collapse(&over).get("apns-collapse-id").unwrap(), "c0ffee12");
+        // a replacing id that is not a short plain one is not passed on at all
+        assert!(!PushRequest { replaces: Some("not plain!".into()), ..over.clone() }.well_formed());
+        assert!(!PushRequest { replaces: Some("a".repeat(65)), ..over }.well_formed());
+    }
+
     #[test]
     fn a_channel_sends_so_many_and_then_waits() {
         let (mut slot, t0) = (None, Instant::now());
@@ -267,7 +312,8 @@ pub(crate) mod tests {
     async fn apple_itself_refuses_an_address_nobody_has() {
         let key = std::fs::read_to_string(std::env::var("APNS_KEY_PATH").expect("APNS_KEY_PATH")).unwrap();
         let apns = Apns::new(&key, &std::env::var("APNS_KEY_ID").unwrap(), &std::env::var("APNS_TEAM_ID").unwrap(), &std::env::var("APNS_TOPIC").unwrap(), "https://api.push.apple.com").unwrap();
-        let outcome = apns.send(&"ab".repeat(32), "c2VhbGVk", false).await;
+        let ask = PushRequest { provider: PushService::Apns, to: "ab".repeat(32), sealed: "c2VhbGVk".into(), question: false, replaces: None, quiet: false, until: None };
+        let outcome = apns.send(&ask).await;
         println!("Apple answered: {outcome:?}");
         assert_eq!(outcome, Outcome::Gone);
     }

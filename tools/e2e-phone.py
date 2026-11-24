@@ -41,8 +41,9 @@ work = tempfile.mkdtemp(prefix="airband-phone-e2e-")
 home, data, project, heard = (os.path.join(work, d) for d in ("tower", "relay", "shop", "heard.jsonl"))
 for d in (os.path.join(home, ".airband"), data, project):
     os.makedirs(d)
+# a request asked early waits through the whole test: one that gave up would send a notification of its own
 json.dump({"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": COMPUTER, "relay": f"http://127.0.0.1:{RELAY_PORT}",
-           "summarizer": {"kind": "none"}, "lan": False, "permission_wait": 60}, open(os.path.join(home, ".airband", "config.json"), "w"))
+           "summarizer": {"kind": "none"}, "lan": False, "permission_wait": 600}, open(os.path.join(home, ".airband", "config.json"), "w"))
 # through the relay only, as in tools/e2e-relay.py: the phone is given no address of the tower's own
 tower_env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_NO_PRIVATE_NETWORK="1")
 # a signing key made for this run alone, and the stand-in push service on this machine
@@ -117,7 +118,7 @@ class Apns(http.server.BaseHTTPRequestHandler):
         # as Apple would hand it to the phone; the app is named on the command line
         open(path, "wb").write(body)
         push = {"to": self.path.rsplit("/", 1)[-1], "push_type": self.headers.get("apns-push-type"), "priority": self.headers.get("apns-priority"),
-                "topic": self.headers.get("apns-topic"), "payload": json.loads(body), "delivered": False}
+                "topic": self.headers.get("apns-topic"), "collapse": self.headers.get("apns-collapse-id"), "payload": json.loads(body), "delivered": False}
         pushes.append(push)
         # accepted at once, as Apple does; the simulator is handed it after
         self.send_response(200)
@@ -135,8 +136,11 @@ threading.Thread(target=apns.serve_forever, daemon=True).start()
 # what an agent is to ask, by kind: a report, a question, and requests for leave. A request for leave waits for
 # his answer, so it is asked on a thread of its own.
 LONG = "cd /tmp/shop && " + " && ".join(f"echo step {n} of the long build" for n in range(1, 21))
-ASKS = {"report": ["said", "The checker passes on all twelve units."], "question": ["asked", "Rewrite the two easy questions, or leave them?"],
-        "permission": ["permission", "run `npm run deploy`"], "long-permission": ["permission", f"run `{LONG}`"]}
+# Each request for leave is its own agent's: one agent's newer request would take the place of its earlier one.
+# The brief one's tool stops waiting after 8 seconds, and settles it itself.
+ASKS = {"report": ("a1", ["said", "The checker passes on all twelve units."]), "question": ("a1", ["asked", "Rewrite the two easy questions, or leave them?"]),
+        "permission": ("p1", ["permission", "run `npm run deploy`"]), "long-permission": ("p2", ["permission", f"run `{LONG}`"]),
+        "brief-permission": ("p3", ["--within", "8", "permission", "run `make release`"])}
 
 
 class Control(http.server.BaseHTTPRequestHandler):
@@ -196,8 +200,8 @@ class Control(http.server.BaseHTTPRequestHandler):
                 relay = start_relay()
                 return self.answer({"listening": listening(RELAY_PORT)})
             if self.path.startswith("/ask/") and self.path[5:] in ASKS:
-                words = ASKS[self.path[5:]]
-                ask = lambda: subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, *words], env=tower_env, capture_output=True, timeout=120)
+                agent, words = ASKS[self.path[5:]]
+                ask = lambda: subprocess.run([BIN, "report", "--id", agent, "--harness", "script", "--cwd", project, *words], env=tower_env, capture_output=True, timeout=120)
                 threading.Thread(target=ask, daemon=True).start()
                 return self.answer({"asked": self.path[5:]})
         self.answer({"wrong": self.path}, 404)

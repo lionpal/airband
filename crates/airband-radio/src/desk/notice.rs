@@ -32,6 +32,31 @@ pub struct OpenedNotice {
     /// Who it is from, the same for every notice of that agent on that computer: the thread it is grouped in,
     /// and the sender the system groups it under.
     pub thread: String,
+    /// How hard it breaks in on him.
+    pub level: NoticeLevel,
+}
+
+/// How hard a notification breaks in on him, as the host's system has it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoticeLevel {
+    /// An agent is held waiting on his answer: it comes through a focus he has on, with its sound.
+    TimeSensitive,
+    /// A report, a question that holds nothing up: shown and sounded as the system usually does.
+    Active,
+    /// It closes what an earlier one asked: shown in its place, with no sound and nothing lit up.
+    Passive,
+}
+
+impl NoticeLevel {
+    /// The level for a notification, from what the tower says it is.
+    pub(super) fn of(n: &airband_core::radio::Notice) -> NoticeLevel {
+        match (n.over, n.holding) {
+            (true, _) => NoticeLevel::Passive,
+            (false, true) => NoticeLevel::TimeSensitive,
+            (false, false) => NoticeLevel::Active,
+        }
+    }
 }
 /// What a button under a question stood for.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -73,6 +98,8 @@ pub enum NoticeButtonSet {
     Answers,
     /// A reply box alone.
     Reply,
+    /// None: what it asked is over.
+    Nothing,
 }
 
 /// Why a notification could not be opened on this device. It is then shown as the push service delivered it,
@@ -139,12 +166,14 @@ fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections:
     let (keys, plain) = keys.into_iter().find_map(|k| k.open(Direction::Push, &sealed).ok().map(|p| (k, p))).ok_or(NoticeTrouble::NoPairingOpensIt)?;
     let n: airband_core::radio::Notice = serde_json::from_slice(&plain).map_err(|_| NoticeTrouble::NotANotice)?;
     let room = n.team.as_ref().map(|t| room_id(&StationId::new(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
+    let level = NoticeLevel::of(&n);
     let agent = n.agent.unwrap_or_default();
-    let buttons = match (n.permission, n.cut, n.options.is_empty()) {
-        (true, false, _) => NoticeButtonSet::Permit,
-        (true, true, _) => NoticeButtonSet::PermitAfterReading,
-        (false, _, true) => NoticeButtonSet::Reply,
-        (false, _, false) => NoticeButtonSet::Answers,
+    let buttons = match (n.over, n.permission, n.cut, n.options.is_empty()) {
+        (true, ..) => NoticeButtonSet::Nothing,
+        (false, true, false, _) => NoticeButtonSet::Permit,
+        (false, true, true, _) => NoticeButtonSet::PermitAfterReading,
+        (false, false, _, true) => NoticeButtonSet::Reply,
+        (false, false, _, false) => NoticeButtonSet::Answers,
     };
     Ok(OpenedNotice {
         thread: format!("{}/{agent}", keys.channel),
@@ -157,10 +186,11 @@ fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections:
         body: n.text,
         badge: n.badge,
         agent,
-        question: n.kind == Some(Kind::NeedsYou),
+        question: n.kind == Some(Kind::NeedsYou) && !n.over,
         options: if n.permission { Vec::new() } else { n.options },
-        permission: n.permission,
+        permission: n.permission && !n.over,
         buttons,
+        level,
     })
 }
 

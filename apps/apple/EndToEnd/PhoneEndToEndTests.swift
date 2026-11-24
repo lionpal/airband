@@ -149,9 +149,10 @@ final class PhonePushTests: XCTestCase {
         let kept = folder.notices().count
         /// Ask for one kind: what the relay handed the push service for it, what the simulator showed of that
         /// push, and what the extension's code showed of it and kept.
-        func ask(_ kind: String) throws -> (push: Tower.Push, plain: UNNotificationContent, content: UNNotificationContent, how: NoticeHow) {
+        /// With `asking` false nothing is asked: it is the next push that is taken, as one the tower sends itself.
+        func ask(_ kind: String, asking: Bool = true) throws -> (push: Tower.Push, plain: UNNotificationContent, content: UNNotificationContent, how: NoticeHow) {
             let (pushes, plains, added) = (try tower.pushes().count, shown.pushed.count, shown.added.count)
-            try tower.ask(kind)
+            if asking { try tower.ask(kind) }
             XCTAssertTrue(shown.until(60) { ((try? tower.pushes().count) ?? 0) > pushes }, "the tower woke the phone for the \(kind)")
             let push = try tower.pushes()[pushes]
             XCTAssertTrue(shown.until(30) { shown.pushed.count > plains }, "the simulator showed the push for the \(kind)")
@@ -182,11 +183,14 @@ final class PhonePushTests: XCTestCase {
         XCTAssertEqual([question.plain.title, question.plain.body], ["airband", "An agent needs you"])
         XCTAssertEqual(question.content.body, "Rewrite the two easy questions, or leave them?")
         XCTAssertEqual(question.content.categoryIdentifier, NoticeButtons.reply)
+        // neither holds an agent up: shown as the system usually shows one
+        XCTAssertEqual([report.content.interruptionLevel, question.content.interruptionLevel], [.active, .active])
 
         let card = try ask("permission")
         XCTAssertEqual([card.plain.title, card.plain.body], ["airband", "An agent needs you"])
         XCTAssertEqual(card.content.body, "Wants to run `npm run deploy`. Allow?")
         XCTAssertEqual(card.content.categoryIdentifier, NoticeButtons.permit)
+        XCTAssertEqual(card.content.interruptionLevel, .timeSensitive, "a request that holds an agent comes through a focus")
         guard case .opened(let message, .permit, true) = card.how else { return XCTFail("\(card.how)") }
         XCTAssertEqual(card.content.userInfo["message"] as? String, message, "an answer from it goes to the request it shows")
         let categories = try categoriesNow(center)
@@ -198,13 +202,30 @@ final class PhonePushTests: XCTestCase {
         guard case .opened(_, .permitAfterReading, true) = long.how else { return XCTFail("\(long.how)") }
         XCTAssertEqual(categories[NoticeButtons.permitAfterReading], [noticeDenyId(), NoticeButtons.typed])
 
+        // a request whose tool gives it 8 seconds: when they are up, a quiet notification with nothing to answer
+        // takes its place, under the same id, and says how it ended
+        let brief = try ask("brief-permission")
+        XCTAssertEqual(brief.content.interruptionLevel, .timeSensitive)
+        guard case .opened(let briefLine, .permit, true) = brief.how else { return XCTFail("\(brief.how)") }
+        XCTAssertEqual(brief.push.collapse, briefLine, "kept under its line's id, for what follows to take its place")
+        let over = try ask("brief-permission over", asking: false)
+        XCTAssertEqual([over.plain.title, over.plain.body], ["airband", "That request is over"])
+        XCTAssertEqual(over.content.body, "Wants to run `make release`. Its time ran out. Nothing was allowed.")
+        XCTAssertEqual(over.content.categoryIdentifier, NoticeButtons.over)
+        XCTAssertEqual(over.content.interruptionLevel, .passive)
+        XCTAssertNil(over.content.sound)
+        XCTAssertNil(over.push.payload.aps.sound, "Apple is asked for no sound")
+        XCTAssertEqual(over.push.collapse, briefLine)
+        guard case .opened(briefLine, .nothing, false) = over.how else { return XCTFail("\(over.how)") }
+        XCTAssertEqual(try categoriesNow(center)[NoticeButtons.over], [])
+
         // what reached the push service, as Apple is handed it: an alert, at once, for this app, that the
         // phone may change, carrying nothing readable but the same few words
         // read again: the simulator was handed each after the relay had its answer
         let pushes = try tower.pushes()
-        XCTAssertEqual(pushes.count, 4, "one each, and nothing else")
-        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), [report.push, question.push, card.push, long.push].map(\.payload.aps.alert.body))
-        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you"])
+        XCTAssertEqual(pushes.count, 6, "one each, and nothing else")
+        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), [report.push, question.push, card.push, long.push, brief.push, over.push].map(\.payload.aps.alert.body))
+        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you", "An agent needs you", "That request is over"])
         for push in pushes {
             XCTAssertEqual([push.to, push.pushType, push.priority, push.topic], [address, "alert", "10", "dev.airband.app"])
             XCTAssertTrue(push.delivered)
@@ -320,8 +341,9 @@ struct Tower {
                 struct Alert: Decodable { let title, body: String }
                 let alert: Alert
                 let mutableContent: Int
+                let sound: String?
                 enum CodingKeys: String, CodingKey {
-                    case alert
+                    case alert, sound
                     case mutableContent = "mutable-content"
                 }
             }
@@ -329,10 +351,12 @@ struct Tower {
             let sealed: String
         }
         let to, pushType, priority, topic: String
+        /// The id it is kept under, for a later one to take its place.
+        let collapse: String?
         let payload: Payload
         let delivered: Bool
         enum CodingKeys: String, CodingKey {
-            case to, priority, topic, payload, delivered
+            case to, priority, topic, payload, delivered, collapse
             case pushType = "push_type"
         }
     }
