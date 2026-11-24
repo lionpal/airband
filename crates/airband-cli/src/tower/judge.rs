@@ -6,6 +6,8 @@ use crate::providers::{By, Interface, Job, Offer};
 use super::edges::models::Model;
 
 mod brief;
+#[cfg(test)]
+mod eval;
 mod chosen;
 mod later;
 mod models;
@@ -146,13 +148,17 @@ fn reading(cfg: &Config, item: &Item) -> String {
          importer\", \"then I will wire the tests\") from an agent that has stopped is \"stalled\", however \
          much it reports before that.\n\n\
          {how}\n\n\
-         Last, only when it is \"needs-you\" and he could answer by choosing: the choices, as button labels. At \
-         most three, one to three words each, in the order the agent gave them. \"recommended\" is the position \
-         (0 for the first) of the choice the AGENT ITSELF said it recommends or would do; null if it expressed \
-         no preference. Never pick one yourself: he must be able to trust that a marked choice is the agent\'s \
-         advice. A yes-or-no question gets [\"Yes\",\"No\"]. \
-         \"Rewrite them or leave them?\" gets [\"Rewrite\",\"Leave\"]. If the answer needs his own words, or he \
-         has to go and do something, give none.\n\n\
+         Last, only when it is \"needs-you\": the choices, as button labels, for the question the agent ends on \
+         (its actual ask, usually its last sentence). At most three, one to three words each, in the order the \
+         agent gave them. \"recommended\" is the position (0 for the first) of the choice the AGENT ITSELF said \
+         it recommends or would do; null if it expressed no preference. Never pick one yourself: he must be able \
+         to trust that a marked choice is the agent\'s advice. A question he can answer with a yes or a no \
+         (\"Should I…?\", \"Shall I…?\", \"Want me to…?\", \"Do you want me to…?\") always gets \
+         [\"Yes\",\"No\"], however much the message says before it. \
+         \"Rewrite them or leave them?\" gets [\"Rewrite\",\"Leave\"]. Other decisions the message lists or \
+         leaves open for later never take the buttons away from the question it ends on: they go in \"say\". \
+         Give none only when that question itself needs his own words (wording, names, a number, a choice among \
+         things it did not name), or when what it waits for is something he has to go and do.\n\n\
          And \"read\": when the message itself contains something he asked to be shown, or would have to read \
          whole before he could decide (the draft of an email, a plan, a list of what will change, the text of \
          a page), name that thing in two or three words (\"the refund email\", \"the migration plan\"). He is \
