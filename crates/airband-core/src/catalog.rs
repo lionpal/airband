@@ -107,6 +107,8 @@ pub struct Tool {
     /// What the code that speaks to this tool is told about it: the program's name, the addresses its
     /// accounts are asked at. Programs and addresses again, so these too are always this build's own.
     pub with: BTreeMap<String, Value>,
+    /// What the tool calls the commands and skills he can pick for its agents, as he is shown them.
+    pub commands: crate::commands::Terms,
 }
 
 impl Tool {

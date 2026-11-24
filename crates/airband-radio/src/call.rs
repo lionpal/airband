@@ -226,7 +226,7 @@ pub(crate) enum Went {
 
 /// Send what he said, under the id of its take (`take`), and keep its recording until his computer has it.
 pub(crate) fn send_said(line: &CallLine, host: &dyn RadioHost, takes: &crate::takes::Takes, text: &str, take: Option<String>, re: Option<String>, scope: Option<String>) -> Went {
-    let out = line.session.outgoing(take.clone().unwrap_or_else(|| random_hex(12)), text, re, scope, None);
+    let out = Outgoing { spoken: true, ..line.session.outgoing(take.clone().unwrap_or_else(|| random_hex(12)), text, re, scope, None) };
     let to_outbox = |out: Outgoing| {
         if let Some(take) = &take {
             takes.sent(take);

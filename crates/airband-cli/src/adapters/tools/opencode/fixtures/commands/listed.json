@@ -1,0 +1,7 @@
+[
+  {"name": "init", "about": "guided AGENTS.md setup"},
+  {"name": "review", "about": "review changes [commit|branch|pr], defaults to uncommitted"},
+  {"name": "release/notes", "about": "Write the release notes"},
+  {"name": "standup", "about": "What I did yesterday"},
+  {"name": "fix-tests", "about": "Fix the failing tests"}
+]

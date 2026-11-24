@@ -16,6 +16,11 @@
       }
     }
   ],
+  "commands": {
+    "term": "Skills",
+    "skill": "skill",
+    "command": "command"
+  },
   "with": {
     "program": "codex",
     "home": ".codex",
@@ -96,6 +101,11 @@
       "{words}"
     ],
     "hooks_file": "hooks.json",
-    "sessions": "sessions"
+    "sessions": "sessions",
+    "skills_folder": "skills",
+    "agents_skills": ".agents/skills",
+    "system_skills": ".system",
+    "plugins_cache": "plugins/cache",
+    "plugin_manifest": ".codex-plugin/plugin.json"
   }
 }

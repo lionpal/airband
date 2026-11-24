@@ -7,6 +7,11 @@ pub(super) async fn takeover(State(app): State<Arc<App>>, Sent(to): Sent<at::Tak
     done()
 }
 
+/// The commands and skills an agent's tool takes, and whether each runs from here.
+pub(super) async fn agent_commands(State(app): State<Arc<App>>, Ask(q): Ask<at::Commands>) -> Answer<at::Commands> {
+    commands::of(&app, &q.agent).await.map(Json).map_err(no)
+}
+
 /// He stopped what an agent is doing.
 pub(super) async fn stop_agent(State(app): State<Arc<App>>, Sent(to): Sent<at::Stop>) -> Answer<at::Stop> {
     held::stop(&app, &to.agent).await.map_err(no)?;

@@ -32,6 +32,16 @@ as "Haiku 5.5 with low effort", answered, reported and signed off.
 Accounts against real logins: the login in use was saved and its weekly allowance read, on one Mac with one
 account. A real switch between two accounts, and `airband accounts add`, have not been run.
 
+Commands and skills from the phone: `tools/e2e-commands.py` held a real Claude Code agent (haiku, his login, a
+settings folder of the run's own) in a throwaway project with one skill. The tower listed what Claude Code's
+`initialize` gave for that folder (the project's skill with its kind, source and hint, and Claude Code's own
+commands), "/greet Ada" sent from the phone ran the skill, a skill added to the folder was listed on the next ask,
+and "slash greet Bea" said aloud was read by the model as that skill and ran. Codex, OpenCode and Antigravity CLI
+were each seen listing theirs over the Agent Client Protocol (Codex 0.171 through codex-acp 2.8.0, OpenCode
+2.3.2, agy 1.5.15), and each adapter is tested on fixture folders; none of those three has been seen running one
+picked from the phone. In the simulator, against a tower holding that agent, both ways in were seen: "/" typed
+in the box (the list above the keyboard, narrowed by "/gr") and the + panel's "Skills" entry.
+
 The tower has not been run on Windows or Linux (it builds and its tests pass there).
 
 ## The relay

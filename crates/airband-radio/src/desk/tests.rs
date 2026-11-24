@@ -1277,3 +1277,44 @@ fn words_waiting_to_be_told_who_they_are_for_stay_when_he_says_something_else() 
     assert_eq!(now.len(), 1);
     assert!(now[0].id != unplaced.id && now[0].to == ["shop two"] && now[0].text == "ship it");
 }
+
+#[test]
+fn the_box_offers_the_commands_of_the_agent_it_is_for_that_run_from_here_narrowed_to_what_he_typed() {
+    use super::slash::tests::{arrived, command};
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    let tool = airband_core::catalog::current().tools[0].clone();
+    let mut computer = station("studio", 1, &[("shop 1", "shop"), ("shop 2", "shop")], Vec::new());
+    computer.agents.iter_mut().for_each(|a| a.harness = tool.id.clone());
+    desk.shared.state.lock().unwrap().computers.push(computer);
+    let view = || desk.view().commands;
+    // closed until the box starts with a slash
+    desk.typing("rev".into(), Some("shop 1".into()));
+    assert!(view().is_none());
+    // asked for as it opens, and said to be on its way until it arrives
+    desk.typing("/".into(), Some("shop 1".into()));
+    assert!(view().unwrap().asking);
+    arrived(&mut desk.shared.state.lock().unwrap(), "shop 1", vec![command("code-review", true), command("review", true), command("compact", true), command("deploy-at-desk", false)]);
+    let open = view().unwrap();
+    assert_eq!(open.title, tool.commands.term, "headed by what its tool calls them");
+    assert_eq!(open.items.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["code-review", "review", "compact"], "only the ones that run from here, in the tool's order");
+    assert_eq!(open.items[0].kind.as_deref(), Some(tool.commands.skill.as_str()));
+    assert_eq!(open.items[1].insert, "/review ");
+    desk.typing("/rev".into(), Some("shop 1".into()));
+    assert_eq!(view().unwrap().items.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["review", "code-review"]);
+    desk.typing("/zz".into(), Some("shop 1".into()));
+    assert!(view().unwrap().items.is_empty() && view().unwrap().note.is_some());
+    // picked: the name and a space, and the list closes while he gives it what it takes
+    desk.typing("/review main".into(), Some("shop 1".into()));
+    assert!(view().is_none());
+    // an agent none of whose commands runs from here says so, and offers none
+    arrived(&mut desk.shared.state.lock().unwrap(), "shop 2", vec![command("review", false)]);
+    desk.typing("/".into(), Some("shop 2".into()));
+    let shut = view().unwrap();
+    assert!(shut.items.is_empty() && shut.note.is_some());
+    // words that would not go to one agent: a word for any tool's, and nothing to pick
+    desk.typing("/".into(), None);
+    let anyone = view().unwrap();
+    assert_eq!((anyone.title.as_str(), anyone.items.len()), (airband_core::commands::NEUTRAL, 0));
+    assert_eq!(desk.commands_title(None), airband_core::commands::NEUTRAL);
+    assert_eq!(desk.commands_title(Some("shop 1".into())), tool.commands.term);
+}

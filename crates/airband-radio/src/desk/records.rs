@@ -137,6 +137,9 @@ pub struct DeskView {
     pub asking: Option<DeskAsk>,
     /// What his computers are to be told and not all have yet, each with the computers still without it.
     pub intents: Vec<DeskIntent>,
+    /// While the box he types in holds `/` and the start of a name: the commands and skills of the agent his
+    /// words would go to that he can pick ([`Desk::typing`]).
+    pub commands: Option<CommandsView>,
     /// What he is looking at now.
     pub focus: DeskFocus,
     /// The agents he can stop now, in what he is looking at: at work, and run by their computer.

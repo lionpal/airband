@@ -20,6 +20,7 @@
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 #![cfg_attr(unix, expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol"))]
 #![cfg_attr(not(unix), allow(dead_code, reason = "its app server is reached by a unix socket, so what reads it runs on unix only"))]
+mod commands;
 use crate::adapters::env;
 use crate::adapters::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -439,6 +440,9 @@ impl crate::adapters::Harness for Codex {
     }
     fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked_in(&home())
+    }
+    fn commands(&self, agent: &Agent, listed: Option<&[airband_core::commands::Listed]>) -> Option<crate::adapters::commands::Found> {
+        commands::commands(agent, listed)
     }
 }
 

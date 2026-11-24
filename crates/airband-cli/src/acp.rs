@@ -71,7 +71,7 @@ fn no_such(setting: crate::hold::SettingKind, said: &str, has: Option<&Setting>)
 /// Open a session (a new one, or `session` carried on), set it to what he asked for, say the agent is ready,
 /// and drive it until it ends. An error is the agent never having started.
 pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), crate::hold::NotStarted> {
-    let mut opening = Opening { held, early: VecDeque::new() };
+    let mut opening = Opening { held, early: VecDeque::new(), commands: None };
     let (session, made) = opening.open(session, mode)?;
     let me = airband_core::agent::Agent { cwd: Some(held.cwd.clone()), deliver: Some(Deliver::Held), ..crate::adapters::agent_with(held.id.clone(), held.harness.clone()) };
     // What it can be set to, as it opens. Then what he asked for.
@@ -79,6 +79,9 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
     let settings = opening.set_asked(&session, made["configOptions"].clone(), &asked)?;
     held.ready(Some(session.clone()), offered);
     post(&me, Event::Checkin);
+    if let Some(commands) = opening.commands.take() {
+        post(&me, Event::Commands { list: listed(&commands) });
+    }
     // what it runs on, where the agent says: its own id for the model in use, and for how hard it thinks
     let now = |category| setting(&settings, category).and_then(|s| s.now);
     if let Some(model) = now(MODEL) {
@@ -103,6 +106,8 @@ fn send(held: &Held, message: Value) {
 struct Opening<'a> {
     held: &'a Held,
     early: VecDeque<Tell>,
+    /// The commands the session listed while it opened, the latest list.
+    commands: Option<Value>,
 }
 
 impl Opening<'_> {
@@ -118,7 +123,11 @@ impl Opening<'_> {
                             None => Ok(v["result"].clone()),
                         };
                     }
-                    // what it replays of an old session while loading it is not news
+                    // what it replays of an old session while loading it is not news; what it takes as a command is
+                    // kept for when it is ready
+                    if v["method"] == "session/update" && v["params"]["update"]["sessionUpdate"] == "available_commands_update" {
+                        self.commands = Some(v["params"]["update"]["availableCommands"].clone());
+                    }
                 }
                 Ok(Msg::Tell(tell)) => self.early.push_back(tell),
                 Ok(Msg::Gone) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(self.held.why("it ended before it had started")),
@@ -282,8 +291,29 @@ fn on_update(update: &Value, said: &mut String, me: &Agent) {
                 post(me, Event::Activity { text: airband_core::prose::clip(title, 80) });
             }
         }
+        // what the session takes as a command, in the tool's own words: it lists them as the session opens and
+        // again when they change
+        Some("available_commands_update") => post(me, Event::Commands { list: listed(&update["availableCommands"]) }),
         _ => {}
     }
+}
+
+/// The commands a session lists, as the protocol has them: a name, what it does, and what it is given (`input.hint`).
+fn listed(commands: &Value) -> Vec<airband_core::commands::Listed> {
+    #[derive(serde::Deserialize)]
+    struct Said {
+        name: String,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        input: Option<Input>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Input {
+        #[serde(default)]
+        hint: Option<String>,
+    }
+    commands.as_array().into_iter().flatten().filter_map(|c| serde_json::from_value::<Said>(c.clone()).ok()).map(|s| airband_core::commands::Listed { name: s.name, about: s.description, hint: s.input.and_then(|i| i.hint).filter(|h| !h.trim().is_empty()) }).collect()
 }
 
 /// He is asked for leave, off this thread, and his answer goes back as one of the choices the agent gave.
@@ -348,6 +378,17 @@ fn option(params: &Value, allow: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_commands_a_session_lists_are_read_as_the_protocol_has_them() {
+        let got = listed(&json!([
+            { "name": "review-branch", "description": "Review changes relative to a base branch.", "input": { "hint": "branch name" } },
+            { "name": "compact", "description": "Compact the session", "input": null },
+            { "name": "init" },
+            { "description": "no name: left out" }
+        ]));
+        assert_eq!(got.iter().map(|l| (l.name.as_str(), l.hint.as_deref())).collect::<Vec<_>>(), [("review-branch", Some("branch name")), ("compact", None), ("init", None)]);
+    }
 
     #[test]
     fn a_turn_ended_part_way_keeps_its_words_or_says_it_stopped() {

@@ -190,6 +190,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
     let r = serve::<at::Push, _, _>(r, push_target);
     let r = serve::<at::Tools, _, _>(r, uses_tools);
     let r = serve::<at::Brief, _, _>(r, summary_brief);
+    let r = serve::<at::Commands, _, _>(r, agent_commands);
     // the command line's page about the tower: its type is the command line's own, not part of the wire
     r.route(super::STATUS_PATH, get(status))
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))
@@ -224,7 +225,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_value(settings).unwrap();
         let push = push::Wake::load(&store).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), changed: tokio::sync::watch::channel(0).0, said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs, deliverer, listening: Default::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), changed: tokio::sync::watch::channel(0).0, said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), commands: Default::default(), served: Default::default(), reviving: Default::default(), procs, deliverer, listening: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {

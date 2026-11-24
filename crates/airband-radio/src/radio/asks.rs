@@ -68,6 +68,10 @@ impl Radio {
     pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {
         Ok(self.link.call::<at::Folders>(None, &Nothing {}, &airband_core::radio::FoldersAsk { under })?)
     }
+    /// The commands and skills an agent's tool takes, each with whether it runs from here. Blocks.
+    pub(crate) fn commands(&self, agent: String) -> Result<airband_core::commands::Commands, RadioError> {
+        Ok(self.link.call::<at::Commands>(None, &airband_core::commands::CommandsQuery { agent }, &Nothing {})?)
+    }
     /// The folders the coding tools on this computer have had sessions in, newest first. Blocks.
     pub(crate) fn recent(&self) -> Result<airband_core::radio::Recent, RadioError> {
         Ok(self.link.call::<at::Recent>(None, &Nothing {}, &Nothing {})?)

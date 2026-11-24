@@ -141,6 +141,11 @@ pub struct Utterance {
     /// without it they answer nothing it asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers: Option<crate::ids::QuestionId>,
+    /// He said these words aloud: a model reads whether they ask the agent's tool to run one of its commands
+    /// ("slash compact", "use the review skill"). Typed words say a command as the tool takes it, starting
+    /// with `/`, and are passed on as they are.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spoken: bool,
 }
 
 /// His words, and the label of the button he tapped, are left out of its debug form: their length only.
@@ -158,6 +163,7 @@ impl std::fmt::Debug for Utterance {
             .field("to", &self.to)
             .field("act", &self.act)
             .field("answers", &self.answers)
+            .field("spoken", &self.spoken)
             .finish()
     }
 }

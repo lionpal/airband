@@ -123,6 +123,25 @@ struct FeedView: View {
             // `-airband.devNewAgent YES` opens the sheet that starts a new agent, for a screenshot
             if Dev.text("devNewAgent") != nil { showNewAgent = true }
         }
+        // `-airband.devSlash typed` or `plus`: once an agent is there, look at it and open its commands, by
+        // typing "/" and the start of a name, or from the + panel, for a screenshot of each way in
+        .task {
+            guard let way = Dev.text("devSlash") else { return }
+            while model.view.rooms.flatMap(\.members).isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+            model.look(agent: model.view.rooms.flatMap(\.members)[0].id)
+            try? await Task.sleep(for: .seconds(2))
+            if way == "plus" {
+                showQuick = true
+                try? await Task.sleep(for: .seconds(Double(Dev.number("devSlashWait"))))
+                openCommands()
+            } else {
+                typingOpen = true
+                typing = true
+                draft = "/"
+                try? await Task.sleep(for: .seconds(Double(Dev.number("devSlashWait"))))
+                draft = Dev.text("devSlashTyped") ?? "/"
+            }
+        }
         // and once his computers are reached, so it opens with them known
         .onChange(of: model.online) { _, online in
             if online, Dev.text("devNewAgent") != nil {
