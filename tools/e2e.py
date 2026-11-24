@@ -9,7 +9,8 @@ each result. Nothing here touches the real tower or its files.
                                                      about two minutes, some dozens of small model calls (built in a
                                                      folder of its own, never where the README installs from)
     tools/e2e.py --local                             the same, with the model the tower runs itself doing the reading
-    tools/e2e.py --claude                            also asks a real `claude -p` session for permission
+    tools/e2e.py --claude                            also asks a real `claude -p` session for permission, and a real
+                                                     interactive one in tmux (Allow and Deny from the phone)
     tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything
 
 Checks that depend on a model's judgement (what kind a message is, who an untagged reply is for) can fail now
@@ -63,6 +64,78 @@ env.pop("CLAUDE_CONFIG_DIR", None)
 
 results = []
 skipped = []
+
+# The interactive session: Claude Code as he runs it, in a terminal (tmux), signed in with his own login, but with
+# a settings folder of this run's own (CLAUDE_CONFIG_DIR), so none of his hooks, settings or history are read or
+# written. Its hooks report to this run's tower. His login is copied in as the file Claude Code reads where it
+# has no keychain item of its own, and that file is deleted when this ends, whatever happened.
+def interactive():
+    config_dir, proj = os.path.join(work, "claude-config"), os.path.join(projects, "interactive")
+    os.makedirs(config_dir, mode=0o700)
+    os.makedirs(proj)
+    # as Claude Code names the folder when it asks whether to trust it: the temporary folder is a link on macOS
+    proj = os.path.realpath(proj)
+    hook = f"env HOME={home} {BIN} hook claude-code"
+    json.dump({"hooks": {"PermissionRequest": [{"hooks": [{"type": "command", "command": hook, "timeout": 120}]}],
+                         "Notification": [{"hooks": [{"type": "command", "command": hook, "timeout": 5}]}]}},
+              open(os.path.join(config_dir, "settings.json"), "w"))
+    json.dump({"hasCompletedOnboarding": True, "projects": {proj: {"hasTrustDialogAccepted": True}}}, open(os.path.join(config_dir, ".claude.json"), "w"))
+    login = os.path.join(config_dir, ".credentials.json")
+    session = f"airband-e2e-{RUN}"
+    try:
+        fd = os.open(login, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            # never printed: it goes from the keychain to this file and nowhere else
+            if subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"], stdout=f, stderr=subprocess.DEVNULL).returncode != 0:
+                return skip(INTERACTIVE, "no Claude Code login in this Mac's keychain")
+        # the variables a Claude Code that runs this test sets for its own children, which would make this
+        # session think it is one of them
+        clean = " ".join(f"-u {k}" for k in os.environ if k.startswith("CLAUDE") or k == "CLAUDECODE")
+        # the pane stays when Claude Code ends, so what it last showed can be read when a check fails
+        subprocess.run(["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50", "-c", proj], check=True)
+        subprocess.run(["tmux", "set-option", "-t", session, "remain-on-exit", "on"], check=True)
+        subprocess.run(["tmux", "respawn-pane", "-k", "-t", session, f"env {clean} CLAUDE_CONFIG_DIR={config_dir} claude --model haiku --permission-mode default"], check=True)
+        pane = lambda: subprocess.run(["tmux", "capture-pane", "-p", "-t", session], capture_output=True, text=True).stdout
+        def tell(text):
+            subprocess.run(["tmux", "send-keys", "-t", session, "-l", text])
+            time.sleep(1)
+            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"])
+        def card_for(mark):
+            for _ in range(240):
+                hits = [m for m in feed()["messages"] if m.get("permission") and m["open"] and mark in m["text"]]
+                if hits: return hits[-1]
+                time.sleep(0.5)
+        # ready for a prompt: its mode line shows under the box he types in
+        for _ in range(60):
+            if "manual mode on" in pane(): break
+            time.sleep(0.5)
+        tell("Use the Bash tool to run exactly this command and nothing else: touch made-allow.txt")
+        card = card_for("made-allow")
+        check(INTERACTIVE[0], card is not None and "touch made-allow.txt" in card["text"] and card["options"] == ["Allow", "Deny"], card or pane()[-1500:])
+        if card:
+            # the tool shows its own prompt meanwhile and says so with a notification: that must not be a card too
+            time.sleep(3)
+            nudges = [m for m in feed()["messages"] if m["from"] == card["from"] and not m.get("permission") and "permission" in m["text"].lower()]
+            say("Allow", re=card["id"], act={"kind": "verdict", "allow": True})
+            made = any(os.path.exists(os.path.join(proj, "made-allow.txt")) or time.sleep(0.5) for _ in range(60))
+            check(INTERACTIVE[1], made, pane()[-1500:])
+            check(INTERACTIVE[2], nudges == [], nudges)
+        tell("Now use the Bash tool to run exactly this command and nothing else: touch made-deny.txt")
+        card = card_for("made-deny")
+        if card:
+            say("Deny", re=card["id"], act={"kind": "verdict", "allow": False})
+            gone = any("Do you want to proceed" not in pane() or time.sleep(0.5) for _ in range(60))
+            time.sleep(2)
+            check(INTERACTIVE[3], not os.path.exists(os.path.join(proj, "made-deny.txt")), pane()[-1500:])
+            check(INTERACTIVE[4], gone, pane()[-1500:])
+        else:
+            check(INTERACTIVE[3], False, pane()[-1500:])
+            check(INTERACTIVE[4], False)
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
+        if os.path.exists(login):
+            os.remove(login)
+
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
@@ -627,6 +700,13 @@ Send it as written, or do you want changes?""")
         check("after Allow from the radio, Claude ran it", os.path.exists(os.path.join(proj, "made-by-claude.txt")), done)
     else:
         skip(["Claude Code's permission prompt arrives as a question", "it says exactly what will run", "after Allow from the radio, Claude ran it"], "run with --claude")
+    INTERACTIVE = ["in an interactive session, the prompt reaches the phone with the command", "Allow from the phone runs it", "the tool's own nudge is not a second card",
+                   "Deny from the phone stops it", "and the terminal's prompt goes away with it"]
+    if "--claude" in sys.argv and shutil.which("tmux"):
+        print("A real interactive Claude Code session asks permission")
+        interactive()
+    else:
+        skip(INTERACTIVE, "run with --claude, with tmux installed")
     print("An answer that comes late")
     os.makedirs(os.path.join(projects, "late"), exist_ok=True)
     report("late1", "late", "late", "checkin")

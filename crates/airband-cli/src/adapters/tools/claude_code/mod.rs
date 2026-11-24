@@ -118,10 +118,11 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     }
     let events = crate::adapters::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
         // the notice that it has been idle only repeats the Stop that came just before it. Claude Code says
-        // which kind a notice is; none is told from its wording.
-        Some("Notification") => match text(hook, "message") {
-            Some(message) if hook["notification_type"].as_str() != Some("idle_prompt") => vec![Event::Notice { text: message }],
-            _ => Vec::new(),
+        // which kind a notice is; none is told from its wording. One for a permission prompt follows the
+        // PermissionRequest hook, which has put the request to him already when there was someone to ask.
+        Some("Notification") => match (text(hook, "message"), hook["notification_type"].as_str()) {
+            (Some(_), Some("idle_prompt")) | (None, _) => Vec::new(),
+            (Some(message), kind) => vec![Event::Notice { text: message, leave: kind == Some("permission_prompt") }],
         },
         // it is handing part of the work to a subagent
         Some(at @ ("PreToolUse" | "PostToolUse")) if is_subagent(hook) => vec![Event::Subagent { done: at == "PostToolUse", what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
@@ -382,7 +383,9 @@ mod tests {
         // by the kind Claude Code says it is, whatever its words: the same words under another kind are passed on
         assert!(events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "Claude is waiting for your input" })).is_empty());
         let other = events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "notification_type": "auth_success", "message": "Claude is waiting for your input" }));
-        assert_eq!(other[0].event, Event::Notice { text: "Claude is waiting for your input".into() });
+        assert_eq!(other[0].event, Event::Notice { text: "Claude is waiting for your input".into(), leave: false });
+        let prompt = events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "Claude needs your permission" }));
+        assert_eq!(prompt[0].event, Event::Notice { text: "Claude needs your permission".into(), leave: true });
         assert!(events(&json!({ "session_id": "s1", "hook_event_name": "Stop", "last_assistant_message": "" })).is_empty());
     }
     #[test]

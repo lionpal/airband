@@ -30,20 +30,55 @@ impl Permit {
     }
 }
 
+/// Why a request was not put to him, as the log says it. The harness then asks at its own keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NotAsked {
+    /// It came in a shape this tower does not read.
+    OtherSchema,
+    /// His settings say requests are not put to him (`permission_wait` is 0).
+    TurnedOff,
+    /// No radio is following the chat or on a call, and no phone has said where it can be woken.
+    NobodyToAsk,
+    /// The agent it is for could not be put on the radio.
+    NoAgent,
+}
+
+impl NotAsked {
+    fn said(self) -> &'static str {
+        match self {
+            NotAsked::OtherSchema => "it came in a shape this tower does not read",
+            NotAsked::TurnedOff => "putting requests to him is turned off (permission_wait is 0)",
+            NotAsked::NobodyToAsk => "no radio is there and no phone can be woken",
+            NotAsked::NoAgent => "the agent it is for could not be put on the radio",
+        }
+    }
+}
+
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
 pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
-    let nobody = PermissionState { state: agent::Leave::Nobody, ..PermissionState::default() };
-    if ask.schema != agent::SCHEMA || app.cfg().permission_wait == 0 {
-        return nobody;
+    match put(app, &ask) {
+        Ok(state) => state,
+        Err(why) => {
+            log(format!("{}: asks permission; not put to him, so it is asked at the keyboard: {}", short_id(&ask.agent.id), why.said()));
+            PermissionState { state: agent::Leave::Nobody, ..PermissionState::default() }
+        }
+    }
+}
+
+fn put(app: &Arc<App>, ask: &PermissionAsk) -> Result<PermissionState, NotAsked> {
+    if ask.schema != agent::SCHEMA {
+        return Err(NotAsked::OtherSchema);
+    }
+    if app.cfg().permission_wait == 0 {
+        return Err(NotAsked::TurnedOff);
     }
     let mut inner = app.change();
     // no radio is following the chat or on a call, and no phone can be woken to be told: there is nobody to ask
     if !inner.following() && !inner.connected() && !app.push.can_wake(&app.cfg()) {
-        log(format!("{}: asks permission; no radio is there and no phone can be woken, so it is asked at the keyboard", short_id(&ask.agent.id)));
-        return nobody;
+        return Err(NotAsked::NobodyToAsk);
     }
     if inner.check_in(&ask.agent).is_none() {
-        return nobody;
+        return Err(NotAsked::NoAgent);
     }
     let agent_id = ask.agent.id.clone();
     let session = {
@@ -84,7 +119,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
     inner.tell();
-    PermissionState { id, state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg().permission_wait }
+    Ok(PermissionState { id, state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg().permission_wait })
 }
 
 /// Where a request stands. Held open for up to `wait` seconds while there is no answer.
@@ -290,10 +325,32 @@ mod tests {
         let channel = push::channel_of(&phone).unwrap();
         let app = super::super::http::tests::app_with("permit-wake", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
         let ask = || PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `ls`".into(), detail: String::new(), question: None };
+        super::super::logged::take();
         assert_eq!(super::ask(&app, ask()).state, agent::Leave::Nobody, "nobody there and nothing to wake");
+        // and the log says so, by the agent and why: the keyboard asks, and it is never silent
+        assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: asks permission; not put to him, so it is asked at the keyboard: no radio is there and no phone can be woken")));
         push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
         let asked = super::ask(&app, ask());
         assert_eq!(asked.state, agent::Leave::Pending, "the phone is told of it");
-        assert!(app.read().log.iter().any(|e| e.permit.as_deref() == Some(asked.id.as_str())));
+        let entry = app.read().log.iter().find(|e| e.permit.as_deref() == Some(asked.id.as_str())).map(|e| e.id.clone()).unwrap();
+        // the phone is to be woken for it: the tower has taken it on (sent once the short wait for a radio is over)
+        assert!(app.read().pushed.contains(&entry), "a notification is asked for");
+        // the tool's own nudge that it asks at its keyboard tells him nothing the card does not: no second card
+        let lines = app.read().log.len();
+        let nudge = |leave: bool| -> airband_core::agent::AgentEvent {
+            serde_json::from_value(serde_json::json!({ "schema": agent::SCHEMA, "agent": ask().agent, "event": { "type": "notice", "text": "Claude needs your permission", "leave": leave } })).unwrap()
+        };
+        super::super::intake::on_event(&app, nudge(true)).unwrap();
+        assert_eq!(app.read().log.len(), lines, "no card for the nudge");
+        assert!(super::super::logged::take().iter().any(|l| l.ends_with("its tool asks at the keyboard for what is on his phone already; not told again")));
+        // a notice of another kind is still shown
+        super::super::intake::on_event(&app, nudge(false)).unwrap();
+        assert_eq!(app.read().log.len(), lines + 1);
+        // once nothing is waiting on his phone, the nudge is how he learns the keyboard wants him
+        let mut inner = app.change();
+        inner.close_permit(&asked.id, Ended::Replaced);
+        drop(inner);
+        super::super::intake::on_event(&app, nudge(true)).unwrap();
+        assert_eq!(app.read().log.len(), lines + 2);
     }
 }

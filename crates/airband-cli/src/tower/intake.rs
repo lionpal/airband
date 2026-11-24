@@ -175,7 +175,11 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             let s = inner.session(&id).unwrap();
             s.subagents = if done { s.subagents.saturating_sub(1) } else { s.subagents + 1 };
         }
-        Event::Notice { text } => enqueue(&mut inner, &id, true, text, Some(Kind::NeedsYou), Vec::new(), Some(Note::AtKeyboard)),
+        // the tool asks leave at its keyboard for what is on his phone already: he is not told twice
+        Event::Notice { leave: true, .. } if inner.permits.values().any(|p| p.agent_id == id && p.decided.is_none()) => {
+            log(format!("{logged}: its tool asks at the keyboard for what is on his phone already; not told again"));
+        }
+        Event::Notice { text, .. } => enqueue(&mut inner, &id, true, text, Some(Kind::NeedsYou), Vec::new(), Some(Note::AtKeyboard)),
         // its turn is over with nothing said: it is waiting, like after anything it says. A turn that failed
         // is something he must know, in the tool's own words.
         Event::Stopped { why } => {

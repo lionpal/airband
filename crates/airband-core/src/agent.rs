@@ -191,7 +191,13 @@ pub enum Event {
         turn: Option<String>,
     },
     /// It needs him at the keyboard (a permission prompt, a login): something a spoken reply cannot do.
-    Notice { text: String },
+    /// `leave` says the tool is asking leave there, as it says it: a request already put to him on the radio
+    /// is not told of again.
+    Notice {
+        text: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        leave: bool,
+    },
     /// It looked at a picture, or made one for him: a file on the tower's machine. The tower keeps a small copy
     /// and shows it with the next thing the agent says. `shown` means the agent meant him to see it (it sent
     /// him the file), not only that it looked at it itself.
@@ -255,7 +261,7 @@ impl std::fmt::Debug for Event {
         use crate::redact::Withheld;
         match self {
             Event::Said { text, kind, turn } => f.debug_struct("Said").field("text", &Withheld(text)).field("kind", kind).field("turn", turn).finish(),
-            Event::Notice { text } => f.debug_struct("Notice").field("text", &Withheld(text)).finish(),
+            Event::Notice { text, leave } => f.debug_struct("Notice").field("text", &Withheld(text)).field("leave", leave).finish(),
             other => f.write_str(&serde_json::to_string(other).unwrap_or_default()),
         }
     }

@@ -7,8 +7,8 @@ The stand-in relay takes what the tower asks it to hand to a push service and ke
 then opened here, with the pairing's secret and nothing from the tower's code (HKDF and ChaCha20-Poly1305 from
 Python's `cryptography`), which shows the sealing is the published one and that the relay's part of the
 request holds nothing readable. Checked: what is sent and to whom, that it is sent once, that a phone showing
-the chat is left alone and one only following it is not, a permission card, and an address the push service
-says has gone. With no model, a message is a question if the agent said so and a report otherwise; that
+the chat is left alone and one only following it is not, a permission card (also with the app closed a while),
+and an address the push service says has gone. With no model, a message is a question if the agent said so and a report otherwise; that
 chatter gets no notification is checked in the tower's own tests.
 """
 import base64, json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
@@ -216,6 +216,28 @@ try:
     check("the log says what was asked and what came back", log.count(asked) == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
     check("and names the radio by id only", '"phone"' not in log, [l for l in log.splitlines() if "phone" in l])
     check("and holds no address", ADDRESS not in log and SECRET not in log)
+
+    print("The app has been closed a while, and an agent asks leave")
+    http("POST", "/v1/radio/push", {"provider": "apns", "token": ADDRESS})
+    # no radio heard from for longer than the tower counts one as there (a minute): the phone is in his pocket
+    time.sleep(65)
+    before, out = len(pushes), []
+    asking = threading.Thread(target=ask_permission); asking.start()
+    check("the request is still put to him, and the phone is woken for it", pushed(before + 1), open(os.path.join(work, "tower.log")).read()[-600:])
+    if len(pushes) > before:
+        note = opened(pushes[before]["sealed"])
+        check("as a permission card with the command, for the lock screen's Allow and Deny", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and not note.get("cut"), note)
+        allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"], "act": {"kind": "verdict", "allow": True}, }
+        reply = None
+        for _ in range(300):
+            took = http("POST", "/v1/radio/utterance", allow, showing=False)[1]
+            if took and took["state"] == "answered":
+                reply = took["reply"]
+                break
+            time.sleep(0.1)
+        asking.join(40)
+        check("Allow from the notification lets it run", reply and reply["say"] == "Allowed." and out[-1:] == [0], (reply, out))
+    check("and nothing was turned away unasked", "not put to him" not in open(os.path.join(work, "tower.log")).read())
 finally:
     tower.terminate()
     tower.wait(10)

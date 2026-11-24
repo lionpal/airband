@@ -156,7 +156,7 @@ mod tests {
             format!("{launch:?}"),
             format!("{:?}", crate::relay::Call { t: 1, id: "c1".into(), method: crate::radio::wire::Method::Post, path: "/v1/radio/utterance".into(), body: serde_json::Value::String(words.into()), schema: crate::radio::SCHEMA.into(), presence: Default::default() }),
             format!("{:?}", crate::agent::Event::Said { text: words.into(), kind: None, turn: None }),
-            format!("{:?}", crate::agent::Event::Notice { text: words.into() }),
+            format!("{:?}", crate::agent::Event::Notice { text: words.into(), leave: false }),
             format!("{:?}", crate::radio::Account { id: "a".into(), harness: "h".into(), label: "him@example.com".into(), ..Default::default() }),
         ];
         for line in &shown {
