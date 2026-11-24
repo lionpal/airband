@@ -65,7 +65,7 @@ mod tests {
         let listed: Vec<Listed> = serde_json::from_str(&std::fs::read_to_string(root.join("listed.json")).unwrap()).unwrap();
         let mut watch = Vec::new();
         let written = written(Some(&root.join("project")), &root.join("codex-home"), &root.join("user"), &mut watch);
-        let got = from_listed(&listed, &written, true);
+        let got = from_listed(&listed, &written, airband_core::commands::Runs::Here);
         let by = |n: &str| got.iter().find(|c| c.name == n).map(|c| (c.kind, c.source, c.hint.clone())).unwrap();
         assert_eq!(by("review-branch"), (Some(Kind::Command), Some(Source::Tool), Some("branch name".into())));
         assert_eq!(by("$ship"), (Some(Kind::Skill), Some(Source::Project), None));

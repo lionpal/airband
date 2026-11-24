@@ -7,10 +7,14 @@
 //! above it in its repository, or under `command` in an `opencode.json` there (OpenCode 2.3.2). Those say which
 //! listed name is his and where it comes from. A session open in OpenCode at his computer is given his words
 //! through its server as a prompt, which OpenCode reads as words: no command runs that way.
+//!
+//! One sent to an agent the tower holds does run, but OpenCode 2.3.2's protocol server ends the turn as it hands
+//! the command on (`session.command`), before it has run, and sends nothing of it after: the client is never told
+//! when it is over or what it said. Its row says so (`held_commands`), and the list says these give no answer.
 use super::NAME;
 use crate::adapters::commands::{Found, Naming, Written, command_files, from_listed, runs_by, upward};
 use airband_core::agent::Agent;
-use airband_core::commands::{Kind, Listed, Source};
+use airband_core::commands::{Kind, Listed, Runs, Source};
 use std::path::{Path, PathBuf};
 
 pub(super) fn commands(agent: &Agent, listed: Option<&[Listed]>) -> Option<Found> {
@@ -18,7 +22,15 @@ pub(super) fn commands(agent: &Agent, listed: Option<&[Listed]>) -> Option<Found
     let mut watch = Vec::new();
     let cwd = agent.cwd.as_deref().map(PathBuf::from);
     let written = written(cwd.as_deref(), &config_folder(), &mut watch);
-    Some(Found { items: from_listed(listed, &written, runs_by(agent.deliver.as_ref())), watch })
+    Some(Found { items: from_listed(listed, &written, held(runs_by(agent.deliver.as_ref()))), watch })
+}
+
+/// What one picked from his phone comes to for an agent the tower holds, as OpenCode's row says.
+fn held(runs: Runs) -> Runs {
+    match runs {
+        Runs::Here => serde_json::from_value(serde_json::Value::String(crate::adapters::row_says(NAME, "held_commands"))).expect("OpenCode's row says what a command sent to a held agent comes to"),
+        other => other,
+    }
 }
 
 /// His OpenCode config folder: under the folder his system names for settings, or its usual place.
@@ -68,18 +80,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn one_sent_to_a_held_agent_gives_no_answer_and_one_at_the_computer_does_not_run() {
+        assert_eq!(held(Runs::Here), Runs::NoAnswer);
+        assert_eq!(held(Runs::AtComputer), Runs::AtComputer);
+    }
+
+    #[test]
     fn what_its_session_lists_is_given_its_source_by_the_command_files_and_settings_opencode_reads() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/adapters/tools/opencode/fixtures/commands");
         let listed: Vec<Listed> = serde_json::from_str(&std::fs::read_to_string(root.join("listed.json")).unwrap()).unwrap();
         let mut watch = Vec::new();
         let written = written(Some(&root.join("project")), &root.join("config"), &mut watch);
-        let got = from_listed(&listed, &written, false);
+        let got = from_listed(&listed, &written, airband_core::commands::Runs::AtComputer);
         let by = |n: &str| got.iter().find(|c| c.name == n).map(|c| (c.kind, c.source)).unwrap();
         assert_eq!(by("init"), (Some(Kind::Command), Some(Source::Tool)));
         assert_eq!(by("release/notes"), (Some(Kind::Command), Some(Source::Project)), "named by its path in the commands folder");
         assert_eq!(by("standup"), (Some(Kind::Command), Some(Source::His)));
         assert_eq!(by("fix-tests"), (Some(Kind::Command), Some(Source::Project)), "from the settings file");
-        assert!(got.iter().all(|c| !c.runs), "reached as words: listed, none runs");
+        assert!(got.iter().all(|c| c.runs == Runs::AtComputer), "reached as words: listed, none runs");
         assert!(watch.contains(&root.join("project/.opencode/commands/release/notes.md")));
     }
 }

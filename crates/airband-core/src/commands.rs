@@ -40,6 +40,21 @@ pub enum Source {
     Plugin,
 }
 
+/// Whether one picked from his phone runs, and when it does not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Runs {
+    /// What he sends reaches the agent as a turn of his own that its tool reads as a command, and what came of
+    /// it comes back.
+    Here,
+    /// His words reach the agent only from outside, as a message, which its tool reads as words (a session he
+    /// opened at the computer).
+    AtComputer,
+    /// Its tool runs it, but says nothing of when it ends or what came of it to what sent it, so nothing would
+    /// come back to him.
+    NoAnswer,
+}
+
 /// One he can pick.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Command {
@@ -56,9 +71,7 @@ pub struct Command {
     pub kind: Option<Kind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
-    /// What he sends reaches the agent in a way that runs it. False when his words reach it only as words
-    /// (a message passed to a session open at the computer, which the tool reads as text).
-    pub runs: bool,
+    pub runs: Runs,
 }
 
 /// `GET commands`'s answer: every one the agent's tool takes, in the tool's own order. Empty when its tool has
@@ -141,7 +154,7 @@ mod tests {
     use super::*;
 
     fn named(name: &str) -> Command {
-        Command { name: name.into(), about: String::new(), hint: None, kind: None, source: None, runs: true }
+        Command { name: name.into(), about: String::new(), hint: None, kind: None, source: None, runs: Runs::Here }
     }
 
     #[test]

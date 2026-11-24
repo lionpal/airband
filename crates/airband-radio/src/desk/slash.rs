@@ -7,7 +7,7 @@
 //! roster's count for it changes), and again, behind the one it shows, each time the list opens, which is when its
 //! computer looks at whether the files they come from changed.
 use super::*;
-use airband_core::commands::{Command, Commands, NEUTRAL, Terms, matching, naming, typed};
+use airband_core::commands::{Command, Commands, NEUTRAL, Runs, Terms, matching, naming, typed};
 
 /// What the box holds and what is known of the list it opens.
 #[derive(Default)]
@@ -61,6 +61,11 @@ pub struct CommandOffer {
 /// What he is told in place of a list.
 const NO_ONE: &str = "Choose one agent to see what it can run.";
 const NOT_FROM_HERE: &str = "This agent was opened at the computer, so these run only there. Agents airband starts run them from here.";
+/// Its tool runs them but never says what came of them: named by the tool's name, when this phone's catalogue
+/// has it.
+fn no_answer(tool: Option<String>) -> String {
+    format!("{} doesn't send back what these do, so run them at the computer.", tool.unwrap_or_else(|| "Its tool".into()))
+}
 const NONE_LISTED: &str = "Its tool has not listed any yet.";
 const NO_MATCH: &str = "Nothing by that name.";
 
@@ -174,9 +179,14 @@ pub(super) fn view(state: &State) -> Option<CommandsView> {
             if all.is_empty() {
                 return shown(Vec::new(), Some(NONE_LISTED), false);
             }
-            let runs: Vec<Command> = all.iter().filter(|c| c.runs).cloned().collect();
+            let runs: Vec<Command> = all.iter().filter(|c| c.runs == Runs::Here).cloned().collect();
             if runs.is_empty() {
-                return shown(Vec::new(), Some(NOT_FROM_HERE), false);
+                // each says why it does not run here; for one agent the reason is the same for all of them
+                let why = match all[0].runs {
+                    Runs::NoAnswer => no_answer(crate::services::tool_name(&agent.harness)),
+                    _ => NOT_FROM_HERE.to_string(),
+                };
+                return shown(Vec::new(), Some(&why), false);
             }
             let items: Vec<CommandOffer> = matching(&runs, typed_name).into_iter().map(|c| CommandOffer { name: c.name.clone(), about: c.about.clone(), hint: c.hint.clone(), kind: terms.of(c.kind).map(String::from), insert: typed(&c.name) }).collect();
             let none = items.is_empty();
@@ -199,7 +209,7 @@ pub(super) mod tests {
     }
 
     pub(in crate::desk) fn command(name: &str, runs: bool) -> Command {
-        Command { name: name.into(), about: format!("about {name}"), hint: None, kind: Some(Kind::Skill), source: Some(Source::Project), runs }
+        Command { name: name.into(), about: format!("about {name}"), hint: None, kind: Some(Kind::Skill), source: Some(Source::Project), runs: if runs { Runs::Here } else { Runs::AtComputer } }
     }
 
     #[test]

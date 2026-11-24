@@ -16,15 +16,15 @@ every tool runs with this run's throwaway home as its home.
 - Claude Code: a settings folder of this run's own (CLAUDE_CONFIG_DIR); his login is copied there as the file Claude
   Code reads when it has no keychain item of its own.
 - Codex (through codex-acp): its home in the throwaway home (CODEX_HOME), his login (`auth.json`) copied there.
-- OpenCode: its folders in the throwaway home (XDG_*), and a background service of this run's own on a port of its
-  own (OpenCode 2 otherwise talks to his one service, which keeps his history), stopped at the end. It runs on a
-  free model, signed in to nothing.
-- Antigravity CLI: on a Gemini API key in GEMINI_API_KEY, given to agy alone; without one its part is skipped,
-  and said to be.
+- OpenCode: its folders in the throwaway home (XDG_*), where the server `opencode acp` runs for itself keeps its
+  sessions. It runs on a free model, signed in to nothing. OpenCode 2.3.2 runs a command sent this way but never
+  says what came of it, so its project's command is checked to be listed as giving no answer, and is not sent.
+- Antigravity CLI: on a Gemini API key in GEMINI_API_KEY (in the run's environment, never on a command line);
+  without one its part is skipped, and said to be.
 Copied logins are deleted at the end, whatever happened. Nothing here touches his tower or his phone. A tool that
 is not installed is skipped, and said to be.
 """
-import json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -74,11 +74,6 @@ json.dump({"hasCompletedOnboarding": True, "projects": {shop: {"hasTrustDialogAc
 codex_home = os.path.join(home, ".codex")
 os.makedirs(codex_home)
 open(os.path.join(codex_home, "config.toml"), "w").write(f'model_reasoning_effort = "low"\n\n[projects."{loft}"]\ntrust_level = "trusted"\n')
-# OpenCode: a service of this run's own, on a port of its own
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 # Antigravity CLI: on the key in the environment, the project trusted, its first-run questions answered
 agy_state = os.path.join(home, ".gemini", "antigravity-cli")
 os.makedirs(os.path.join(agy_state, "cache"))
@@ -149,23 +144,23 @@ def start(tool, folder):
     check(f"{tool}: it is started and reports in, held", agent, (started, feed()["roster"]))
     return agent and agent["id"]
 
-def picked(tool, folder, kind):
-    """Its project's own one, listed by the tool and picked from the list with a name added, runs."""
+def picked(tool, folder, kind, runs="here"):
+    """Its project's own one, listed by the tool and, when the tool says what came of it, picked from the list
+    with a name added, runs."""
     me = start(tool, folder)
     if not me: return
     # an agent held through the Agent Client Protocol lists them once its session is open
     items = until(lambda: (lambda all: all if any(n.endswith("greet") for n in all) else None)(listed(me)), 90) or listed(me)
     greet = next((c for n, c in items.items() if n.endswith("greet")), {})
-    check(f"{tool}: the project's own {kind} is listed as the tool lists it, with its kind and source, and runs from here",
-          greet.get("kind") == kind and greet.get("source") == "project" and greet.get("runs") is True, (sorted(items), greet))
-    if not greet: return
+    check(f"{tool}: the project's own {kind} is listed as the tool lists it, with its kind and source, and " + ("runs from here" if runs == "here" else f"said to be {runs}"),
+          greet.get("kind") == kind and greet.get("source") == "project" and greet.get("runs") == runs, (sorted(items), greet))
+    if not greet or runs != "here": return
     # what the phone puts in the box when he picks it, and the name he adds
     reply = say(f"/{greet['name']} Ada", to=[me])
     ran = until(lambda: said_by(me, MARK), 240)
     check(f"{tool}: picked from the list, it runs in the agent, given what he added", ran and f"{MARK} Ada" in ran, (reply, ran, feed()["messages"][-3:]))
 
 logins = []
-service = None
 tower = None
 try:
     tower = subprocess.Popen([BIN, "run"], env=env, stdout=open(os.path.join(work, "tower.log"), "w"), stderr=subprocess.STDOUT)
@@ -184,9 +179,9 @@ try:
         items = listed(me)
         greet = items.get("greet", {})
         check("claude-code: its list is what Claude Code says it takes there: the project's skill, with its kind, its source and its hint",
-              greet.get("kind") == "skill" and greet.get("source") == "project" and greet.get("hint") == "<name>" and greet.get("runs") is True, greet)
+              greet.get("kind") == "skill" and greet.get("source") == "project" and greet.get("hint") == "<name>" and greet.get("runs") == "here", greet)
         compact = items.get("compact", {})
-        check("claude-code: and its own commands, said to be its own, with no kind made up for them", compact.get("source") == "tool" and "kind" not in compact and compact.get("runs") is True, compact)
+        check("claude-code: and its own commands, said to be its own, with no kind made up for them", compact.get("source") == "tool" and "kind" not in compact and compact.get("runs") == "here", compact)
         check("claude-code: none of his own skills is read: it has a settings folder of this run's own", not any(c.get("source") == "his" for c in items.values()), [n for n, c in items.items() if c.get("source") == "his"])
         reply = say("/greet Ada", to=[me])
         ran = until(lambda: said_by(me, MARK), 120)
@@ -217,10 +212,9 @@ try:
     if not shutil.which("opencode"):
         skip("opencode", "OpenCode is not installed")
     else:
-        service = subprocess.run(["opencode", "service", "set", "port", str(free_port())], env=env, capture_output=True).returncode == 0
-        check("opencode: a service of this run's own, on a port of its own", service)
-        if service:
-            picked("opencode", barn, "command")
+        # OpenCode 2.3.2 runs it, but its protocol server ends the turn before it has and never says what
+        # came of it: listed, and said to give no answer (its row, `held_commands`)
+        picked("opencode", barn, "command", runs="no-answer")
 
     print("Antigravity CLI, held, in a project with a skill of its own")
     if not shutil.which("agy"):
@@ -238,10 +232,6 @@ finally:
             pass
         tower.terminate()
         tower.wait()
-    if service:
-        subprocess.run(["opencode", "service", "stop"], env=env, capture_output=True)
-    # the held agents' own processes, if the tower did not end them
-    subprocess.run(["pkill", "-f", os.path.realpath(work)], stderr=subprocess.DEVNULL)
     for login in logins:
         if os.path.exists(login): os.remove(login)
     failed = [n for n, ok in results if not ok]

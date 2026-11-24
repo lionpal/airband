@@ -36,11 +36,16 @@ Commands and skills from the phone: `tools/e2e-commands.py` held a real Claude C
 settings folder of the run's own) in a throwaway project with one skill. The tower listed what Claude Code's
 `initialize` gave for that folder (the project's skill with its kind, source and hint, and Claude Code's own
 commands), "/greet Ada" sent from the phone ran the skill, a skill added to the folder was listed on the next ask,
-and "slash greet Bea" said aloud was read by the model as that skill and ran. Codex, OpenCode and Antigravity CLI
-were each seen listing theirs over the Agent Client Protocol (Codex 0.171 through codex-acp 2.8.0, OpenCode
-2.3.2, agy 1.5.15), and each adapter is tested on fixture folders; none of those three has been seen running one
-picked from the phone. In the simulator, against a tower holding that agent, both ways in were seen: "/" typed
-in the box (the list above the keyboard, narrowed by "/gr") and the + panel's "Skills" entry.
+and "slash greet Bea" said aloud was read by the model as that skill and ran. The same run holds a real Codex
+agent (codex-acp 2.8.0 over Codex 0.171, his login copied into a throwaway CODEX_HOME) and a real Antigravity CLI
+agent (agy 1.5.15 on a Gemini key), each in a project with a skill of its own: each listed it as the project's,
+and "/$greet Ada" (Codex) and "/greet Ada" (agy) picked from the list ran it. OpenCode 2.3.2 (throwaway XDG
+folders, a free model) lists its project's command, and a command sent to a held agent does run, but its protocol
+server ends the turn as it hands the command on and never sends what came of it (seen in its own session record:
+the answer is there, the client is told nothing), so its row says `held_commands: no-answer` and the phone says
+so instead of offering them. In the simulator, against a tower holding a Claude Code agent, both ways in were
+seen: "/" typed in the box (the list above the keyboard, there at once, narrowed by "/gr") and the + panel's
+"Skills" entry.
 
 The tower has not been run on Windows or Linux (it builds and its tests pass there).
 

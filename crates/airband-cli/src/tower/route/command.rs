@@ -26,7 +26,7 @@ fn out_shape() -> Value {
 /// The command his words ask this agent's tool to run, as the tool takes it; nothing when they ask none, when
 /// none of its commands runs from here, or when no model could read them.
 pub(super) async fn read(app: &Arc<App>, agent: &Session, words: &str) -> Option<String> {
-    let items: Vec<airband_core::commands::Command> = commands::of(app, &agent.agent.id).await.ok()?.items.into_iter().filter(|c| c.runs).collect();
+    let items: Vec<airband_core::commands::Command> = commands::of(app, &agent.agent.id).await.ok()?.items.into_iter().filter(|c| c.runs == airband_core::commands::Runs::Here).collect();
     if items.is_empty() {
         return None;
     }

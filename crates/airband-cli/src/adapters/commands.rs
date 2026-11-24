@@ -4,7 +4,7 @@
 //! tool's own (its folder under `tools/`); reading one is here. Only names and the few words of the frontmatter
 //! are read; nothing of what one says to do is kept or logged.
 use airband_core::agent::Deliver;
-use airband_core::commands::{Command, Kind, Source};
+use airband_core::commands::{Command, Kind, Runs, Source};
 use std::path::{Path, PathBuf};
 
 /// What an adapter found an agent's tool takes, and the files and folders whose change means it must be asked
@@ -163,14 +163,14 @@ pub(crate) fn upward(cwd: &Path) -> Vec<PathBuf> {
 /// typed it, with nothing in front: only one the tower holds (`tower/route/utterance.rs` `send`). Anything else
 /// is given his words from outside, after a line that says who they are from, so a `/` is not where its tool
 /// would read it as a command.
-pub(crate) fn runs_by(deliver: Option<&Deliver>) -> bool {
-    matches!(deliver, Some(Deliver::Held))
+pub(crate) fn runs_by(deliver: Option<&Deliver>) -> Runs {
+    if matches!(deliver, Some(Deliver::Held)) { Runs::Here } else { Runs::AtComputer }
 }
 
 /// The list as a tool listed it for a session (`listed`), each named as the tool names it, and given its kind
 /// and where it comes from by the files it was written in: `written` holds each file's under the name the tool
 /// lists it by. One the files do not hold came with the tool.
-pub(crate) fn from_listed(listed: &[airband_core::commands::Listed], written: &[Written], runs: bool) -> Vec<Command> {
+pub(crate) fn from_listed(listed: &[airband_core::commands::Listed], written: &[Written], runs: Runs) -> Vec<Command> {
     listed
         .iter()
         .map(|l| {
@@ -214,10 +214,10 @@ mod tests {
 
     #[test]
     fn what_runs_from_here_is_how_the_agent_is_reached() {
-        assert!(runs_by(Some(&Deliver::Held)));
-        assert!(!runs_by(Some(&Deliver::Keys { terminal: "t".into(), pane: "p".into() })), "typed after a line of who it is from");
-        assert!(!runs_by(Some(&Deliver::Socket { path: "/s".into(), token: None })));
-        assert!(!runs_by(Some(&Deliver::Harness { name: "t".into(), session: "s".into() })));
-        assert!(!runs_by(None));
+        assert_eq!(runs_by(Some(&Deliver::Held)), Runs::Here);
+        assert_eq!(runs_by(Some(&Deliver::Keys { terminal: "t".into(), pane: "p".into() })), Runs::AtComputer, "typed after a line of who it is from");
+        assert_eq!(runs_by(Some(&Deliver::Socket { path: "/s".into(), token: None })), Runs::AtComputer);
+        assert_eq!(runs_by(Some(&Deliver::Harness { name: "t".into(), session: "s".into() })), Runs::AtComputer);
+        assert_eq!(runs_by(None), Runs::AtComputer);
     }
 }

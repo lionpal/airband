@@ -182,7 +182,7 @@ fn plugins(home: &Path, skills_dir: &str, commands_dir: &str, watch: &mut Vec<Pa
 
 /// Claude Code's list, each given its kind and where it comes from by the file it was written in. One it marks
 /// as its own came with it; one of no file it read, and not its own, is said as it is, with neither.
-fn listed(said: &[Said], written: &[Written], runs: bool) -> Vec<Command> {
+fn listed(said: &[Said], written: &[Written], runs: airband_core::commands::Runs) -> Vec<Command> {
     said.iter()
         .map(|s| {
             let file = written.iter().find(|w| w.name == s.name).filter(|_| !s.builtin);
@@ -229,7 +229,7 @@ mod tests {
         copy_dir(&root.join("home/skills"), &home.join("skills"));
         std::fs::write(home.join("plugins/installed_plugins.json"), format!(r#"{{"version":2,"plugins":{{"lint@market":[{{"scope":"user","installPath":"{}"}}]}}}}"#, root.join("plugin").display())).unwrap();
         let written = written(&root.join("project"), &home, &mut watch);
-        let got = listed(&said, &written, true);
+        let got = listed(&said, &written, airband_core::commands::Runs::Here);
         let by = |n: &str| got.iter().find(|c| c.name == n).unwrap().clone();
         assert_eq!((by("greet").kind, by("greet").source, by("greet").hint.as_deref()), (Some(Kind::Skill), Some(Source::Project), Some("<name>")));
         assert_eq!((by("deploy").kind, by("deploy").source), (Some(Kind::Command), Some(Source::Project)));
@@ -239,7 +239,7 @@ mod tests {
         // its own: no file of it, and no kind made up for it
         assert_eq!((by("compact").kind, by("compact").source, by("compact").hint.as_deref()), (None, Some(Source::Tool), Some("<instructions>")));
         assert_eq!((by("dataviz").kind, by("dataviz").source), (None, Some(Source::Tool)));
-        assert!(got.iter().all(|c| c.runs));
+        assert!(got.iter().all(|c| c.runs == airband_core::commands::Runs::Here));
         // what is watched: the folders and each file read, so a new skill or an edited one asks again
         assert!(watch.contains(&root.join("project/.claude/skills/greet/SKILL.md")));
         assert!(watch.contains(&home.join("skills")));

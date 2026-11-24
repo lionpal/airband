@@ -178,7 +178,7 @@ Chat mode and the rest:
 | `POST /v1/radio/accounts/use` | `{ harness, id }` → the same, or a refusal | Move that harness's sessions to that account. |
 | `POST /v1/radio/push` | `{ provider, token }` → `Done` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
 | `POST /v1/radio/tools` | `{ tools }` → `Done` | The coding tools he uses, by the ids their rows give, the one he uses most first. A new agent asked for without naming a tool is started with the first; with none said and no usual launcher set, he is asked. |
-| `GET /v1/radio/commands?agent=` | → `{ items: [{ name, about, hint?, kind?, source?, runs }] }` | The commands and skills the agent's tool takes in its folder, in the tool's own order, as the tool itself lists them: `kind` is `skill` or `command`, `source` is `tool`, `his`, `project` or `plugin`, each left out when nothing says. `runs` says whether one sent from here runs: only for an agent the tower holds, which gets his words as a turn of his own with nothing in front. Kept until a file or folder it was read from changes. What each does is never logged. |
+| `GET /v1/radio/commands?agent=` | → `{ items: [{ name, about, hint?, kind?, source?, runs }] }` | The commands and skills the agent's tool takes in its folder, in the tool's own order, as the tool itself lists them: `kind` is `skill` or `command`, `source` is `tool`, `his`, `project` or `plugin`, each left out when nothing says. `runs` says whether one sent from here runs: `here` for an agent the tower holds, which gets his words as a turn of his own with nothing in front; `at-computer` for one reached from outside, whose tool reads his words as words; `no-answer` when its tool runs it but never says what came of it (its row's `held_commands`). Kept until a file or folder it was read from changes. What each does is never logged. |
 | `POST /v1/radio/brief` | `{ text }` → `Done` | How the model that writes his summaries is to write them, in his words (at most 8000 characters), or `null` for the usual text. Only that part of the question is his: what the answer holds and its shape stay the tower's. Never logged. |
 
 ### The feed
@@ -231,10 +231,10 @@ read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, li
   permission request is open while its harness waits.
 
 A roster entry is `{ id, callsign, team, harness, waiting, state, subagents, doing, held, terminal, ends, model,
-effort, reach }`. `reach` is `{ "kind": "reaches" }`, or `{ "kind": "no_way_in", "take_over": bool }` for an agent
+effort, reach, commands? }`. `reach` is `{ "kind": "reaches" }`, or `{ "kind": "no_way_in", "take_over": bool }` for an agent
 the tower has nowhere to send messages to, with whether this computer can take it over (`POST takeover`). `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what a working agent is doing right
 now, asked of its adapter every two seconds while a radio is reading the feed. `held` marks an agent the tower
-runs; `terminal` one he started in a terminal; `ends` one the tower can end.
+runs; `terminal` one he started in a terminal; `ends` one the tower can end. `commands` counts the times its tool has listed its commands anew (left out while it is 0): a radio holding its list (`GET commands`) asks again when it changes.
 
 ### The reading queue
 
