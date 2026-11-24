@@ -92,7 +92,7 @@ impl Store {
             None => Ok(T::default()),
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
-                log(format!("database: what was kept as '{key}' could not be read ({e}); kept as '{key}.unreadable', starting without it"));
+                log(format!("database: what was kept as '{key}' could not be read ({}); kept as '{key}.unreadable', starting without it", unread(&e)));
                 Self::warn("setting state aside", db.execute(KEEP_UNDER, params![format!("{key}.unreadable"), text]));
                 Ok(T::default())
             }
@@ -347,12 +347,17 @@ impl Store {
 /// A column kept as JSON, read as what it should be; one that does not read is said in the log.
 fn read_json<T: serde::de::DeserializeOwned>(seq: u64, column: &str, text: Option<String>) -> Option<T> {
     let text = text?;
-    serde_json::from_str(&text).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({e})"))).ok()
+    serde_json::from_str(&text).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({})", unread(&e)))).ok()
 }
 /// A column kept as one word of a typed set, read as that type; one this build does not know is said in the log.
 fn read_word<T: serde::de::DeserializeOwned>(seq: u64, column: &str, text: Option<String>) -> Option<T> {
     let text = text?;
-    serde_json::from_value(Value::String(text)).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({e})"))).ok()
+    serde_json::from_value(Value::String(text)).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({})", unread(&e)))).ok()
+}
+/// Why a kept value did not read, for the log: the kind of error and where, never the error's own words, which
+/// can quote what was kept (his words among it).
+fn unread(e: &serde_json::Error) -> String {
+    format!("{:?} error at line {} column {}", e.classify(), e.line(), e.column())
 }
 pub(super) use airband_core::encode::word;
 

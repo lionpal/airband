@@ -124,7 +124,7 @@ pub(crate) const fn on(event: &'static str, timeout: u32) -> On {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Shape {
     /// `{"hooks": {<event>: [{"matcher"?, "hooks": [<command>…]}…]}}`, everyone's hooks side by side in each
-    /// event's list (Claude Code, Codex).
+    /// event's list.
     Common,
     /// `{<name>: {<event>: [<command>…]}}`: each named entry a set of hooks of its own, ours under this name,
     /// an event's commands listed flat, or in a group with its `matcher` for an event that names tools.

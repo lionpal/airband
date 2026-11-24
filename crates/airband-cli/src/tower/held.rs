@@ -45,10 +45,10 @@ pub(super) fn holds(inner: &Inner, session: &str) -> bool {
 
 /// What a new agent of this launcher can be started on. A program started with arguments takes what its row
 /// lists. One that speaks the Agent Client Protocol says for itself each time a session of its opens, and what
-/// it last said is what is offered; until the first of its agents has been started here, what its row lists
-/// (which the agent itself then holds to: one it has not is refused when it starts).
+/// it last said is what is offered; until the first of its agents has said, nothing is (what he names goes to
+/// the agent as he said it, and one it does not have is refused when it starts).
 pub(super) fn offers(inner: &Inner, name: &str, launcher: &config::Launcher) -> airband_core::tools::Offers {
-    if launcher.says_its_settings() { inner.menus.get(name).cloned().unwrap_or_else(|| launcher.offers()) } else { launcher.offers() }
+    if launcher.says_its_settings() { inner.menus.get(name).cloned().unwrap_or_default() } else { launcher.offers() }
 }
 
 /// An agent that is there: what its tool calls its session, and what it said a session can be set to.

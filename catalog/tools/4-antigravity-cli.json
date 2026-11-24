@@ -5,15 +5,6 @@
   "launchers": [
     {
       "name": "antigravity-cli",
-      "models": {
-        "Gemini 4 Neon": "gemini-4-neon"
-      },
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
       "held": {
         "by": "acp",
         "program": [
@@ -39,6 +30,18 @@
       },
       "write_file": {
         "asks": "write the file {Path}"
+      },
+      "write_to_file": {
+        "asks": "write the file {TargetFile}"
+      },
+      "replace_file_content": {
+        "asks": "edit the file {TargetFile}"
+      },
+      "multi_replace_file_content": {
+        "asks": "edit the file {TargetFile}"
+      },
+      "read_url_content": {
+        "asks": "fetch {Url}"
       }
     },
     "account_id": [
