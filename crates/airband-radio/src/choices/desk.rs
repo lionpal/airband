@@ -231,6 +231,18 @@ impl Desk {
         went
     }
 
+    /// What a first run asks once before it downloads anything: the models chosen for this phone that are not
+    /// on it, with their size in all. Nothing when there are none.
+    pub fn downloads_wanted(&self) -> Option<DownloadAsk> {
+        let owed = self.shared.chooser.owed();
+        if owed.is_empty() {
+            return None;
+        }
+        let megabytes = crate::models::megabytes(owed.iter().map(|(_, m)| m.files.iter().map(|f| f.1).sum::<u64>()).sum());
+        let what: Vec<&str> = owed.iter().map(|(job, _)| if *job == ChoiceJob::Voice { "the voice" } else { "listening" }).collect();
+        Some(DownloadAsk { megabytes, title: format!("Download {} for this phone?", what.join(" and ")), button: format!("Download ({megabytes}\u{a0}MB)") })
+    }
+
     /// What is being done about a choice right now, if anything, and how far along it is: for a first run's
     /// progress bar.
     pub fn choice_work(&self) -> Option<ChoiceState> {
@@ -372,6 +384,17 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
         shared.host.note(e.said());
     }
     shared.host.changed();
+}
+
+/// What a first run asks before it downloads what runs on this phone ([`Desk::downloads_wanted`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DownloadAsk {
+    /// Their size in all.
+    pub megabytes: u32,
+    /// The question.
+    pub title: String,
+    /// The button that says yes, with the size.
+    pub button: String,
 }
 
 /// Whose sign-in writes his summaries, among his coding tools ([`Desk::summary_tool`]).

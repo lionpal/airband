@@ -72,6 +72,12 @@ impl Desk {
                 out.push(format!("told in passing and not delivered, since the app was opened: {}", lost.iter().map(|(what, n)| format!("{what} {n}")).collect::<Vec<_>>().join(", ")));
             }
         }
+        let timings = self.shared.chooser.timings.lines();
+        if !timings.is_empty() {
+            out.push(String::new());
+            out.push("models on this phone".into());
+            out.extend(timings);
+        }
         if let Some(folder) = notices {
             out.push(String::new());
             out.push("notifications".into());

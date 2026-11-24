@@ -8,6 +8,8 @@ pub(super) struct Facts<'a> {
     pub(super) models: Vec<Arc<Model>>,
     /// For a model's kind: is it on this device, and is that the version the catalogue names?
     pub(super) here: &'a dyn Fn(&Model) -> (bool, bool),
+    /// Why this device could not get a model ready the last time it tried, if it could not.
+    pub(super) unready: &'a dyn Fn(&Model) -> Option<String>,
     /// Is a key kept on this device for this provider?
     pub(super) has_key: &'a dyn Fn(&str) -> bool,
     /// Why what is chosen for this job did not work the last time, if it did not.
@@ -20,7 +22,18 @@ pub(super) struct Facts<'a> {
 }
 
 pub(super) fn megabytes(m: &Model) -> u32 {
-    (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32
+    crate::models::megabytes(m.files.iter().map(|f| f.1).sum::<u64>())
+}
+
+/// The words of the button on the chosen card that gets it ready, for how it stands. The card shows the
+/// model's name already: the button does not say it again.
+pub(super) fn action(state: &ChoiceState) -> Option<String> {
+    match state {
+        ChoiceState::NeedsDownload { megabytes } => Some(format!("Download ({megabytes}\u{a0}MB)")),
+        ChoiceState::Stale { megabytes } => Some(format!("Update ({megabytes}\u{a0}MB)")),
+        ChoiceState::NotReady { .. } => Some("Try again".into()),
+        _ => None,
+    }
 }
 
 /// The line under a service's name: what it needs from him and what it costs.
@@ -59,6 +72,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         asks: s.asks,
         voices: s.voices,
         voice,
+        action: None,
     };
     if job == ChoiceJob::Reads {
         // his computer's own list once it has said; until then, what this build knows a computer can use
@@ -106,11 +120,16 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         let (fetched, current) = (facts.here)(m);
         let chosen = pick.as_ref().is_some_and(|p| p.place == ChoicePlace::Phone && p.id == m.kind);
         let size = megabytes(m);
-        let state = working(&m.kind).or(failed(chosen)).unwrap_or(match (fetched, current) {
+        // what is not here is to be downloaded, whatever was said when it was asked to work: that is what
+        // the card offers. Else why it did not work, or could not be got ready, comes before a newer version.
+        let state = working(&m.kind).unwrap_or_else(|| match (fetched, current) {
             (false, _) => ChoiceState::NeedsDownload { megabytes: size },
+            _ if let Some(why) = (facts.unready)(m) => ChoiceState::NotReady { why },
+            _ if let Some(failed) = failed(chosen) => failed,
             (true, false) => ChoiceState::Stale { megabytes: size },
             (true, true) => ChoiceState::Ready,
         });
+        let action = action(&state).filter(|_| chosen);
         out.push(Choice {
             id: m.kind.clone(),
             place: ChoicePlace::Phone,
@@ -130,6 +149,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, the voice the row names as its usual one
             voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
+            action,
         });
     }
     // the model this job starts with, when this device cannot run it: shown, with why, so he knows to pick
@@ -153,6 +173,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             asks: Vec::new(),
             voices: Vec::new(),
             voice: String::new(),
+            action: None,
         });
     }
     for s in crate::services::services(job.job()) {

@@ -4,6 +4,27 @@ use super::*;
 use airband_core::providers::Job;
 use std::net::{TcpListener, TcpStream};
 
+/// Wait until `fact` holds, woken each time the fetch or a stand-in host does something (`HAPPENED`). The minute
+/// is only a bound on a test that has gone wrong, so it fails instead of hanging.
+fn when<T>(what: &str, fact: impl Fn() -> Option<T>) -> T {
+    let end = std::time::Instant::now() + Duration::from_secs(60);
+    let mut seen = HAPPENED.0.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        if let Some(it) = fact() {
+            return it;
+        }
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        assert!(!left.is_zero(), "it never came to pass: {what}");
+        seen = HAPPENED.1.wait_timeout(seen, left).unwrap_or_else(|e| e.into_inner()).0;
+    }
+}
+
+/// A stand-in host did something a test may be waiting on.
+fn host_did() {
+    *HAPPENED.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    HAPPENED.1.notify_all();
+}
+
 /// How the test server behaves.
 #[derive(Clone, Copy, Default)]
 struct Ways {
@@ -111,6 +132,7 @@ fn here_whole(dir: &Path, files: &[(String, Vec<u8>)]) -> bool {
 
 #[test]
 fn a_model_comes_down_in_ranged_pieces_and_every_file_is_checked_whole() {
+    let _one = one_fetching_test();
     let files = files();
     let server = serve(files.clone(), Ways::default());
     let (dir, at) = folder();
@@ -127,6 +149,7 @@ fn a_model_comes_down_in_ranged_pieces_and_every_file_is_checked_whole() {
 
 #[test]
 fn a_fetch_cut_short_goes_on_from_the_bytes_it_has() {
+    let _one = one_fetching_test();
     let files = files();
     // the first answer is cut after a megabyte
     let server = serve(files.clone(), Ways { drop_after: Some(1 << 20), ..Ways::default() });
@@ -149,6 +172,7 @@ fn a_fetch_cut_short_goes_on_from_the_bytes_it_has() {
 
 #[test]
 fn what_was_joined_before_is_kept_and_only_the_rest_is_asked_for() {
+    let _one = one_fetching_test();
     let files = files();
     let server = serve(files.clone(), Ways::default());
     let (dir, at) = folder();
@@ -165,6 +189,7 @@ fn what_was_joined_before_is_kept_and_only_the_rest_is_asked_for() {
 
 #[test]
 fn bytes_that_are_not_the_model_never_take_its_name() {
+    let _one = one_fetching_test();
     let files = files();
     let server = serve(files.clone(), Ways { wrong: true, ..Ways::default() });
     let (dir, at) = folder();
@@ -177,6 +202,7 @@ fn bytes_that_are_not_the_model_never_take_its_name() {
 
 #[test]
 fn a_server_that_ignores_ranges_is_not_taken_for_a_piece() {
+    let _one = one_fetching_test();
     let files = files();
     let server = serve(files.clone(), Ways { no_ranges: true, ..Ways::default() });
     let (dir, at) = folder();
@@ -209,6 +235,7 @@ impl Transfers for Moves {
     fn start(&self, id: String, url: String, from: u64, until: u64, to: String) {
         let name = url.split_once("/m/").map(|(_, n)| n.to_string()).unwrap();
         self.started.lock().unwrap().push((name.clone(), from, until));
+        host_did();
         let body = self.files.iter().find(|(n, _)| *n == name).unwrap().1[from as usize..until as usize].to_vec();
         let short = self.short_at == Some(from);
         if self.stuck_at == Some(from) {
@@ -228,6 +255,7 @@ impl Transfers for Moves {
 
 #[test]
 fn with_the_hosts_transfers_every_piece_is_handed_over_at_once_and_checked_here() {
+    let _one = one_fetching_test();
     let files = files();
     let (dir, at) = folder();
     let m = model("https://example.invalid/m", &files);
@@ -253,6 +281,7 @@ fn with_the_hosts_transfers_every_piece_is_handed_over_at_once_and_checked_here(
 
 #[test]
 fn a_download_that_fails_is_told_by_what_it_answered() {
+    let _one = one_fetching_test();
     let files = files();
     let (dir, at) = folder();
     // a server that has nothing there
@@ -267,6 +296,7 @@ fn a_download_that_fails_is_told_by_what_it_answered() {
 
 #[test]
 fn a_fetch_he_stops_ends_and_lets_the_next_one_start() {
+    let _one = one_fetching_test();
     let files = files();
     let (dir, at) = folder();
     let m = model("https://example.invalid/m", &files);
@@ -277,12 +307,7 @@ fn a_fetch_he_stops_ends_and_lets_the_next_one_start() {
         std::thread::spawn(move || fetch_local_model(at, &m, Some(host)))
     };
     // once the stuck one is all that is left, he stops it
-    for _ in 0..200 {
-        if host.started.lock().unwrap().len() == 3 && dir.join("models/tiny/1/small.json").exists() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    when("every piece has started and the small file is whole", || (host.started.lock().unwrap().len() == 3 && dir.join("models/tiny/1/small.json").exists()).then_some(()));
     // what `Desk::stop_model_fetch` tells
     heard(Event::Stop);
     assert_eq!(fetching.join().unwrap(), Err(FetchFailed::Cancelled));
@@ -297,6 +322,7 @@ fn a_fetch_he_stops_ends_and_lets_the_next_one_start() {
 
 #[test]
 fn a_piece_that_came_before_the_fetch_was_listening_is_taken_and_none_is_left_behind() {
+    let _one = one_fetching_test();
     let files = files();
     let (dir, at) = folder();
     let m = model("https://example.invalid/m", &files);
@@ -322,4 +348,77 @@ fn pieces_meet_on_the_same_boundaries_whatever_is_here() {
     assert_eq!(ranges(0, 2 * PIECE + 1), vec![(0, PIECE), (PIECE, 2 * PIECE), (2 * PIECE, 2 * PIECE + 1)]);
     assert_eq!(ranges(5, PIECE + 1), vec![(5, PIECE), (PIECE, PIECE + 1)]);
     assert!(ranges(7, 7).is_empty());
+}
+
+/// Transfers the test moves itself, a step at a time: each piece waits to be told how far it has got and when
+/// it ends.
+#[derive(Default)]
+struct Gated {
+    started: Mutex<Vec<(String, String, Vec<u8>)>>,
+}
+
+impl Transfers for Gated {
+    fn start(&self, id: String, url: String, from: u64, until: u64, to: String) {
+        let name = url.split_once("/m/").map(|(_, n)| n.to_string()).unwrap();
+        let body = files().into_iter().find(|(n, _)| *n == name).unwrap().1[from as usize..until as usize].to_vec();
+        self.started.lock().unwrap().push((id, to, body));
+        host_did();
+    }
+    fn stop(&self, _: String) {}
+}
+
+#[test]
+fn progress_counts_bytes_under_way_only_goes_up_and_is_whole_only_when_the_files_are() {
+    let _one = one_fetching_test();
+    let files = files();
+    let (dir, at) = folder();
+    let m = model("https://example.invalid/m", &files);
+    let host = Arc::new(Gated::default());
+    let fetching = {
+        let (at, m, host) = (at.clone(), m.clone(), host.clone());
+        std::thread::spawn(move || fetch_local_model(at, &m, Some(host)))
+    };
+    let until = |what: &str, fact: &dyn Fn(&Progress) -> bool| when(what, || Some(local_model_progress()).filter(|p| fact(p)));
+    let pieces = when("every piece has started", || Some(host.started.lock().unwrap().clone()).filter(|p| p.len() == 3));
+    assert_eq!(pieces.len(), 3);
+    let of: u64 = files.iter().map(|f| f.1.len() as u64).sum();
+    let mut seen = until("it has begun", &|p| p.of == of);
+    assert_eq!((seen.got, seen.fraction(), seen.said()), (0, 0.0, format!("Downloading 0 of {}\u{a0}MB", megabytes(of))));
+    // half of a piece under way is counted as it comes, before the piece is whole
+    let (id, _, body) = &pieces[0];
+    heard(Event::Moved { id: id.clone(), bytes: body.len() as u64 / 2 });
+    let now = until("bytes under way are counted", &|p| p.got == body.len() as u64 / 2);
+    assert!(now.fraction() > 0.0 && now.fraction() < 1.0);
+    seen = now;
+    // every byte here, the last still to be joined and checked: never shown as done
+    for (id, to, body) in &pieces {
+        heard(Event::Moved { id: id.clone(), bytes: body.len() as u64 });
+        let now = local_model_progress();
+        assert!(now.got >= seen.got, "it never goes back: {seen:?} then {now:?}");
+        seen = now;
+        if id != &pieces[2].0 {
+            std::fs::write(to, body).unwrap();
+            heard(Event::Ended { id: id.clone(), status: Some(206) });
+        }
+    }
+    let all = until("every byte is counted", &|p| p.got == of);
+    assert!(all.fraction() < 1.0 && !all.whole, "{all:?}");
+    assert_ne!(all.said(), format!("Downloading {0} of {0}\u{a0}MB", megabytes(of)));
+    let (id, to, body) = &pieces[2];
+    std::fs::write(to, body).unwrap();
+    heard(Event::Ended { id: id.clone(), status: Some(206) });
+    fetching.join().unwrap().unwrap();
+    let done = local_model_progress();
+    assert!(done.whole && here_whole(&dir, &files));
+    assert_eq!((done.fraction(), done.said()), (1.0, format!("Downloading {0} of {0}\u{a0}MB", megabytes(of))));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_download_with_nothing_more_for_a_while_says_it_is_waiting_for_the_network() {
+    let p = Progress { got: 23_400_000, of: 66_000_000, whole: false, stalled: false };
+    assert_eq!(p.said(), "Downloading 23 of 66\u{a0}MB");
+    assert_eq!(Progress { stalled: true, ..p.clone() }.said(), "Waiting for the network");
+    // one that is whole is never waiting
+    assert_eq!(Progress { stalled: true, whole: true, got: 66_000_000, ..p }.said(), "Downloading 66 of 66\u{a0}MB");
 }

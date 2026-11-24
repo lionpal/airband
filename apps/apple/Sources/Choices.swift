@@ -278,7 +278,8 @@ struct ChoicePicker: View {
     private func tapped(_ c: Choice) {
         // one this phone cannot run says why on its card, and is not chosen
         if case .cannotRun = c.state { return }
-        if c.chosen && c.megabytesToFetch == nil { return }
+        // the one chosen is got ready by the button on its card
+        if c.chosen { return }
         if c.place == .service && (c.key || !c.asks.isEmpty) {
             open = open == c.id ? nil : c.id
         } else if mode == .onboarding {
@@ -305,6 +306,11 @@ struct ChoicePicker: View {
             Fetching(label: label, progress: fraction)
         } else if c.chosen {
             if case .failed(let why) = c.state { Text(why).font(.system(size: 13)).foregroundStyle(.red) }
+            if case .notReady(let why) = c.state { Text(why).font(.system(size: 13)).foregroundStyle(.red) }
+            // what gets it ready, in the core's words: a download, an update, another try
+            if let action = c.action {
+                Button(action) { choose(c) }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+            }
             if job == .reads {
                 ForEach(refused, id: \.computer) { line in
                     if case .refused(let reason) = line.state { Text("\(line.name): \(reason)").font(.system(size: 13)).foregroundStyle(.red) }
@@ -321,9 +327,6 @@ struct ChoicePicker: View {
                     Spacer()
                     if c.key && c.hasKey { Button("Change key") { open = c.id }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain) }
                 }
-            }
-            if case .stale(let megabytes) = c.state, mode == .settings {
-                Button("Get the newer version (\(megabytes) MB)") { choose(c) }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
             }
         }
     }

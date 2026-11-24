@@ -32,7 +32,7 @@ pub(crate) enum Cannot {
     ModelNotRun(Sense),
     /// A service this build cannot use for this.
     ServiceNotUsed(Sense),
-    /// A model he chose that is not downloaded yet, by its name.
+    /// A model he chose that is not downloaded yet, by its name. Its card in Settings offers the download.
     NotDownloaded { sense: Sense, model: String },
     /// A voice model whose row names no voice of its own, and none was picked.
     NoVoiceNamed { model: String },
@@ -55,7 +55,7 @@ impl Cannot {
             Cannot::ModelNotRun(Sense::Voice) => "This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into(),
             Cannot::ServiceNotUsed(Sense::Listening) => "This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into(),
             Cannot::ServiceNotUsed(Sense::Voice) => "This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into(),
-            Cannot::NotDownloaded { sense, model } => format!("{model} is not on this phone yet. Download it in Settings, under {}.", sense.section()),
+            Cannot::NotDownloaded { model, .. } => format!("{model} is not on this phone yet."),
             Cannot::NoVoiceNamed { model } => format!("{model} names no voice of its own to speak in. Choose one in Settings, under Voice."),
             Cannot::VoiceGone { model, voice } => format!("{model} no longer has the voice {voice}. Choose another in Settings, under Voice."),
             Cannot::NoKey { sense, key_name } => format!("Enter your {key_name} in Settings, under {}.", sense.section()),
@@ -74,7 +74,6 @@ mod tests {
             (Cannot::ModelNotRun(Sense::Voice), "Voice"),
             (Cannot::ServiceNotUsed(Sense::Listening), "Listening"),
             (Cannot::ServiceNotUsed(Sense::Voice), "Voice"),
-            (Cannot::NotDownloaded { sense: Sense::Listening, model: "M".into() }, "Listening"),
             (Cannot::NoVoiceNamed { model: "M".into() }, "Voice"),
             (Cannot::VoiceGone { model: "M".into(), voice: "v".into() }, "Voice"),
             (Cannot::NothingChosen(Sense::Listening), "Listening"),
@@ -83,5 +82,7 @@ mod tests {
         for (why, section) in all {
             assert!(why.told().ends_with(&format!("under {section}.")), "{why:?}");
         }
+        // one not downloaded yet is downloaded from its card, which is where he reads this: it sends him nowhere
+        assert_eq!(Cannot::NotDownloaded { sense: Sense::Listening, model: "M".into() }.told(), "M is not on this phone yet.");
     }
 }

@@ -29,6 +29,8 @@ mod contact;
 mod desk;
 mod list;
 mod saved;
+mod timings;
+pub(crate) use timings::{Did, Timings};
 pub use contact::{ContactFrom, ContactNote};
 pub(crate) use desk::tell_reads;
 use list::*;
@@ -74,7 +76,7 @@ pub enum ChoiceState {
     Ready,
     /// It takes a key, and none is kept for it.
     NeedsKey,
-    /// Its model is not on this device yet.
+    /// Its model is not on this device yet. Chosen, its card offers the download ([`Choice::action`]).
     NeedsDownload { megabytes: u32 },
     /// Its model is here and works, and a newer version of it can be fetched.
     Stale { megabytes: u32 },
@@ -84,6 +86,9 @@ pub enum ChoiceState {
     Waiting,
     /// It is chosen and did not do its job the last time it was tried, and why. It stays chosen.
     Failed { why: String },
+    /// Its model is here, and this device could not get it ready the last time it tried, and why. It stays
+    /// chosen; its card offers to try again ([`Choice::action`]).
+    NotReady { why: String },
     /// The model this job starts with, which this device cannot run, and why. It cannot be chosen: he picks
     /// something else.
     CannotRun { why: String },
@@ -126,6 +131,9 @@ pub struct Choice {
     pub voices: Vec<VoiceChoice>,
     /// Which of those speaks now, by name.
     pub voice: String,
+    /// On the card of the one chosen, the words of the one button that gets it ready, when it is not: a
+    /// download with its size, an update, or another try at getting it ready. Choosing it again does it.
+    pub action: Option<String>,
 }
 
 /// Something being done about a choice right now.
@@ -133,6 +141,7 @@ pub struct Choice {
 struct Work {
     job: ChoiceJob,
     id: String,
+    /// What is being done, in words. A download's words are made from how far it has got.
     label: String,
     /// A model is being fetched: how far along is known.
     fetching: bool,
@@ -152,6 +161,12 @@ pub(crate) struct Chooser {
     /// The host's own way to bring a model's files, which goes on while the app is in the background, when
     /// it has given one (`Desk::use_transfers`).
     pub(crate) transfers: Mutex<Option<Arc<dyn crate::models::Transfers>>>,
+    /// Models this device could not get ready the last time it tried since the app opened, by kind, and why.
+    unready: Mutex<HashMap<String, String>>,
+    /// How long each download and each getting ready took, for the connection record.
+    pub(crate) timings: Timings,
+    /// One model is got ready at a time.
+    preparing: Mutex<()>,
 }
 
 /// The key kept on this phone for a provider, when there is one.
@@ -168,7 +183,7 @@ impl Chooser {
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
         let (kept, keeper, opened) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"), "What you chose in Settings");
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
-        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened), transfers: Mutex::new(None) }
+        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened), transfers: Mutex::new(None), unready: Mutex::new(HashMap::new()), timings: Timings::open(dir), preparing: Mutex::new(()) }
     }
 
     /// The coding tools he uses, by id.
@@ -266,7 +281,13 @@ impl Chooser {
         *self.working.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     fn at_work(&self) -> Option<(ChoiceJob, String, String, Option<f64>)> {
-        self.working.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|w| (w.job, w.id, w.label, w.fetching.then(|| crate::models::local_model_progress() as f64 / 100.0)))
+        self.working.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|w| match w.fetching {
+            true => {
+                let progress = crate::models::local_model_progress();
+                (w.job, w.id, progress.said(), Some(progress.fraction()))
+            }
+            false => (w.job, w.id, w.label, None),
+        })
     }
 
     fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses, paired: &[StationId]) -> Vec<Choice> {
@@ -274,6 +295,7 @@ impl Chooser {
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
             here: &|m| (crate::models::fetched(&self.dir, m), crate::models::current(&self.dir, m)),
+            unready: &|m| self.unready.lock().unwrap_or_else(|e| e.into_inner()).get(&m.kind).cloned(),
             has_key: &|id| kept_key(host, id).is_some(),
             failed: match job {
                 ChoiceJob::Ears => senses.ears.failed(),
@@ -288,33 +310,99 @@ impl Chooser {
     }
 
     /// Get a model onto this device and ready to run: fetched if the version the catalogue names is not here,
-    /// then, for one whose row says the device has work of its own to do first, run once.
+    /// then, for one whose row says the device has work of its own to do first, got ready at once.
     fn make_ready(&self, job: ChoiceJob, m: &Model, host: &dyn DeskHost) -> Result<(), RadioError> {
         if !crate::models::current(&self.dir, m) {
-            self.work(job, &m.kind, format!("Downloading {}", m.name), true);
+            self.work(job, &m.kind, String::new(), true);
             host.changed();
-            crate::models::fetch_local_model(self.dir.clone(), m, self.transfers.lock().unwrap_or_else(|e| e.into_inner()).clone())?;
+            let began = std::time::Instant::now();
+            let went = crate::models::fetch_local_model(self.dir.clone(), m, self.transfers.lock().unwrap_or_else(|e| e.into_inner()).clone());
+            let progress = crate::models::local_model_progress();
+            self.timings.note(m, match went {
+                Ok(()) => Did::Downloaded { bytes: progress.of, ms: began.elapsed().as_millis() as u64 },
+                Err(why) => Did::NotDownloaded { bytes: progress.got, ms: began.elapsed().as_millis() as u64, why: why.said() },
+            });
+            went?;
         }
-        let note = m.told(crate::models::field::PREPARE);
-        if !note.is_empty() {
-            self.work(job, &m.kind, note, false);
-            host.changed();
-            // the first run is when the device fits the model to itself: have it do its job once, on nothing
-            // much (a second of silence to hear, a word to say)
-            let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
-            let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
-            // in the voice he picked, or the one its row names as usual: never just the first it lists
-            let voice = match m.job {
-                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| told(why.told()))?,
-                _ => String::new(),
-            };
-            held.run(|loaded| match m.job {
-                Job::Voice => loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false),
-                _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
-            })
-            .map_err(|fault| told(fault.told(&m.name)))?;
+        self.prepare(job, m, host)
+    }
+
+    /// The work the device does with a model before its first use, when its row names some and it is not done
+    /// for the version here: have it do its job once, on nothing much (a second of silence to hear, a word to
+    /// say). How long it took is kept, and a failure is kept as the model's state until it is tried again.
+    fn prepare(&self, job: ChoiceJob, m: &Model, host: &dyn DeskHost) -> Result<(), RadioError> {
+        let _one = self.preparing.lock().unwrap_or_else(|e| e.into_inner());
+        if crate::models::prepared(&self.dir, m) {
+            return Ok(());
         }
-        Ok(())
+        self.work(job, &m.kind, m.told(crate::models::field::PREPARE), false);
+        host.changed();
+        let began = std::time::Instant::now();
+        let went = self.run_once(m, host);
+        let ms = began.elapsed().as_millis() as u64;
+        let mut unready = self.unready.lock().unwrap_or_else(|e| e.into_inner());
+        match &went {
+            Ok(()) => {
+                unready.remove(&m.kind);
+                crate::models::mark_prepared(&self.dir, m);
+                self.timings.note(m, Did::Readied { ms });
+            }
+            Err(why) => {
+                unready.insert(m.kind.clone(), why.to_string());
+                self.timings.note(m, Did::NotReadied { ms, why: why.to_string() });
+            }
+        }
+        went
+    }
+
+    fn run_once(&self, m: &Model, host: &dyn DeskHost) -> Result<(), RadioError> {
+        let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
+        let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
+        // in the voice he picked, or the one its row names as usual: never just the first it lists
+        let voice = match m.job {
+            Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| told(why.told()))?,
+            _ => String::new(),
+        };
+        held.run(|loaded| match m.job {
+            Job::Voice => loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false),
+            _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
+        })
+        .map_err(|fault| told(fault.told(&m.name)))
+    }
+
+    /// The models chosen on this device that are here but not yet got ready (a download that finished while
+    /// the app was away, or an app opened again before it was done), each with the job it is for.
+    fn unprepared(&self) -> Vec<(ChoiceJob, Arc<Model>)> {
+        let saved = self.saved();
+        [ChoiceJob::Voice, ChoiceJob::Ears]
+            .into_iter()
+            .filter_map(|job| Some((job, self.model(&saved.pick(job).filter(|p| p.place == ChoicePlace::Phone)?.id)?)))
+            .filter(|(_, m)| crate::models::fetched(&self.dir, m) && !crate::models::prepared(&self.dir, m) && !self.unready.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&m.kind))
+            .collect()
+    }
+
+    /// Get ready, one after another, the models chosen here that are downloaded and not ready yet. Blocks.
+    pub(crate) fn prepare_chosen(&self, host: &dyn DeskHost, senses: &Senses) {
+        let todo = self.unprepared();
+        if todo.is_empty() {
+            return;
+        }
+        for (job, m) in todo {
+            // a failure is kept as the model's state, which its card shows with another try, and is timed
+            if let Err(why) = self.prepare(job, &m, host) {
+                eprintln!("airband: {} could not be got ready: {why}", m.kind);
+            }
+        }
+        self.rest();
+        self.apply(host, senses);
+        host.changed();
+    }
+
+    /// The models chosen on this device that are not downloaded, or not the version the catalogue names: what
+    /// a first run asks once to download.
+    pub(crate) fn owed(&self) -> Vec<(ChoiceJob, Arc<Model>)> {
+        let saved = self.saved();
+        [ChoiceJob::Voice, ChoiceJob::Ears].into_iter().filter_map(|job| Some((job, self.model(&saved.pick(job).filter(|p| p.place == ChoicePlace::Phone)?.id)?))).filter(|(_, m)| !crate::models::current(&self.dir, m)).collect()
     }
 }
 
@@ -333,7 +421,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, paired: &[], cannot: None }
+        Facts { models: crate::models::models(&phone()).collect(), here, unready: &|_| None, has_key, failed: None, work: None, paired: &[], cannot: None }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {
@@ -608,6 +696,8 @@ mod tests {
     pub(super) struct Host {
         keys: Mutex<HashMap<String, String>>,
         notes: Mutex<Vec<String>>,
+        /// Its engines run a model (giving back nothing much); else they say they could not.
+        pub(super) runs: std::sync::atomic::AtomicBool,
     }
     impl DeskHost for Host {
         fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
@@ -632,7 +722,7 @@ mod tests {
             phone()
         }
         fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-            None
+            self.runs.load(std::sync::atomic::Ordering::SeqCst).then(Vec::new)
         }
         fn secret(&self, name: String) -> Option<String> {
             self.keys.lock().unwrap().get(&name).cloned()
@@ -666,12 +756,17 @@ mod tests {
             desk.choose_voice(m.voices[1].0.clone()).unwrap();
             assert_eq!(desk.choices(ChoiceJob::Voice).into_iter().find(|c| c.chosen).unwrap().voice, m.voices[1].0);
             // It is chosen and is not on this device: it is still the one that is to speak. Asked to, it says
-            // why it cannot; nothing else speaks in its place, and the card says the same.
+            // why it cannot; nothing else speaks in its place. Its card offers the download, with its size,
+            // and sends him nowhere else.
             assert!(desk.shared.senses.mouth.ready());
             let tape = crate::ears_stream::Tape::of(&[], false);
             let why = desk.shared.senses.mouth.say(&tape, "Shop two is waiting.", &|| false).unwrap_err();
-            assert!(why.contains("is not on this phone yet"), "{why}");
-            assert_eq!(state(ChoiceJob::Voice, &m.kind), (true, ChoiceState::Failed { why }));
+            assert_eq!(why, format!("{} is not on this phone yet.", m.name));
+            let card = desk.choices(ChoiceJob::Voice).into_iter().find(|c| c.id == m.kind).unwrap();
+            assert!(matches!(card.state, ChoiceState::NeedsDownload { megabytes } if card.action == Some(format!("Download ({megabytes}\u{a0}MB)"))), "{card:?}");
+            // and a first run asks once to download it, with its size
+            let ask = desk.downloads_wanted().unwrap();
+            assert_eq!(ask.button, format!("Download ({}\u{a0}MB)", ask.megabytes));
         }
         // a service whose key is wrong is not taken: the one before it stays, and the key is not kept
         // (his own voice server, at an address where nothing answers: no call leaves this machine)
@@ -701,6 +796,76 @@ mod tests {
         let again = Desk::alone(&dir.display().to_string(), host);
         assert_eq!(again.choices(ChoiceJob::Reads), desk.choices(ChoiceJob::Reads));
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod ready_tests {
+    use super::tests::Host;
+    use super::*;
+
+    /// A model of two small files whose engine is the host's, and whose row says the device gets it ready
+    /// before first use; here whole in `dir`.
+    fn tiny(dir: &std::path::Path) -> Model {
+        let folder = dir.join("models/tiny/1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("a.bin"), "abc").unwrap();
+        std::fs::write(folder.join(crate::models::WHOLE), "").unwrap();
+        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Ears, engine: "host-only".into(), version: "1".into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64))], voices: Vec::new(), usual_voice: String::new(), credit: String::new(), with: [(crate::models::field::PREPARE.to_string(), serde_json::json!("Getting it ready"))].into() }
+    }
+
+    #[test]
+    fn getting_a_model_ready_ends_ready_or_not_ready_with_why_and_is_timed_either_way() {
+        let dir = std::env::temp_dir().join(format!("airband-ready-{}", random_hex(4)));
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        let chooser = &desk.shared.chooser;
+        let m = tiny(&dir);
+        assert!(!crate::models::prepared(&dir.display().to_string(), &m));
+        // the engine could not run it: not ready, why, and how long it took
+        let failed = chooser.prepare(ChoiceJob::Ears, &m, &*host).unwrap_err().to_string();
+        assert_eq!(chooser.unready.lock().unwrap().get("tiny"), Some(&failed));
+        assert!(matches!(chooser.timings.all().last().map(|t| &t.did), Some(Did::NotReadied { why, .. }) if *why == failed));
+        // so it is not tried again behind his back: the card offers that
+        assert!(chooser.unready.lock().unwrap().contains_key("tiny"));
+        // tried again, it goes: ready, kept as ready, and timed
+        host.runs.store(true, std::sync::atomic::Ordering::SeqCst);
+        chooser.prepare(ChoiceJob::Ears, &m, &*host).unwrap();
+        assert!(chooser.unready.lock().unwrap().is_empty());
+        assert!(crate::models::prepared(&dir.display().to_string(), &m));
+        assert!(matches!(chooser.timings.all().last().map(|t| &t.did), Some(Did::Readied { .. })));
+        // and is not done again
+        let kept = chooser.timings.all().len();
+        chooser.prepare(ChoiceJob::Ears, &m, &*host).unwrap();
+        assert_eq!(chooser.timings.all().len(), kept);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_chosen_card_says_how_it_stands_and_offers_the_one_button_that_gets_it_ready() {
+        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 };
+        let Some(m) = crate::models::models(&device).find(|m| m.job == Job::Ears) else { return };
+        let saved = Saved { ears: Some(Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }), ..Saved::default() };
+        let card = |here: &dyn Fn(&Model) -> (bool, bool), unready: &dyn Fn(&Model) -> Option<String>, failed: Option<String>, work: Option<(String, String, Option<f64>)>| {
+            let facts = Facts { models: vec![m.clone()], here, unready, has_key: &|_| false, failed, work, paired: &[], cannot: None };
+            list(ChoiceJob::Ears, &saved, &facts).into_iter().find(|c| c.id == m.kind).unwrap()
+        };
+        let size = list::megabytes(&m);
+        // not here: download, whatever the last try at using it said
+        let c = card(&|_| (false, false), &|_| None, Some(format!("{} is not on this phone yet.", m.name)), None);
+        assert_eq!((c.state, c.action), (ChoiceState::NeedsDownload { megabytes: size }, Some(format!("Download ({size}\u{a0}MB)"))));
+        // downloading: how far, in its own words, and no button
+        let c = card(&|_| (false, false), &|_| None, None, Some((m.kind.clone(), "Downloading 23 of 66\u{a0}MB".into(), Some(0.35))));
+        assert_eq!((c.state, c.action), (ChoiceState::Working { label: "Downloading 23 of 66\u{a0}MB".into(), fraction: Some(0.35) }, None));
+        // here and not got ready: why, and try again
+        let c = card(&|_| (true, true), &|_| Some("it could not be loaded".into()), None, None);
+        assert_eq!((c.state, c.action), (ChoiceState::NotReady { why: "it could not be loaded".into() }, Some("Try again".into())));
+        // a newer version: update, with its size
+        let c = card(&|_| (true, false), &|_| None, None, None);
+        assert_eq!(c.action, Some(format!("Update ({size}\u{a0}MB)")));
+        // ready: nothing to do
+        let c = card(&|_| (true, true), &|_| None, None, None);
+        assert_eq!((c.state, c.action), (ChoiceState::Ready, None));
     }
 }
 

@@ -14,6 +14,8 @@ struct OnboardingView: View {
     @State private var scanning = false
     @State private var finishing = false
     @State private var working: (label: String, fraction: Double?)?
+    /// What runs on this phone and is not on it yet, asked about once before it is downloaded.
+    @State private var downloads: DownloadAsk?
     @State private var wrong: String?
     @State private var copied = false
     /// The keyboard is up.
@@ -98,6 +100,11 @@ struct OnboardingView: View {
         // paired, by the scan or by a link: fetch what he chose and finish
         .onChange(of: model.paired) { _, paired in if paired && step == last { finish() } }
         .onReceive(tick) { _ in if finishing { working = model.choiceWork() } }
+        .confirmationDialog(downloads?.title ?? "", isPresented: Binding(get: { downloads != nil }, set: { if !$0 { downloads = nil } }), titleVisibility: .visible) {
+            Button(downloads?.button ?? "") { fetch() }
+            // not now: each card in Settings offers its download
+            Button("Not now", role: .cancel) { close(nil) }
+        }
     }
 
     private func headline(_ text: String) -> some View {
@@ -156,16 +163,25 @@ struct OnboardingView: View {
         }
     }
 
-    /// Fetch the models he chose that run on this phone, one after another, then close.
+    /// Ask once to download what he chose that runs on this phone, with its size, then close.
     private func finish() {
+        if let ask = model.desk.downloadsWanted() { downloads = ask } else { fetch() }
+    }
+
+    /// Fetch the models he chose that run on this phone, one after another, get them ready, then close.
+    private func fetch() {
         finishing = true
         model.finishChoices { problem in
             (finishing, working) = (false, nil)
-            // a download that failed does not keep him out: what he chose stays chosen and says so, and it
-            // can be fetched again in Settings. What went wrong is told where he lands, since this closes
-            UserDefaults.standard.set(true, forKey: "airband.onboarded")
-            if let problem { model.problem = problem }
-            dismiss()
+            close(problem)
         }
+    }
+
+    /// A download that failed or was put off does not keep him out: what he chose stays chosen and its card
+    /// says how it stands. What went wrong is told where he lands, since this closes.
+    private func close(_ problem: String?) {
+        UserDefaults.standard.set(true, forKey: "airband.onboarded")
+        if let problem { model.problem = problem }
+        dismiss()
     }
 }

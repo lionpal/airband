@@ -13,11 +13,22 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc;
 
-/// How far the fetch now running has got: bytes so far, and bytes in all.
+/// How far the fetch now running has got: bytes so far (never fewer than were said before, in one fetch), and
+/// bytes in all, and whether every file is whole and checked.
 static GOT: AtomicU64 = AtomicU64::new(0);
 static OF: AtomicU64 = AtomicU64::new(0);
+static DONE: AtomicBool = AtomicBool::new(false);
+/// When the fetch now running last had a byte more, or began.
+static MOVED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// One fetch at a time.
 static FETCHING: Mutex<()> = Mutex::new(());
+/// Tests that fetch, one at a time: how far a fetch has got is one for the app, so a test that reads it must be
+/// the only one fetching from before it begins until it has read it.
+#[cfg(test)]
+pub(crate) fn one_fetching_test() -> std::sync::MutexGuard<'static, ()> {
+    static TESTS: Mutex<()> = Mutex::new(());
+    TESTS.lock().unwrap_or_else(|e| e.into_inner())
+}
 /// Where what the host says about its transfers goes, while a fetch waits on them.
 static LISTENER: Mutex<Option<mpsc::Sender<Event>>> = Mutex::new(None);
 
@@ -84,10 +95,73 @@ impl Desk {
     }
 }
 
-/// How far the fetch now running has got, in hundredths. For a progress bar, asked a few times a second.
-pub(crate) fn local_model_progress() -> u32 {
-    let of = OF.load(Ordering::SeqCst);
-    (GOT.load(Ordering::SeqCst).min(of) * 100).checked_div(of).unwrap_or(0) as u32
+/// How long with no byte more before a download is said to be waiting for the network.
+pub(crate) const STALLED_AFTER: Duration = Duration::from_secs(10);
+
+/// How far a download has got, as a card shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Progress {
+    /// Bytes here so far, counting those still coming in pieces under way.
+    pub(crate) got: u64,
+    /// Bytes in all.
+    pub(crate) of: u64,
+    /// Every file is here and checked.
+    pub(crate) whole: bool,
+    /// Nothing more has come for [`STALLED_AFTER`].
+    pub(crate) stalled: bool,
+}
+
+impl Progress {
+    /// How far along, from 0 to 1: 1 only once every file is whole and checked, never on the bytes alone.
+    pub(crate) fn fraction(&self) -> f64 {
+        if self.whole {
+            return 1.0;
+        }
+        match self.of {
+            0 => 0.0,
+            of => self.got.min(of - 1) as f64 / of as f64,
+        }
+    }
+    /// The line under the bar. The card already shows the model's name.
+    pub(crate) fn said(&self) -> String {
+        if self.stalled && !self.whole {
+            return "Waiting for the network".into();
+        }
+        let of = megabytes(self.of);
+        let got = if self.whole { of } else { (self.got.min(self.of) / 1_000_000).min(of.saturating_sub(1) as u64) as u32 };
+        format!("Downloading {got} of {of}\u{a0}MB")
+    }
+}
+
+/// Bytes as the whole megabytes a card shows a size in.
+pub(crate) fn megabytes(bytes: u64) -> u32 {
+    (bytes as f64 / 1e6).round() as u32
+}
+
+/// How far the fetch now running has got. Asked a few times a second.
+pub(crate) fn local_model_progress() -> Progress {
+    let since = MOVED.lock().unwrap_or_else(|e| e.into_inner()).map(|t| t.elapsed());
+    Progress { got: GOT.load(Ordering::SeqCst), of: OF.load(Ordering::SeqCst), whole: DONE.load(Ordering::SeqCst), stalled: since.is_some_and(|s| s >= STALLED_AFTER) }
+}
+
+/// The bytes here now: what is said goes up to it, never down.
+fn moved_to(got: u64) {
+    if GOT.fetch_max(got, Ordering::SeqCst) < got {
+        *MOVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    }
+    happened();
+}
+
+/// Something a test waits on has happened: the fetch has taken in what its transfers said, or ended. Tests wait
+/// on this, never on a clock.
+#[cfg(test)]
+pub(crate) static HAPPENED: (Mutex<u64>, std::sync::Condvar) = (Mutex::new(0), std::sync::Condvar::new());
+fn happened() {
+    #[cfg(test)]
+    {
+        *HAPPENED.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        HAPPENED.1.notify_all();
+    }
 }
 
 /// One range of one file, asked for on its own.
@@ -203,6 +277,8 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
     let folder = version_folder(&dir, m);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     GOT.store(0, Ordering::SeqCst);
+    DONE.store(false, Ordering::SeqCst);
+    *MOVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     let mut files: Vec<Building> = Vec::new();
     let mut wanted: Vec<Piece> = Vec::new();
     // pieces already here and whole, by file and where each starts
@@ -290,7 +366,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
             if let Err(why) = join(&mut files, &mut ready) {
                 break Err(why);
             }
-            GOT.store(total(&files, &ready, &moving), Ordering::SeqCst);
+            moved_to(total(&files, &ready, &moving));
             if files.iter().all(|f| f.whole) {
                 break Ok(());
             }
@@ -337,6 +413,8 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment, and of any piece left over from fetching this one.
     files::write_atomic(&folder.join(WHOLE), "").map_err(|_| FetchFailed::NotWritten)?;
+    DONE.store(true, Ordering::SeqCst);
+    happened();
     for other in files::entries(&home(&dir, m)).unwrap_or_default().into_iter().filter(|p| *p != folder) {
         if other.is_dir() { files::remove_folder(&other) } else { files::remove(&other) }.ok();
     }

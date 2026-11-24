@@ -405,6 +405,14 @@ impl Desk {
         chooser.apply(&*host, &senses);
         let desk = Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir });
         warm_passes(Arc::downgrade(&desk.shared));
+        // a model chosen here that came down while the app was away, or was not got ready before it closed, is
+        // got ready now, behind everything else, so it is ready before he first uses it
+        let shared = Arc::downgrade(&desk.shared);
+        thread::spawn(move || {
+            if let Some(shared) = shared.upgrade() {
+                shared.chooser.prepare_chosen(&*shared.host, &shared.senses);
+            }
+        });
         desk
     }
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
