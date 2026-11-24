@@ -415,10 +415,10 @@ fn progress_counts_bytes_under_way_only_goes_up_and_is_whole_only_when_the_files
 }
 
 #[test]
-fn a_download_with_nothing_more_for_a_while_says_it_is_waiting_for_the_network() {
-    let p = Progress { got: 23_400_000, of: 66_000_000, whole: false, stalled: false };
+fn a_download_says_it_waits_for_the_network_only_when_the_phone_has_none() {
+    let p = Progress { got: 23_400_000, of: 66_000_000, whole: false, offline: false, kind: None };
     assert_eq!(p.said(), "Downloading 23 of 66\u{a0}MB");
-    assert_eq!(Progress { stalled: true, ..p.clone() }.said(), "Waiting for the network");
+    assert_eq!(Progress { offline: true, ..p.clone() }.said(), "Waiting for the network");
     // one that is whole is never waiting
-    assert_eq!(Progress { stalled: true, whole: true, got: 66_000_000, ..p }.said(), "Downloading 66 of 66\u{a0}MB");
+    assert_eq!(Progress { offline: true, whole: true, got: 66_000_000, ..p }.said(), "Downloading 66 of 66\u{a0}MB");
 }

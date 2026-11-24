@@ -2,6 +2,7 @@
 // background or closed. The core decides what to fetch, where each piece goes and whether it is right; this
 // only moves bytes and says how it went.
 import Foundation
+import Network
 
 final class ModelTransfers: NSObject, Transfers, URLSessionDownloadDelegate, @unchecked Sendable {
     static let shared = ModelTransfers()
@@ -26,8 +27,20 @@ final class ModelTransfers: NSObject, Transfers, URLSessionDownloadDelegate, @un
         let to: String
     }
 
-    /// Make the session, so transfers started before the app was closed report here again.
-    func open() { _ = session }
+    /// Whether the phone has a network it can use, told to the desk each time the system says it changed: the
+    /// one fact a download's card says it is waiting for the network on.
+    private let path = NWPathMonitor()
+    private var watching = false
+
+    /// Make the session, so transfers started before the app was closed report here again, and follow the
+    /// network once there is a desk to tell.
+    func open() {
+        _ = session
+        guard model != nil, !watching else { return }
+        watching = true
+        path.pathUpdateHandler = { [weak self] path in self?.model?.desk.networkUsable(usable: path.status == .satisfied) }
+        path.start(queue: DispatchQueue(label: "dev.airband.app.network"))
+    }
 
     func start(id: String, url: String, from: UInt64, until: UInt64, to: String) {
         guard let address = URL(string: url) else {

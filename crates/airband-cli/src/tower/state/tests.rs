@@ -255,10 +255,10 @@ fn every_way_a_request_ends_closes_its_line_and_says_whether_the_agent_waits() {
     };
     // he answered: his answer waits to be collected, the line offers nothing more, and the agent goes on
     let line = open(&mut inner, "p1");
-    inner.close_permit("p1", permit::Ended::Answered(true, String::new()));
+    inner.close_permit("p1", permit::Ended::Answered(true, String::new(), "phone".into()));
     assert_eq!(inner.permits["p1"].decided, Some((true, String::new())));
     assert!(card(&inner, &line).options.is_empty() && !card(&inner, &line).permission && inner.unheard().next().is_none() && !waits(&mut inner));
-    assert_eq!(card(&inner, &line).text, permit::Request::waiting("run `make`").line().unwrap());
+    assert_eq!(card(&inner, &line).text, "Wants to run `make`. Allowed.", "and says how he answered");
     // the harness gave up waiting and asks at its keyboard: the line says so, and the agent still waits
     let line = open(&mut inner, "p2");
     inner.close_permit("p2", permit::Ended::AtKeyboard);
@@ -273,7 +273,7 @@ fn every_way_a_request_ends_closes_its_line_and_says_whether_the_agent_waits() {
     inner.close_permit("p4", permit::Ended::Gone);
     assert!(card(&inner, &line).options.is_empty() && !inner.permits.contains_key("p4") && inner.unheard().next().is_none() && !waits(&mut inner));
     // a request that is already over is not ended twice
-    inner.close_permit("p4", permit::Ended::Answered(true, String::new()));
+    inner.close_permit("p4", permit::Ended::Answered(true, String::new(), "phone".into()));
     assert!(!inner.permits.contains_key("p4"));
 }
 

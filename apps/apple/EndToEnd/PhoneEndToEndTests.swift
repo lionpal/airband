@@ -210,7 +210,7 @@ final class PhonePushTests: XCTestCase {
         XCTAssertEqual(brief.push.collapse, briefLine, "kept under its line's id, for what follows to take its place")
         let over = try ask("brief-permission over", asking: false)
         XCTAssertEqual([over.plain.title, over.plain.body], ["airband", "That request is over"])
-        XCTAssertEqual(over.content.body, "Wants to run `make release`. Its time ran out. Nothing was allowed.")
+        XCTAssertEqual(over.content.body, "Wants to run `make release`. Its time ran out.")
         XCTAssertEqual(over.content.categoryIdentifier, NoticeButtons.over)
         XCTAssertEqual(over.content.interruptionLevel, .passive)
         XCTAssertNil(over.content.sound)

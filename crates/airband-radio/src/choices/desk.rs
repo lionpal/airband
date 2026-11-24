@@ -53,7 +53,7 @@ impl Desk {
         let key = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
         let set: BTreeMap<String, String> = settings.into_iter().map(|(k, v)| (k, v.trim().to_string())).filter(|(_, v)| !v.is_empty()).collect();
         let done = |r: Result<(), RadioError>| {
-            chooser.rest();
+            chooser.rest(job);
             if r.is_ok() {
                 chooser.apply(host, &self.shared.senses);
             }
@@ -221,11 +221,11 @@ impl Desk {
             let Some(pick) = chooser.saved().pick(job).filter(|p| p.place == ChoicePlace::Phone) else { continue };
             let Some(m) = chooser.model(&pick.id) else { continue };
             went = chooser.make_ready(job, &m, host);
+            chooser.rest(job);
             if went.is_err() {
                 break;
             }
         }
-        chooser.rest();
         chooser.apply(host, &self.shared.senses);
         host.changed();
         went
@@ -239,14 +239,14 @@ impl Desk {
             return None;
         }
         let megabytes = crate::models::megabytes(owed.iter().map(|(_, m)| m.files.iter().map(|f| f.1).sum::<u64>()).sum());
-        let what: Vec<&str> = owed.iter().map(|(job, _)| if *job == ChoiceJob::Voice { "the voice" } else { "listening" }).collect();
-        Some(DownloadAsk { megabytes, title: format!("Download {} for this phone?", what.join(" and ")), button: format!("Download ({megabytes}\u{a0}MB)") })
+        let what: Vec<&str> = owed.iter().map(|(job, _)| if *job == ChoiceJob::Voice { "the voice" } else { "speech recognition" }).collect();
+        Some(DownloadAsk { megabytes, title: format!("Download {}?", what.join(" and ")), button: format!("Download ({megabytes}\u{a0}MB)") })
     }
 
     /// What is being done about a choice right now, if anything, and how far along it is: for a first run's
     /// progress bar.
     pub fn choice_work(&self) -> Option<ChoiceState> {
-        self.shared.chooser.at_work().map(|w| ChoiceState::Working { label: w.2, fraction: w.3 })
+        self.shared.chooser.any_work().map(|w| ChoiceState::Working { label: w.1, fraction: w.2 })
     }
 
     /// The coding tools he uses, by id.

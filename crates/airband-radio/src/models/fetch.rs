@@ -18,8 +18,10 @@ use std::sync::mpsc;
 static GOT: AtomicU64 = AtomicU64::new(0);
 static OF: AtomicU64 = AtomicU64::new(0);
 static DONE: AtomicBool = AtomicBool::new(false);
-/// When the fetch now running last had a byte more, or began.
-static MOVED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// Which model the fetch now running, or last run, is for: what it says of its progress is that model's alone.
+static FOR: Mutex<Option<String>> = Mutex::new(None);
+/// The phone says it has no network it can use right now (its host's own reading of the network path).
+static NO_NETWORK: AtomicBool = AtomicBool::new(false);
 /// One fetch at a time.
 static FETCHING: Mutex<()> = Mutex::new(());
 /// Tests that fetch, one at a time: how far a fetch has got is one for the app, so a test that reads it must be
@@ -88,15 +90,18 @@ impl Desk {
     pub fn transfer_ended(&self, id: String, status: Option<u16>) {
         heard(Event::Ended { id, status });
     }
+    /// Whether the phone has a network it can use, as the system says each time that changes. A download goes on
+    /// by itself once there is one again; meanwhile its card says it is waiting for one.
+    pub fn network_usable(&self, usable: bool) {
+        NO_NETWORK.store(!usable, Ordering::SeqCst);
+        happened();
+    }
     /// He stopped the model being downloaded: the fetch ends now, keeping what has come, and another can start.
     /// What is here is gone on from next time.
     pub fn stop_model_fetch(&self) {
         heard(Event::Stop);
     }
 }
-
-/// How long with no byte more before a download is said to be waiting for the network.
-pub(crate) const STALLED_AFTER: Duration = Duration::from_secs(10);
 
 /// How far a download has got, as a card shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -107,8 +112,10 @@ pub(crate) struct Progress {
     pub(crate) of: u64,
     /// Every file is here and checked.
     pub(crate) whole: bool,
-    /// Nothing more has come for [`STALLED_AFTER`].
-    pub(crate) stalled: bool,
+    /// The phone has no network it can use (its host says so).
+    pub(crate) offline: bool,
+    /// The model this is for.
+    pub(crate) kind: Option<String>,
 }
 
 impl Progress {
@@ -124,7 +131,7 @@ impl Progress {
     }
     /// The line under the bar. The card already shows the model's name.
     pub(crate) fn said(&self) -> String {
-        if self.stalled && !self.whole {
+        if self.offline && !self.whole {
             return "Waiting for the network".into();
         }
         let of = megabytes(self.of);
@@ -140,15 +147,13 @@ pub(crate) fn megabytes(bytes: u64) -> u32 {
 
 /// How far the fetch now running has got. Asked a few times a second.
 pub(crate) fn local_model_progress() -> Progress {
-    let since = MOVED.lock().unwrap_or_else(|e| e.into_inner()).map(|t| t.elapsed());
-    Progress { got: GOT.load(Ordering::SeqCst), of: OF.load(Ordering::SeqCst), whole: DONE.load(Ordering::SeqCst), stalled: since.is_some_and(|s| s >= STALLED_AFTER) }
+    let kind = FOR.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    Progress { got: GOT.load(Ordering::SeqCst), of: OF.load(Ordering::SeqCst), whole: DONE.load(Ordering::SeqCst), offline: NO_NETWORK.load(Ordering::SeqCst), kind }
 }
 
 /// The bytes here now: what is said goes up to it, never down.
 fn moved_to(got: u64) {
-    if GOT.fetch_max(got, Ordering::SeqCst) < got {
-        *MOVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
-    }
+    GOT.fetch_max(got, Ordering::SeqCst);
     happened();
 }
 
@@ -278,7 +283,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     GOT.store(0, Ordering::SeqCst);
     DONE.store(false, Ordering::SeqCst);
-    *MOVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    *FOR.lock().unwrap_or_else(|e| e.into_inner()) = Some(m.kind.clone());
     let mut files: Vec<Building> = Vec::new();
     let mut wanted: Vec<Piece> = Vec::new();
     // pieces already here and whole, by file and where each starts

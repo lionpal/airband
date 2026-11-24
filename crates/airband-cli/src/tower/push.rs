@@ -20,6 +20,11 @@ use airband_core::relay::{Direction, Keys, NotPushed, PUSH_MOST, PushAnswer, Pus
 /// follow loop does not pause after an answer), so it comes within one round trip through the relay. A radio
 /// that does not ask by then is not showing it (its app was put away with the request open): it is woken.
 /// With no radio saying it shows the chat, nothing is waited for.
+///
+/// The bound itself is a rule of this product, not a fact: a phone whose app is put away mid-request says
+/// nothing more (iOS gives it no time to), so no fact ever says "not on screen" for it. Four seconds is a
+/// round trip through the relay many times over; a radio slower than that to ask is woken, which costs him a
+/// notification he did not need, never one he did.
 const GRACE: Duration = Duration::from_secs(4);
 /// A message older than this when its short version is made is history, not news.
 const STALE_MS: u64 = 15 * 60 * 1000;
@@ -30,8 +35,19 @@ const ADDRESSES: usize = 3;
 #[derive(Default)]
 pub(super) struct Wake {
     targets: Mutex<BTreeMap<String, Vec<PushTarget>>>,
-    /// The radios woken for a line that holds an agent, by the line's id: they are told when it is over.
-    woke: Mutex<BTreeMap<String, Vec<String>>>,
+    /// The radios woken for a line that holds an agent, by the line's id, until its request ends and they are
+    /// told so. Every request ends (answered, withdrawn, replaced, or reaped once nobody waits on it), so this
+    /// holds only requests still open.
+    woke: Mutex<BTreeMap<String, Woken>>,
+}
+
+/// The radios woken for one request.
+struct Woken {
+    radios: Vec<String>,
+    /// Its first notification is being sent.
+    sending: bool,
+    /// It ended, while that was being sent: with the radio he answered from, if he did.
+    ended: Option<Option<String>>,
 }
 
 impl Wake {
@@ -118,32 +134,51 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission, cut, holding: held.is_some(), over: false, until: held.and_then(|p| p.until) }
 }
 
-/// Requests that ended without his answer from here: each phone woken for one gets a notification in its
-/// place, quiet and with nothing to answer, that says how it ended. Runs for the tower's life.
+/// Requests that ended: each phone woken for one gets a notification in its place, quiet and with nothing to
+/// answer, that says how it ended. Not the radio he answered it from. Runs for the tower's life.
 pub(super) async fn close_ended(app: Arc<App>) {
     let mut changes = app.watch_changes();
     loop {
         let ended = std::mem::take(&mut app.change().ended);
-        let station = config::station(&app.cfg());
-        for id in ended {
-            let Some(radios) = app.push.woke.lock().unwrap().remove(&id) else { continue };
-            let note = {
-                let inner = app.read();
-                let Some(e) = inner.log.iter().find(|e| e.id == id) else { continue };
-                Notice { over: true, holding: false, options: Vec::new(), permission: false, cut: false, ..notice(&inner, e, &station) }
+        for (id, by) in ended {
+            let over = {
+                let mut woke = app.push.woke.lock().unwrap();
+                match woke.get_mut(&id) {
+                    None => None,
+                    // its first notification is still on its way: it is told once that is sent (`consider`)
+                    Some(w) if w.sending => {
+                        w.ended = Some(by);
+                        None
+                    }
+                    Some(_) => woke.remove(&id).map(|w| Woken { ended: Some(by), ..w }),
+                }
             };
-            let to: Vec<(String, Vec<PushTarget>)> = {
-                let targets = app.push.targets.lock().unwrap();
-                radios.into_iter().filter_map(|r| targets.get(&r).map(|t| (r, t.clone()))).collect()
-            };
-            for (radio, targets) in to {
-                let (app, note) = (app.clone(), note.clone());
-                tokio::task::spawn_blocking(move || send(&app, &radio, &targets, note)).await.ok();
+            if let Some(w) = over {
+                tell_over(&app, &id, w).await;
             }
         }
         if changes.changed().await.is_err() {
             return;
         }
+    }
+}
+
+/// Send the notification that says a line's request is over to the radios woken for it.
+async fn tell_over(app: &Arc<App>, id: &str, w: Woken) {
+    let station = config::station(&app.cfg());
+    let note = {
+        let inner = app.read();
+        let Some(e) = inner.log.iter().find(|e| e.id == id) else { return };
+        Notice { over: true, holding: false, options: Vec::new(), permission: false, cut: false, ..notice(&inner, e, &station) }
+    };
+    let answered_from = w.ended.flatten();
+    let to: Vec<(String, Vec<PushTarget>)> = {
+        let targets = app.push.targets.lock().unwrap();
+        w.radios.into_iter().filter(|r| answered_from.as_ref() != Some(r)).filter_map(|r| targets.get(&r).map(|t| (r, t.clone()))).collect()
+    };
+    for (radio, targets) in to {
+        let (app, note) = (app.clone(), note.clone());
+        tokio::task::spawn_blocking(move || send(&app, &radio, &targets, note)).await.ok();
     }
 }
 
@@ -200,11 +235,36 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
                     Err(NotWoken::OnCall) => log(format!("push: {} is on a call, which reads line {id} out; not woken", radio_tag(radio))),
                 }
             }
-            (notice(&inner, e, &station), to)
+            let note = notice(&inner, e, &station);
+            // written down before it is sent, under the lock its request ends under: an end that comes while it
+            // is on its way finds it, and waits for it to be sent
+            if note.holding && !to.is_empty() {
+                app.push.woke.lock().unwrap().insert(id.clone(), Woken { radios: to.iter().map(|(r, _)| r.clone()).collect(), sending: true, ended: None });
+            }
+            (note, to)
         };
+        let holding = note.holding;
         for (radio, targets) in to {
             let (app, note) = (app.clone(), note.clone());
             tokio::task::spawn_blocking(move || send(&app, &radio, &targets, note)).await.ok();
+        }
+        if !holding {
+            return;
+        }
+        // sent: a request that ended meanwhile is told as over now, after the notification it takes the place of
+        let ended = {
+            let mut woke = app.push.woke.lock().unwrap();
+            match woke.get_mut(&id) {
+                Some(w) if w.ended.is_some() => woke.remove(&id),
+                Some(w) => {
+                    w.sending = false;
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(w) = ended {
+            tell_over(&app, &id, w).await;
         }
     });
 }
@@ -244,20 +304,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                 let status = res.status().as_u16();
                 // what the relay says, typed
                 match res.body_mut().read_json::<PushAnswer>() {
-                    Ok(answer) if answer.sent => {
-                        if note.holding {
-                            let mut woke = app.push.woke.lock().unwrap();
-                            // only what is recent can still be waiting
-                            if woke.len() > 400 {
-                                woke.clear();
-                            }
-                            let radios = woke.entry(note.id.clone()).or_default();
-                            if !radios.iter().any(|r| r == radio) {
-                                radios.push(radio.to_string());
-                            }
-                        }
-                        "sent".into()
-                    }
+                    Ok(answer) if answer.sent => "sent".into(),
                     Ok(PushAnswer { why: Some(NotPushed::Gone), .. }) => {
                         let mut all = app.push.targets.lock().unwrap();
                         if let Some(mine) = all.get_mut(radio) {

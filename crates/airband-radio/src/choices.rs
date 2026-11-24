@@ -39,7 +39,7 @@ pub(crate) use saved::ReadsWanted;
 pub(crate) use saved::Withheld;
 
 /// The jobs he chooses something for, in the order a first run asks about them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ChoiceJob {
     /// What reads his agents' messages and writes the short of them. Done on his computer.
     Reads,
@@ -139,7 +139,6 @@ pub struct Choice {
 /// Something being done about a choice right now.
 #[derive(Clone)]
 struct Work {
-    job: ChoiceJob,
     id: String,
     /// What is being done, in words. A download's words are made from how far it has got.
     label: String,
@@ -155,7 +154,9 @@ pub(crate) struct Chooser {
     /// What this device can run, as its host said when the desk was made.
     device: HostDevice,
     saved: Mutex<Saved>,
-    working: Mutex<Option<Work>>,
+    /// What is being done for each job's choice right now: a download, or getting a model ready. One for each
+    /// job, so getting one model ready never stands in for, or ends, his download of another.
+    working: Mutex<HashMap<ChoiceJob, Work>>,
     /// What he is to be told about the file when the desk opens: it could not be read.
     pub(crate) opened: Mutex<Option<String>>,
     /// The host's own way to bring a model's files, which goes on while the app is in the background, when
@@ -183,7 +184,7 @@ impl Chooser {
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
         let (kept, keeper, opened) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"), "What you chose in Settings");
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
-        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened), transfers: Mutex::new(None), unready: Mutex::new(HashMap::new()), timings: Timings::open(dir), preparing: Mutex::new(()) }
+        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(HashMap::new()), opened: Mutex::new(opened), transfers: Mutex::new(None), unready: Mutex::new(HashMap::new()), timings: Timings::open(dir), preparing: Mutex::new(()) }
     }
 
     /// The coding tools he uses, by id.
@@ -275,19 +276,38 @@ impl Chooser {
     }
 
     fn work(&self, job: ChoiceJob, id: &str, label: impl Into<String>, fetching: bool) {
-        *self.working.lock().unwrap_or_else(|e| e.into_inner()) = Some(Work { job, id: id.into(), label: label.into(), fetching });
+        self.working.lock().unwrap_or_else(|e| e.into_inner()).insert(job, Work { id: id.into(), label: label.into(), fetching });
     }
-    fn rest(&self) {
-        *self.working.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    /// That job's work is over.
+    fn rest(&self, job: ChoiceJob) {
+        self.working.lock().unwrap_or_else(|e| e.into_inner()).remove(&job);
     }
-    fn at_work(&self) -> Option<(ChoiceJob, String, String, Option<f64>)> {
-        self.working.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|w| match w.fetching {
+    /// What is being done for this job, in words, and how far along a download is.
+    fn at_work(&self, job: ChoiceJob) -> Option<(String, String, Option<f64>)> {
+        let w = self.working.lock().unwrap_or_else(|e| e.into_inner()).get(&job).cloned()?;
+        Some(match w.fetching {
             true => {
                 let progress = crate::models::local_model_progress();
-                (w.job, w.id, progress.said(), Some(progress.fraction()))
+                // one fetch at a time: the one running may be another model's, and this one waits its turn
+                if progress.kind.as_deref() == Some(w.id.as_str()) {
+                    (w.id, progress.said(), Some(progress.fraction()))
+                } else {
+                    (w.id, "Waiting for the other download".into(), None)
+                }
             }
-            false => (w.job, w.id, w.label, None),
+            false => (w.id, w.label, None),
         })
+    }
+    /// The job's work is over if it is still getting this model ready (nothing he started since).
+    fn rest_from_preparing(&self, job: ChoiceJob, kind: &str) {
+        let mut working = self.working.lock().unwrap_or_else(|e| e.into_inner());
+        if working.get(&job).is_some_and(|w| !w.fetching && w.id == kind) {
+            working.remove(&job);
+        }
+    }
+    /// What is being done for any job, in the order a first run asks about them.
+    pub(crate) fn any_work(&self) -> Option<(String, String, Option<f64>)> {
+        [ChoiceJob::Voice, ChoiceJob::Ears, ChoiceJob::Reads].into_iter().find_map(|job| self.at_work(job))
     }
 
     fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses, paired: &[StationId]) -> Vec<Choice> {
@@ -302,7 +322,7 @@ impl Chooser {
                 ChoiceJob::Voice => senses.mouth.failed(),
                 ChoiceJob::Reads => None,
             },
-            work: self.at_work().filter(|w| w.0 == job).map(|w| (w.1, w.2, w.3)),
+            work: self.at_work(job),
             paired,
             cannot: crate::models::usual_row(&self.device, job.job()).and_then(|(m, why)| why.map(|why| (m, why))),
         };
@@ -389,11 +409,13 @@ impl Chooser {
         }
         for (job, m) in todo {
             // a failure is kept as the model's state, which its card shows with another try, and is timed
-            if let Err(why) = self.prepare(job, &m, host) {
+            let went = self.prepare(job, &m, host);
+            // only what this set going: his own download for the job, started meanwhile, goes on
+            self.rest_from_preparing(job, &m.kind);
+            if let Err(why) = went {
                 eprintln!("airband: {} could not be got ready: {why}", m.kind);
             }
         }
-        self.rest();
         self.apply(host, senses);
         host.changed();
     }

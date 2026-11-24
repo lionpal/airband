@@ -25,6 +25,11 @@ pub(super) struct Permit {
     pub(super) until: Option<u64>,
 }
 impl Permit {
+    /// How it ended once nobody waits on it: past the time its tool gave it, the tool settled it itself;
+    /// otherwise nobody asks after it any more.
+    pub(super) fn unwaited(&self) -> Ended {
+        if self.until.is_some_and(|t| airband_core::clock::now_secs() >= t) { Ended::RanOut } else { Ended::Gone }
+    }
     /// Is the harness still waiting on this? A decided one waits to be collected; an undecided one is over
     /// when the harness has stopped asking after it, the time its tool gave it is up, or an hour has gone by.
     pub(super) fn live(&self) -> bool {
@@ -101,7 +106,17 @@ fn put(app: &Arc<App>, ask: &PermissionAsk) -> Result<PermissionState, NotAsked>
         inner.close_permit(&id, Ended::Replaced);
     }
     inner.no_longer_waiting(&agent_id);
-    let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
+    // The tool's nudge that it asks leave at its keyboard can come before its request does (they come by two
+    // hooks, in no set order). When the agent's latest line is that nudge, the card takes its place: one line,
+    // the request itself.
+    let nudge = ask.question.is_none().then(|| inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(agent_id.as_str()))).flatten().filter(|e| e.note == Some(airband_core::radio::Note::LeaveAtKeyboard)).map(|e| e.id.clone());
+    if let Some(line) = &nudge {
+        log(format!("{}: its request takes the place of its tool's nudge that it asks at the keyboard", short_id(&agent_id)));
+        inner.log.retain(|e| &e.id != line);
+        // the card is a notification of its own, not the nudge's
+        inner.pushed.remove(line);
+    }
+    let (id, entry_id) = (config::random_hex(8), nudge.unwrap_or_else(|| config::random_hex(8)));
     let what = ask.what.trim();
     // a question of the agent's is put as the question it is, with its own answers; anything else as "may I"
     let (line, options, detail, more) = match &ask.question {
@@ -188,8 +203,8 @@ pub(super) fn withdraw(app: &App, id: &str, why: airband_core::radio::wire::With
 
 /// How a request ended (`Inner::close_permit`).
 pub(super) enum Ended {
-    /// He answered: yes or no, and his reason with a no.
-    Answered(bool, String),
+    /// He answered: yes or no, his reason with a no, and the radio he answered from.
+    Answered(bool, String, String),
     /// The harness stopped waiting for the phone and is asking at its keyboard.
     AtKeyboard,
     /// The tool says it was settled at its keyboard: answered there, or refused by the tool itself.
@@ -206,9 +221,9 @@ pub(super) enum Ended {
 pub(super) use airband_core::radio::{ALLOW, DENY};
 /// How the line of a request for leave ends while it waits, and what takes its place once it is over.
 const ASKS: &str = " Allow?";
-const MOVED: &str = " It is asking at the keyboard now.";
+const MOVED: &str = " It's asking at the keyboard now.";
 const SETTLED: &str = " Settled at the keyboard.";
-const RAN_OUT: &str = " Its time ran out. Nothing was allowed.";
+const RAN_OUT: &str = " Its time ran out.";
 
 /// A line that is, or was, a request for leave: what it asked to do, and how it ended once it is over. The
 /// line's words are made from this, so its ending is never read back out of its text.
@@ -231,6 +246,10 @@ pub(super) enum RequestEnded {
     SettledThere,
     /// The time the tool gave it ran out, and the tool settled it itself.
     RanOut,
+    /// He allowed it, from a radio.
+    Allowed,
+    /// He refused it, from a radio.
+    Refused,
 }
 
 impl Request {
@@ -245,6 +264,8 @@ impl Request {
             Some(RequestEnded::AtKeyboard) => MOVED,
             Some(RequestEnded::SettledThere) => SETTLED,
             Some(RequestEnded::RanOut) => RAN_OUT,
+            Some(RequestEnded::Allowed) => " Allowed.",
+            Some(RequestEnded::Refused) => " Refused.",
         };
         self.what.as_ref().map(|what| format!("Wants to {what}.{ending}"))
     }
@@ -274,9 +295,8 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
     match inner.permits.iter().find(|(_, p)| p.entry == entry && p.decided.is_none()).map(|(id, p)| (id.clone(), p.live())) {
         Some((_, true)) => Leave::Waiting,
         Some((id, false)) => {
-            // past the time its tool gave it, the tool settled it; else nobody asks after it any more
-            let ran_out = inner.permits[&id].until.is_some_and(|t| airband_core::clock::now_secs() >= t);
-            inner.close_permit(&id, if ran_out { Ended::RanOut } else { Ended::Gone });
+            let ended = inner.permits[&id].unwaited();
+            inner.close_permit(&id, ended);
             Leave::Over
         }
         None => Leave::Over,
@@ -285,7 +305,7 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
 
 /// His answer to a request, said in reply to it. `verdict` is what his words came to for a request for leave:
 /// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason.
-pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
+pub(super) fn answer(app: &App, radio: &str, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
     let say = |s: &str| Some(reply(s, false));
     let mut inner = app.change();
     let waiting = |p: &Permit| p.decided.is_none();
@@ -298,7 +318,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
         None => (false, text.trim().to_string()),
     };
     let (agent_id, entry) = (inner.permits[&id].agent_id.clone(), inner.permits[&id].entry.clone());
-    inner.close_permit(&id, Ended::Answered(allow, reason.clone()));
+    inner.close_permit(&id, Ended::Answered(allow, reason.clone(), radio.to_string()));
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     log(format!("← radio: {} characters → {} is {} {}", text.chars().count(), short_id(&session.agent.id), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
@@ -316,7 +336,7 @@ impl Inner {
     pub(super) fn close_permit(&mut self, id: &str, ended: permit::Ended) {
         let (agent_id, entry) = match &ended {
             // his answer waits here for the harness to collect it
-            permit::Ended::Answered(allow, reason) => {
+            permit::Ended::Answered(allow, reason, _) => {
                 let Some(permit) = self.permits.get_mut(id) else { return };
                 permit.decided = Some((*allow, reason.clone()));
                 (permit.agent_id.clone(), permit.entry.clone())
@@ -327,20 +347,27 @@ impl Inner {
             }
         };
         match ended {
-            // answered: a request for leave offers nothing more
-            permit::Ended::Answered(..) => self.end_line(&entry, Dropped::Answered, |e| {
-                if e.leave.is_some() {
+            // answered: a request for leave offers nothing more, and says what he said
+            permit::Ended::Answered(allow, ..) => self.end_line(&entry, Dropped::Answered, |e| {
+                if let Some(request) = e.leave.as_mut() {
                     e.options.clear();
+                    request.ended = Some(if allow { permit::RequestEnded::Allowed } else { permit::RequestEnded::Refused });
+                    if let Some(line) = request.line() {
+                        e.short = Some(line);
+                    }
                 }
             }),
             permit::Ended::SettledThere => self.close_line(&entry, permit::RequestEnded::SettledThere),
             permit::Ended::RanOut => self.close_line(&entry, permit::RequestEnded::RanOut),
             _ => self.close_line(&entry, permit::RequestEnded::AtKeyboard),
         }
-        // a phone woken for it still shows it with its buttons: it is told the request is over
-        if !matches!(ended, permit::Ended::Answered(..)) && self.pushed.contains(&entry) {
-            self.ended.push(entry.clone());
-        }
+        // a phone woken for it still shows it with its buttons: it is told the request is over, all but the
+        // radio he answered from
+        let by = match &ended {
+            permit::Ended::Answered(_, _, radio) => Some(radio.clone()),
+            _ => None,
+        };
+        self.ended.push((entry.clone(), by));
         if let Some(s) = self.session(&agent_id) {
             s.waiting = matches!(ended, permit::Ended::AtKeyboard | permit::Ended::Replaced);
         }
@@ -421,7 +448,7 @@ mod tests {
         assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
         // the phone woken for each request that ended without his answer from it is to be told: the one replaced
         // by a newer request, and the one settled at the keyboard
-        assert_eq!(app.read().ended, [entry.clone(), card.clone()]);
+        assert_eq!(app.read().ended, [(entry.clone(), None), (card.clone(), None)]);
         let lines = app.read().log.len();
         // once nothing is waiting on his phone, the nudge is how he learns the keyboard wants him
         super::super::intake::on_event(&app, nudge(true)).unwrap();
@@ -452,7 +479,7 @@ mod tests {
         let card = app.read().log.iter().find(|e| e.permit.as_deref() == Some(brief.id.as_str())).map(|e| e.id.clone()).unwrap();
         super::withdraw(&app, &brief.id, airband_core::radio::wire::Withdrawn::RanOut);
         let line = app.read().log.iter().find(|e| e.id == card).cloned().unwrap();
-        assert_eq!((line.short.as_deref(), line.options.is_empty()), (Some("Wants to run `make release`. Its time ran out. Nothing was allowed."), true));
+        assert_eq!((line.short.as_deref(), line.options.is_empty()), (Some("Wants to run `make release`. Its time ran out."), true));
         assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: its request for leave is taken back: the time its tool gave it ran out")));
         assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
         // one whose harness has not said yet, once the time is up, is over too: no answer to it counts
@@ -460,6 +487,38 @@ mod tests {
         let card = app.read().log.iter().find(|e| e.permit.as_deref() == Some(late.id.as_str())).map(|e| e.id.clone()).unwrap();
         app.change().permits.get_mut(&late.id).unwrap().until = Some(now.saturating_sub(1));
         assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
-        assert_eq!(app.read().log.iter().find(|e| e.id == card).and_then(|e| e.short.clone()).as_deref(), Some("Wants to run `make release`. Its time ran out. Nothing was allowed."));
+        assert_eq!(app.read().log.iter().find(|e| e.id == card).and_then(|e| e.short.clone()).as_deref(), Some("Wants to run `make release`. Its time ran out."));
+    }
+
+    /// The tool's nudge and its request come by two hooks in no set order: either way he gets one card. A
+    /// question of the agent's waiting does not hide a nudge about something else.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_nudge_and_its_request_make_one_card_in_whichever_order_they_come() {
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = push::channel_of(&phone).unwrap();
+        let app = super::super::http::tests::app_with("permit-nudge", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
+        push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
+        let agent = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") };
+        let ask = |question: Option<airband_core::agent::Asked>| PermissionAsk { schema: agent::SCHEMA.into(), agent: agent.clone(), what: "run `ls`".into(), detail: String::new(), question, until: None };
+        let nudge = || -> airband_core::agent::AgentEvent {
+            serde_json::from_value(serde_json::json!({ "schema": agent::SCHEMA, "agent": agent, "event": { "type": "notice", "text": "Claude needs your permission", "leave": true } })).unwrap()
+        };
+        let from_agent = |app: &App| app.read().log.iter().filter(|e| e.agent.as_deref() == Some("a1")).map(|e| (e.id.clone(), e.permit.is_some())).collect::<Vec<_>>();
+        // the nudge first: the card takes its line
+        super::super::intake::on_event(&app, nudge()).unwrap();
+        let before = from_agent(&app);
+        assert_eq!(before.len(), 1);
+        super::super::logged::take();
+        let asked = super::ask(&app, ask(None));
+        let after = from_agent(&app);
+        assert_eq!(after, [(before[0].0.clone(), true)], "one line, and it is the card");
+        assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: its request takes the place of its tool's nudge that it asks at the keyboard")));
+        assert!(app.read().pushed.contains(&after[0].0), "the card is sent as a notification of its own");
+        super::withdraw(&app, &asked.id, airband_core::radio::wire::Withdrawn::SettledThere);
+        // a question of the agent's waiting: a nudge about leave is still shown
+        super::ask(&app, ask(Some(airband_core::agent::Asked { text: "Which one?".into(), choices: Vec::new() })));
+        let lines = app.read().log.len();
+        super::super::intake::on_event(&app, nudge()).unwrap();
+        assert_eq!(app.read().log.len(), lines + 1);
     }
 }

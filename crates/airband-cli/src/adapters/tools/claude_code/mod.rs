@@ -78,8 +78,14 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
 /// Is the prompt this PermissionRequest hook is for still waiting? Claude Code shows its own prompt while the
 /// hook waits, and it does not stop the hook when the prompt is settled there (answered at its keyboard, or
 /// refused by Claude Code itself). What it does is write the call's result into the transcript of the agent
-/// that made the call: the main one, or a subagent's of its own. The call is the last one there with this tool
-/// and this input; once a result for it is written, the prompt is over. Nothing when there is no transcript.
+/// that made the call: the main one, or a subagent's of its own. Once a result for the call is written, the
+/// prompt is over. Nothing when there is no transcript.
+///
+/// The hook is not told which call it is for (its input has no call id), only the tool and its input. At the
+/// first look it is the one call with this tool and input that has no result yet; when there is none, it is the
+/// next such call written (the call is written about when the hook starts, sometimes just after). When two are
+/// open with the same tool and input, which one is asked about cannot be known: then nothing is watched, and
+/// the request stands until he answers or its time runs out.
 fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
     let (tool, input) = crate::adapters::hooks::permission_hook(hook)?;
     let main = std::path::PathBuf::from(text(hook, "transcript_path")?);
@@ -88,15 +94,21 @@ fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
         Some(_) => return None,
         None => main,
     };
-    // The call is written down about when the hook starts, sometimes just after. At the first look it is the
-    // last call with this tool and this input that has no result yet; when there is none, it is the next such
-    // call written. After that only what is new is read, until its result is.
     let (tool, input) = (tool.to_string(), input.clone());
     let seen = std::sync::Mutex::new(Calls::default());
     Some(Box::new(move || {
         let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
-        let (lines, end) = transcript_from(&path, seen.read);
-        for (_, line) in &lines {
+        if seen.unknowable {
+            return true;
+        }
+        // the first look reads only the end: a call that is waiting on him now was made last
+        let from = if seen.looked { seen.read } else { airband_io::files::metadata(&path).map_or(0, |m| m.len().saturating_sub(FIRST_LOOK)) };
+        let (lines, end) = transcript_from(&path, from, !seen.looked && from > 0);
+        if !seen.looked && from > 0 && end == from {
+            // not one whole line in the end of it yet: looked at again from its end next time
+            return true;
+        }
+        for line in &lines {
             for c in line["message"]["content"].as_array().into_iter().flatten() {
                 let id = || c["id"].as_str().map(String::from);
                 match c["type"].as_str() {
@@ -117,18 +129,28 @@ fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
             }
         }
         if !seen.looked {
-            seen.call = seen.open.last().cloned();
             seen.looked = true;
+            match seen.open.as_slice() {
+                [] => {}
+                [one] => seen.call = Some(one.clone()),
+                _ => {
+                    seen.unknowable = true;
+                    return true;
+                }
+            }
         }
         seen.read = end;
         true
     }))
 }
 
+/// How much of the end of a transcript the first look reads.
+const FIRST_LOOK: u64 = 1 << 20;
+
 /// What has been read of a transcript while a prompt waits.
 #[derive(Default)]
 struct Calls {
-    /// How far it has been read.
+    /// How far it has been read: always to the end of a whole line.
     read: u64,
     /// The first look is over.
     looked: bool,
@@ -136,22 +158,30 @@ struct Calls {
     open: Vec<String>,
     /// The call the prompt is for, once it is known.
     call: Option<String>,
+    /// More than one call could be the one asked about.
+    unknowable: bool,
 }
 
-/// A transcript's lines from byte `from` on, each as JSON with where it starts, and where the file ended. A line
-/// that is not JSON (one still being written) is left out.
-fn transcript_from(path: &std::path::Path, from: u64) -> (Vec<(u64, Value)>, u64) {
+/// A transcript's whole lines from byte `from` on, each as JSON, and where the last whole line ended. A line
+/// still being written (no newline yet) is left for the next look, whole. `mid_line` says `from` may be in the
+/// middle of a line: what comes before the first newline is skipped.
+fn transcript_from(path: &std::path::Path, from: u64, mid_line: bool) -> (Vec<Value>, u64) {
     let Ok(bytes) = airband_io::files::read_part(path, from, u64::MAX) else { return (Vec::new(), from) };
-    let text = String::from_utf8_lossy(&bytes);
-    let mut start = from;
-    let mut lines = Vec::new();
-    for line in text.split_inclusive('\n') {
-        if let Ok(v) = serde_json::from_str::<Value>(line.trim_end()) {
-            lines.push((start, v));
+    let mut at = 0;
+    if mid_line {
+        match bytes.iter().position(|b| *b == b'\n') {
+            Some(newline) => at = newline + 1,
+            None => return (Vec::new(), from),
         }
-        start += line.len() as u64;
     }
-    (lines, start)
+    let mut lines = Vec::new();
+    while let Some(newline) = bytes[at..].iter().position(|b| *b == b'\n') {
+        if let Ok(v) = serde_json::from_slice::<Value>(&bytes[at..at + newline]) {
+            lines.push(v);
+        }
+        at += newline + 1;
+    }
+    (lines, from + at as u64)
 }
 
 /// Which part of Claude Code's this tool call is, as its row has it.
@@ -526,6 +556,38 @@ mod tests {
         append(&main, used("t4", &ls));
         append(&main, result("t4"));
         assert!(!still(), "written and settled between two looks");
+
+        // a result caught half written is read whole on the next look, not skipped; a character cut in two at the
+        // end of the file does not move where the next look starts
+        let pwd = json!({ "command": "pwd", "description": "Where é is" });
+        append(&main, used("t5", &pwd));
+        let still = still_asking(&json!({ "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": pwd, "transcript_path": main })).unwrap();
+        assert!(still());
+        let whole = json!({ "message": { "content": [{ "type": "tool_result", "tool_use_id": "t5", "content": "é" }] } }).to_string() + "\n";
+        let cut = whole.bytes().position(|b| b == 0xC3).unwrap() + 1;
+        let had = airband_io::files::read_text(&main).unwrap().unwrap_or_default().into_bytes();
+        airband_io::files::write_atomic(&main, [had.as_slice(), &whole.as_bytes()[..cut]].concat()).unwrap();
+        assert!(still(), "half a line says nothing yet");
+        airband_io::files::write_atomic(&main, [had.as_slice(), whole.as_bytes()].concat()).unwrap();
+        assert!(!still(), "and once it is whole, the prompt is over");
+
+        // two open with the same tool and input: which is asked about cannot be known, so nothing is watched
+        let two = dir.join("two.jsonl");
+        append(&two, used("u1", &input));
+        append(&two, used("u2", &input));
+        let still = still_asking(&json!({ "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": input, "transcript_path": two })).unwrap();
+        assert!(still());
+        append(&two, result("u2"));
+        assert!(still(), "settling one of them settles nothing he can be sure of");
+
+        // a long transcript: the first look reads its end only, and finds the call there
+        let long = dir.join("long.jsonl");
+        let filler = json!({ "message": { "content": [{ "type": "text", "text": "x".repeat(1000) }] } }).to_string() + "\n";
+        airband_io::files::write_atomic(&long, filler.repeat(3000) + &used("v1", &input)).unwrap();
+        let still = still_asking(&json!({ "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": input, "transcript_path": long })).unwrap();
+        assert!(still());
+        append(&long, result("v1"));
+        assert!(!still());
         std::fs::remove_dir_all(dir).ok();
     }
 

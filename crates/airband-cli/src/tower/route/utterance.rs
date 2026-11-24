@@ -34,7 +34,7 @@ struct Addressed {
 /// the message already reached its agent. `said.label` is the button's words when this is a quick message: the
 /// chat shows those, and the agent gets `text`.
 pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance) -> Reply {
-    if let Some(reply) = leave(app, text, said).await {
+    if let Some(reply) = leave(app, radio, text, said).await {
         return reply;
     }
     // files that came with his words: where each is on this computer, for whoever the words go to, and the
@@ -102,9 +102,9 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
 /// An answer to a request for permission goes back to the harness that asked, not to the agent as a message. The
 /// buttons say yes or no outright. Anything else he says to a request for leave is read by a model, and only a
 /// plain yes allows it; if his words do not settle it, nothing is decided. `None` when this was not about leave.
-async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance) -> Option<Reply> {
+async fn leave(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance) -> Option<Reply> {
     let re = said.re.as_deref();
-    let over = || Reply { request_over: true, ..say("That request is no longer waiting. Nothing was allowed.".into()) };
+    let over = || Reply { request_over: true, ..say("That request isn't waiting anymore. Nothing was allowed.".into()) };
     let verdict = match permit::asked_leave(app, re) {
         permit::Leave::No => None,
         // an answer to a request that is over answers nothing, and is not passed to the agent as if it did
@@ -122,7 +122,7 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
             None => return Some(say("That one needs a yes or a no from you.".into())),
         },
     };
-    if let Some(reply) = permit::answer(app, text, re, verdict) {
+    if let Some(reply) = permit::answer(app, radio, text, re, verdict) {
         return Some(reply);
     }
     // a yes or a no that answers no request for leave answers nothing

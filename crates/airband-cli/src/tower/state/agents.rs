@@ -25,14 +25,15 @@ impl Inner {
             self.remove(id);
         }
         // a permission request nobody is waiting on any more: its line stops offering an answer
-        let over: Vec<String> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, _)| id.clone()).collect();
-        for id in &over {
-            self.close_permit(id, permit::Ended::Gone);
+        let over: Vec<(String, permit::Ended)> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, p)| (id.clone(), p.unwaited())).collect();
+        let closed = !over.is_empty();
+        for (id, ended) in over {
+            self.close_permit(&id, ended);
         }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
         let teams = self.drop_unused_teams();
-        !dead.is_empty() || !over.is_empty() || teams
+        !dead.is_empty() || closed || teams
     }
     /// What an agent is doing.
     ///

@@ -226,6 +226,8 @@ pub struct Message {
 pub enum Note {
     /// The tool says the agent needs him at its keyboard.
     AtKeyboard,
+    /// The tool says it asks him leave at its keyboard for something (with no word of what).
+    LeaveAtKeyboard,
     /// The agent's turn failed and it stopped.
     TurnFailed,
     /// The tower moved the agent to this team, where its work belongs. The words are the name it had before.
@@ -236,7 +238,7 @@ impl Note {
     /// The line, with the tool's own words after it. The one place these words are written.
     pub fn said(self, text: &str) -> String {
         match self {
-            Note::AtKeyboard => format!("Needs you at the keyboard: {text}"),
+            Note::AtKeyboard | Note::LeaveAtKeyboard => format!("Needs you at the keyboard: {text}"),
             Note::TurnFailed => format!("Its turn failed, and it has stopped. {text}"),
             Note::Moved => format!("Moved here from {text}: what it is working on belongs to this team."),
         }
