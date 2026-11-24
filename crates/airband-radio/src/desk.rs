@@ -17,6 +17,7 @@ mod follow;
 mod ids;
 mod intents;
 mod notice;
+mod opening;
 mod reading;
 mod records;
 mod rules;
@@ -31,6 +32,7 @@ mod uploads;
 mod view;
 
 pub use notice::*;
+pub use opening::*;
 pub use car::*;
 use ids::*;
 
@@ -191,6 +193,8 @@ pub(crate) struct State {
     read: ReadMarks,
     /// What he is looking at: kept here so it stays valid as teams come and go ([`Desk::look`]).
     focus: Focus,
+    /// The message he opened the app from a notification for, while he is still on it.
+    opening: Option<Opening>,
 }
 /// What he is looking at: everyone, one team, or one agent; and a team he has just made, which stays open
 /// while it waits for its first agent.

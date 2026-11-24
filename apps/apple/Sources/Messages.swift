@@ -339,3 +339,28 @@ struct PlayTake: View {
         .accessibilityLabel(playing ? "Stop" : "Play")
     }
 }
+
+/// Opened from a notification, while the message is not in front of him: the chat is catching up to it, or it is
+/// not there and why. A tap lets it go.
+struct OpeningLine: View {
+    @EnvironmentObject var model: RadioModel
+    let opening: DeskOpening
+
+    var body: some View {
+        switch opening.state {
+        case .here: EmptyView()
+        case .catchingUp:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Catching up").font(.system(size: 13)).foregroundStyle(Palette.quiet)
+            }
+            .frame(maxWidth: .infinity)
+        case .gone(_, let said):
+            Button { model.closeOpening() } label: {
+                Text(said).font(.system(size: 13)).foregroundStyle(Palette.quiet)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}

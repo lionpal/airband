@@ -294,6 +294,11 @@ impl Radio {
         self.store.saved.lock().unwrap().outbox.clone()
     }
 
+    /// How far this computer's chat has been followed: the change count the last answer was good up to.
+    pub(crate) fn followed_to(&self) -> u64 {
+        self.store.saved.lock().unwrap().rev
+    }
+
     /// The recent chat as last seen, from the device: there at once, with or without a connection.
     pub(crate) fn history(&self) -> Vec<ChatMessage> {
         self.store.saved.lock().unwrap().history.iter().cloned().map(chat).collect()

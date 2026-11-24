@@ -34,8 +34,16 @@ def derived(label, size=32):
     return HKDF(algorithm=hashes.SHA256(), length=size, salt=b"airband.relay/1", info=label.encode()).derive(bytes.fromhex(SECRET))
 CHANNEL, PULL = derived("channel")[:16].hex(), derived("pull").hex()
 def opened(sealed):
+    """What a notification does, opened with the pairing's secret: shows a line, or takes one down."""
     raw = base64.b64decode(sealed)
     return json.loads(ChaCha20Poly1305(derived("push")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {CHANNEL} push".encode()))
+def shown(p):
+    """The line a notification shows, as the phone opens it; None for one that takes a line down."""
+    o = opened(p["sealed"])
+    return o["notice"] if o["act"] == "show" else None
+def tag(line):
+    """The tag a line's notifications are kept under (Keys::notice_tag): HKDF-SHA256 keyed with the pairing's."""
+    return HKDF(algorithm=hashes.SHA256(), length=16, salt=derived("notice tag"), info=b"notice").derive(line.encode()).hex()
 
 pushes, answer_with = [], [200]
 class Relay(BaseHTTPRequestHandler):
@@ -101,16 +109,22 @@ def http(method, path, body=None, token=RADIO, radio="phone", timeout=40, showin
         return 0, None
 def report(*words, agent="a1"):
     return subprocess.run([BIN, "report", "--id", agent, "--harness", "script", "--cwd", project, *words], env=env, capture_output=True, text=True, timeout=60)
+def shows():
+    """The notifications asked for that show a line, in order."""
+    return [p for p in list(pushes) if shown(p)]
+def downs():
+    """The ones asked for that take a line down, opened, each with what the relay was asked."""
+    return [(o, p) for p in list(pushes) for o in [opened(p["sealed"])] if o["act"] == "withdraw"]
 def pushed(count, within=20):
-    """Wait until that many notifications have been asked for in all."""
+    """Wait until that many notifications showing a line have been asked for in all."""
     until = time.time() + within
-    while len(pushes) < count and time.time() < until:
+    while len(shows()) < count and time.time() < until:
         time.sleep(0.2)
-    return len(pushes) >= count
+    return len(shows()) >= count
 def quiet(count, for_seconds=8):
-    """Nothing more is asked for in the time a notification takes to be decided and sent."""
+    """Nothing more is shown in the time a notification takes to be decided and sent."""
     time.sleep(for_seconds)
-    return len(pushes) == count
+    return len(shows()) == count
 
 tower = subprocess.Popen([BIN, "run"], env=env, stdout=open(os.path.join(work, "tower.log"), "w"), stderr=subprocess.STDOUT)
 try:
@@ -131,10 +145,11 @@ try:
     report("asked", "Rewrite the two easy questions, or leave them?")
     check("a question wakes it", pushed(1))
     if pushes:
-        p = pushes[0]
-        note = opened(p["sealed"])
-        check("the relay is asked as this channel's tower, for that address, and told only that it is a question",
-              p["auth"] == f"Bearer {PULL}" and p["to"] == ADDRESS and p["provider"] == "apns" and p["question"] is True and sorted(k for k in p if k not in ("auth", "raw")) == ["provider", "question", "sealed", "to"], {k: v for k, v in p.items() if k != "raw"})
+        p = shows()[0]
+        note = shown(p)
+        check("the relay is asked as this channel's tower, for that address, and told only that it is a question, under the line's tag",
+              p["auth"] == f"Bearer {PULL}" and p["to"] == ADDRESS and p["provider"] == "apns" and p["question"] is True and p["replaces"] == tag(note["id"]) and sorted(k for k in p if k not in ("auth", "raw")) == ["provider", "question", "replaces", "sealed", "to"], {k: v for k, v in p.items() if k != "raw"})
+        check("the tag says nothing of the line", note["id"].encode() not in p["raw"])
         plain = json.dumps({k: v for k, v in p.items() if k not in ("auth", "raw", "sealed")}).encode()
         check("nothing the relay is given can be read: no name, no words", not [w for w in (b"shop", b"Rewrite", b"e2e") if w in plain or w in p["raw"].replace(p["sealed"].encode(), b"")],
               [w for w in (b"shop", b"Rewrite", b"e2e") if w in p["raw"]])
@@ -145,7 +160,15 @@ try:
 
     print("A report")
     report("said", "The checker passes on all twelve units.")
-    check("something no model read wakes it too, as what it is, and is not called a question", pushed(2) and pushes[1]["question"] is False and opened(pushes[1]["sealed"])["kind"] == "unjudged")
+    check("something no model read wakes it too, as what it is, and is not called a question", pushed(2) and shows()[1]["question"] is False and shown(shows()[1])["kind"] == "unjudged")
+    # the question before it is no longer news: its agent said something newer
+    for _ in range(50):
+        if downs(): break
+        time.sleep(0.2)
+    first = shown(shows()[0])["id"]
+    down = [(o, p) for o, p in downs() if o["id"] == first]
+    check("the question it took the place of has its notification taken down, quietly, under the same tag",
+          len(down) == 1 and down[0][0]["why"] == {"why": "not_read", "reason": "superseded"} and down[0][1]["quiet"] is True and down[0][1]["question"] is False and down[0][1]["replaces"] == tag(first), downs())
 
     print("The phone has the chat open")
     showing, looking, saw_card = threading.Event(), threading.Event(), threading.Event()
@@ -180,9 +203,9 @@ try:
     asking.join(40)
     asking = threading.Thread(target=ask_permission); asking.start()
     check("a permission card wakes the phone that was there a moment ago", pushed(3))
-    if len(pushes) >= 3:
-        note = opened(pushes[2]["sealed"])
-        check("it says what will run, word for word, and that it is a permission card", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and pushes[2]["question"] is True, note)
+    if len(shows()) >= 3:
+        note = shown(shows()[2])
+        check("it says what will run, word for word, and that it is a permission card", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and shows()[2]["question"] is True, note)
         allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"], "act": {"kind": "verdict", "allow": True}}
         reply = None
         for _ in range(300):
@@ -213,7 +236,7 @@ try:
     log = open(os.path.join(work, "tower.log")).read()
     # the log names the radio by the start of its channel, never by the name he gave the pairing
     asked = f"push: asked the relay to wake radio {wire.derive(SECRET)['channel'][:8]} for line "
-    check("the log says what was asked and what came back", log.count(asked) == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
+    check("the log says what was asked and what came back", len([l for l in log.splitlines() if asked in l and "(no longer news)" not in l]) == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
     check("and names the radio by id only", '"phone"' not in log, [l for l in log.splitlines() if "phone" in l])
     check("and holds no address", ADDRESS not in log and SECRET not in log)
 
@@ -221,11 +244,11 @@ try:
     http("POST", "/v1/radio/push", {"provider": "apns", "token": ADDRESS})
     # no radio heard from for longer than the tower counts one as there (a minute): the phone is in his pocket
     time.sleep(65)
-    before, out = len(pushes), []
+    before, out = len(shows()), []
     asking = threading.Thread(target=ask_permission); asking.start()
     check("the request is still put to him, and the phone is woken for it", pushed(before + 1), open(os.path.join(work, "tower.log")).read()[-600:])
-    if len(pushes) > before:
-        note = opened(pushes[before]["sealed"])
+    if len(shows()) > before:
+        note = shown(shows()[before])
         check("as a permission card with the command, for the lock screen's Allow and Deny", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and not note.get("cut"), note)
         allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"], "act": {"kind": "verdict", "allow": True}, }
         reply = None
@@ -237,6 +260,9 @@ try:
             time.sleep(0.1)
         asking.join(40)
         check("Allow from the notification lets it run", reply and reply["say"] == "Allowed." and out[-1:] == [0], (reply, out))
+        # answered from that phone: it has it done with, and is sent nothing to take it down
+        time.sleep(3)
+        check("the phone he answered from is not sent anything to take that card down", not [o for o, _ in downs() if o["id"] == note["id"]], downs())
     check("and nothing was turned away unasked", "not put to him" not in open(os.path.join(work, "tower.log")).read())
 finally:
     tower.terminate()

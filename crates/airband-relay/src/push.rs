@@ -115,14 +115,17 @@ impl Push {
 /// the phone cannot open it (the app's extension did not run) is the same few words every time.
 fn apple_body(ask: &PushRequest, now: u64) -> (String, u64) {
     let body = if ask.quiet {
-        "That request is over"
+        "An earlier message is out of date"
     } else if ask.question {
         "An agent needs you"
     } else {
         "New message"
     };
     let mut aps = serde_json::json!({ "alert": { "title": "airband", "body": body }, "mutable-content": 1 });
-    if !ask.quiet {
+    if ask.quiet {
+        // shown, if the phone cannot open it, without lighting the screen or a sound
+        aps["interruption-level"] = "passive".into();
+    } else {
         aps["sound"] = "default".into();
     }
     // kept by Apple for a phone that is off: a question for a day, anything else for an hour, and never past
@@ -277,8 +280,7 @@ pub(crate) mod tests {
         assert!(Apns::new("not a key", "K", "T", "t", "http://x").is_err());
     }
 
-    /// A notification that closes what an earlier one asked takes its place quietly, under the id the tower
-    /// gave; one about something with a deadline is not kept past it.
+    /// A notification that takes an earlier one down takes its place quietly, under the tag the tower gave; one about something with a deadline is not kept past it.
     #[test]
     fn what_apple_is_handed_follows_the_typed_request() {
         let ask = PushRequest { provider: PushService::Apns, to: "ab".into(), sealed: "c2VhbGVk".into(), question: true, replaces: None, quiet: false, until: None };
@@ -290,7 +292,8 @@ pub(crate) mod tests {
         let (body, until) = apple_body(&over, 1000);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(v["aps"].get("sound").is_none(), "{v}");
-        assert_eq!((v["aps"]["alert"]["body"].as_str(), v["sealed"].as_str(), until), (Some("That request is over"), Some("c2VhbGVk"), 1100));
+        assert_eq!(v["aps"]["interruption-level"].as_str(), Some("passive"));
+        assert_eq!((v["aps"]["alert"]["body"].as_str(), v["sealed"].as_str(), until), (Some("An earlier message is out of date"), Some("c2VhbGVk"), 1100));
         assert_eq!(collapse(&over).get("apns-collapse-id").unwrap(), "c0ffee12");
         // a replacing id that is not a short plain one is not passed on at all
         assert!(!PushRequest { replaces: Some("not plain!".into()), ..over.clone() }.well_formed());

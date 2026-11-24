@@ -103,6 +103,8 @@ impl Desk {
             let mut state = self.shared.state.lock().unwrap();
             let made = state.focus.made.clone();
             state.focus = Focus { room: room.filter(|r| !r.is_empty()), agent: agent.filter(|a| !a.is_empty()), made };
+            // he looks somewhere else: a message opened from a notification is no longer what he is on
+            state.opening = None;
         }
         self.shared.host.changed();
     }
@@ -168,6 +170,7 @@ impl Desk {
         let used: Vec<crate::services::CodingTool> = self.shared.chooser.tools().iter().filter_map(|id| tools.iter().find(|t| t.id == *id).cloned()).collect();
         let away: Vec<String> = if state.computers.len() > 1 { state.computers.iter().filter(|s| s.tried && !s.online).map(|s| state.computer_name(&s.id())).collect() } else { Vec::new() };
         DeskView {
+            opening: state.opening.as_ref().map(|o| opening_state(&state, &all, o)),
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
             stoppable,
             new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },

@@ -151,7 +151,10 @@ struct FeedView: View {
                             }
                         }
                         .id(m.id)
+                        // the message he opened from its notification
+                        .background(model.view.opening.map { $0.message == m.id && $0.state == .here } == true ? Palette.ink.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 18))
                     }
+                    if let opening = model.view.opening { OpeningLine(opening: opening) }
                     // what he sent that has not reached the tower yet
                     ForEach(model.view.sending, id: \.id) { o in Unsent(o: o) }
                     // what he said aloud that was not heard, or not sent
@@ -173,7 +176,12 @@ struct FeedView: View {
                 guard team != nil, g.startLocation.x < 28, dx > 60, dx > abs(dy) * 2 else { return }
                 withAnimation(.snappy(duration: 0.2)) { model.look() }
             })
-            .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: model.view.feed.last?.id) { _, _ in if model.view.opening == nil { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } } }
+            // opened from a notification: once the chat has it, that message is brought into view
+            .onChange(of: model.view.opening) { _, opening in
+                guard let opening, opening.state == .here else { return }
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(opening.message, anchor: .center) }
+            }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: model.view.takes.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: toEnd) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }

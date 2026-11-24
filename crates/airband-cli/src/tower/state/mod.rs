@@ -62,9 +62,9 @@ pub(super) struct Inner {
     pub(super) permits: HashMap<String, Permit>,
     /// Ids of the lines a notification has been decided for, so each is decided once.
     pub(super) pushed: HashSet<String>,
-    /// Lines whose request ended, each with the radio he answered it from if he did, for the phones woken for
-    /// them to be told (`push::close_ended`).
-    pub(super) ended: Vec<(String, Option<String>)>,
+    /// Lines that stopped being news, for the notification each phone was woken with to be taken down
+    /// (`push::withdraw_ended`).
+    pub(super) ended: Vec<super::push::Ending>,
     /// How many requests for the whole chat are open right now: while there is one, it reads what agents say.
     pub(super) readers: u32,
     /// Ids of things he said that this tower is working out an answer to right now.

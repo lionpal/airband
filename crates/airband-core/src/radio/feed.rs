@@ -4,6 +4,7 @@ use super::*;
 
 /// Why something an agent said was not read out to him on a call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum NotRead {
     /// The judge found nothing in it for his ears.
@@ -83,14 +84,51 @@ pub struct Notice {
     /// tool's own asking. Shown so it breaks through a focus he has on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub holding: bool,
-    /// What this line asked of him is over without his answer from here: it takes the place of the
-    /// notification that asked, quietly, with nothing left to answer.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub over: bool,
+    /// The line's change count when this was sent: a phone opened from it has the line in this form once its
+    /// chat is followed to here.
+    pub rev: u64,
     /// When the tool stops waiting on it, in seconds since 1970, if the tool said. Past it the notification is
     /// worth nothing, and is not kept for a phone that is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<u64>,
+}
+
+/// What a sealed notification does on the phone. There is one notification per line, kept by the phone's
+/// system under that line's tag ([`crate::relay::Keys::notice_tag`]): it is shown while the line is news, and
+/// taken down when the line stops being news, whatever ended it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "act", rename_all = "snake_case")]
+#[expect(clippy::large_enum_variant, reason = "made once for each notification and sealed as it is")]
+pub enum Pushed {
+    /// Show this line.
+    Show { notice: Notice },
+    /// Take down what was shown for the line with this id: it is no longer news, for this reason. Nothing is
+    /// shown in its place.
+    Withdraw { id: String, why: Withdrawn },
+}
+
+impl Pushed {
+    /// The line it is about.
+    pub fn line(&self) -> &str {
+        match self {
+            Pushed::Show { notice } => &notice.id,
+            Pushed::Withdraw { id, .. } => id,
+        }
+    }
+}
+
+/// Why a line stopped being news, so its notification is taken down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum Withdrawn {
+    /// He heard it read aloud.
+    Heard,
+    /// He had it on screen in the chat on another of his devices.
+    Read,
+    /// It left the queue of things to read him, for this reason (a newer line from its agent, his answer, the
+    /// request being over, and the rest).
+    NotRead { reason: NotRead },
 }
 
 /// What deserves a notification: a message that needs him, a report, or one no model read. Never chatter, a

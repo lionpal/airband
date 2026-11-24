@@ -61,9 +61,10 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         var tapped: Tapped?
         switch response.actionIdentifier {
         case UNNotificationDefaultActionIdentifier:
-            // a tap on the notification itself: open on that agent
+            // a tap on the notification itself: open on that message, once the chat has caught up to it
+            let (station, message, rev) = (info["station"] as? String ?? "", info["message"] as? String ?? "", (info["rev"] as? NSNumber)?.uint64Value ?? 0)
             DispatchQueue.main.async {
-                if !agent.isEmpty { RadioModel.shared.show(room: room, agent: agent) }
+                if !message.isEmpty { RadioModel.shared.openMessage(station: station, message: message, rev: rev, room: room, agent: agent) }
                 done()
             }
             return

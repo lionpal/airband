@@ -139,6 +139,9 @@ pub struct DeskView {
     pub intents: Vec<DeskIntent>,
     /// What he is looking at now.
     pub focus: DeskFocus,
+    /// The message he opened the app from a notification for, and where it stands: still being caught up to,
+    /// in the feed (scroll to it and mark it), or not in the chat and why.
+    pub opening: Option<DeskOpening>,
     /// The agents he can stop now, in what he is looking at: at work, and run by their computer.
     pub stoppable: Vec<DeskMember>,
     /// What a new agent starts on when he is not asked.

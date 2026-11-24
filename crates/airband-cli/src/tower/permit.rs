@@ -397,6 +397,7 @@ impl Inner {
     /// answer (and, unanswered, says where the question went), it leaves the call queue, and the agent is
     /// waiting on him from now only if it is asking at its keyboard.
     pub(super) fn close_permit(&mut self, id: &str, ended: permit::Ended) {
+        let ended_before = self.ended.len();
         let (agent_id, entry) = match &ended {
             // his answer waits here for the harness to collect it
             permit::Ended::Answered(allow, reason, _) => {
@@ -425,13 +426,11 @@ impl Inner {
             permit::Ended::RefusedByTool => self.close_line(&entry, permit::RequestEnded::RefusedByTool),
             _ => self.close_line(&entry, permit::RequestEnded::AtKeyboard),
         }
-        // a phone woken for it still shows it with its buttons: it is told the request is over, all but the
-        // radio he answered from
-        let by = match &ended {
-            permit::Ended::Answered(_, _, radio) => Some(radio.clone()),
-            _ => None,
-        };
-        self.ended.push((entry.clone(), by));
+        // answered from a radio: that radio has it done with already, and only the others have its
+        // notification taken down
+        if let permit::Ended::Answered(_, _, radio) = &ended {
+            super::push::done_on(self, ended_before, radio);
+        }
         if let Some(s) = self.session(&agent_id) {
             s.waiting = matches!(ended, permit::Ended::AtKeyboard | permit::Ended::Replaced);
         }
@@ -512,7 +511,8 @@ mod tests {
         assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
         // the phone woken for each request that ended without his answer from it is to be told: the one replaced
         // by a newer request, and the one settled at the keyboard
-        assert_eq!(app.read().ended, [(entry.clone(), None), (card.clone(), None)]);
+        let ended = |id: &str| app.read().ended.iter().any(|e| e.id == id && e.by.is_none() && e.why == airband_core::radio::Withdrawn::NotRead { reason: Dropped::PermissionEnded });
+        assert!(ended(&entry) && ended(&card), "{:?}", app.read().ended);
         let lines = app.read().log.len();
         // once nothing is waiting on his phone, the nudge is how he learns the keyboard wants him
         super::super::intake::on_event(&app, nudge(true)).unwrap();
@@ -570,7 +570,7 @@ mod tests {
         let line = app.read().log.iter().find(|e| e.id == card).cloned().unwrap();
         assert_eq!((line.short.as_deref(), line.options.is_empty()), (Some("Wants to run `rm -rf build`. Its tool refused it."), true));
         assert_eq!(line.leave.as_ref().and_then(|r| r.ended), Some(RequestEnded::RefusedByTool));
-        assert!(app.read().ended.iter().any(|(id, by)| id == &card && by.is_none()), "the phones woken for it are told it is over");
+        assert!(app.read().ended.iter().any(|e| e.id == card && e.by.is_none()), "the phones woken for it have its notification taken down");
         assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: its request for leave is taken back: its tool refused it itself")));
         assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
         assert_eq!(super::state(&app, &asked.id, 0).await.state, agent::Leave::Gone, "and the harness, asking after it, is told it is gone");

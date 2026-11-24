@@ -1,6 +1,6 @@
 # Protocols
 
-Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/5` (phone ↔ tower) and
+Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/6` (phone ↔ tower) and
 `airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
@@ -67,7 +67,7 @@ the question to him on the radio.
 |---|---|---|
 | `POST /v1/agent/permission` | `{ schema, agent, what, detail, question, until, settled_in }` → `PermissionState` | `what` finishes the words "wants to …" and is shown to him exactly as given: "run \`npm run deploy\`". `detail` is the whole request, for the more-info page. `question`, `{ text, choices }`, is set when the agent is asking him something through its harness's own asking tool: it is shown as that question with its choices, and whatever he answers is the reply. `until` is when the tool stops waiting and settles the request itself, in seconds since 1970, for a tool that says (`airband report --within <s>`); the tower's wait never runs past it, one that comes after it is not put to him, and an answer after it does nothing. `settled_in`, `{ record, tool, input }`, is where a tool that also shows its own prompt writes down how the call came out (Claude Code: the transcript of the agent that made the call); the tower watches it while the request is open, so one settled at the tool (answered at its keyboard, or refused by the tool itself) is closed on the phone however the hook that asked ended, and says which. |
 | `GET /v1/agent/permission/{id}?wait=<s>` | → `PermissionState` | Held open up to `wait` seconds (25 at most) or until he answers. |
-| `DELETE /v1/agent/permission/{id}?why=<unanswered\|settled-there\|ran-out\|refused-by-tool>` | | The harness has stopped waiting: no answer came in time and it asks at its keyboard (`unanswered`, the default), the tool says the request was settled there (`settled-there`), the time the tool gave it (`until`) ran out (`ran-out`), or the tool refused it itself by its own rules, with nobody's answer (`refused-by-tool`). The card closes and says which, and a phone woken for it is sent a notification in its place that says so. |
+| `DELETE /v1/agent/permission/{id}?why=<unanswered\|settled-there\|ran-out\|refused-by-tool>` | | The harness has stopped waiting: no answer came in time and it asks at its keyboard (`unanswered`, the default), the tool says the request was settled there (`settled-there`), the time the tool gave it (`until`) ran out (`ran-out`), or the tool refused it itself by its own rules, with nobody's answer (`refused-by-tool`). The card closes and says which, and the notification a phone was woken with for it is taken down. |
 
 `PermissionState` is `{ id, state, message, wait_seconds }`:
 
@@ -97,7 +97,7 @@ answers only.
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
-## `airband.radio/5`: radio ↔ tower
+## `airband.radio/6`: radio ↔ tower
 
 The radio always asks; the tower never calls the phone. All under `/v1/radio/`. Every route, with the types of
 its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`, and both ends use those
@@ -323,7 +323,7 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/5` call with
+Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/6` call with
 the time, a random id, and where the radio stands as it makes it (`presence`: on a call or not, showing the chat
 or not). The tower answers 409 to one more than two minutes off its clock, drops one it has answered
 before, answers 426 (`other_version`) to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
@@ -366,23 +366,31 @@ hour in all; one refused by either is counted by neither, and an opening that op
 ### Notifications
 
 A radio that has given the tower an address (`POST push`) is woken for a message judged `needs-you` or
-`report`, one no model read (`unjudged`), a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
+`report`, one no model read (`unjudged`), a permission card, or a question a harness puts to him, while the message
+is news (still to be heard). Once per message, and not on a radio that is
 on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
 one that follows without showing it says so (`showing_chat: false` in its `Presence`).
 
-The notification is `{ id, from, agent, badge, group, team, station, text, kind, options, permission, cut, holding,
-over, until }` (`Notice` in `radio.rs`). `holding` says an agent waits on his answer (a request for leave, or a
-question through its tool): the phone shows it as Time Sensitive. When such a request ends without his answer from
-the phone, the tower sends `over`: the line as it now reads, with nothing to answer, shown quietly in place of the
-first. `until` is the tool's own time for the request, if it gave one. The tower seals it with a third key from the pairing secret (direction `push`) and asks the relay
-to pass it on:
+What is sealed is a `Pushed` (`feed.rs`): `{ "act": "show", "notice": Notice }` or `{ "act": "withdraw", id, why }`.
+The `Notice` is `{ id, from, agent, badge, group, team, station, text, kind, options, permission, cut, holding,
+rev, until }`. `text` is the line exactly as the chat shows it (cut only to fit), and `rev` the line's change
+count, which the app follows the chat to before it shows the message (`Desk::open_message`). `holding` says an
+agent waits on his answer (a request for leave, or a question through its tool): the phone shows it as Time
+Sensitive. `until` is the tool's own time for the request, if it gave one. A notification lives as long as its
+line is news. When the line stops being news, for whatever reason (`why`: `heard`, `read` on another of his
+devices, or `not_read` with the reason it left the reading queue: superseded, answered, the request over, and the
+rest), every phone woken for it but one that has it done with is sent `withdraw`: the phone removes the
+notification and shows nothing in its place. Both are kept under the line's tag (`Keys::notice_tag`, HKDF of the
+line's id with a key from the pairing secret), so the withdrawal takes the place of the notification with the push
+service and on the phone, and neither the relay nor Apple learns the line's id. The tower seals it with a third
+key from the pairing secret (direction `push`) and asks the relay to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question, replaces, quiet, until }` → `{ sent, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. `replaces` is an opaque id (letters and digits, 64 at most) the push service keeps only the newest notification under (Apple's `apns-collapse-id`); `quiet` asks for no sound; `until` (seconds since 1970) is when it stops being worth delivering. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question, replaces, quiet, until }` → `{ sent, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. `replaces` is the line's tag (letters and digits, 64 at most) the push service keeps only the newest notification under (Apple's `apns-collapse-id`); `quiet` asks for no sound and no lit screen (a withdrawal); `until` (seconds since 1970) is when it stops being worth delivering. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
-message", "An agent needs you" or "That request is over"), which is what shows if the phone cannot open it. The relay and the push
+message", "An agent needs you" or "An earlier message is out of date"), which is what shows if the phone cannot open it. The relay and the push
 service learn only that a notification was sent, when, to which phone, whether it was a question, and which earlier one (by an id that means nothing else) it takes the place of. The phone
 opens it with `open_notice` in the radio core. An answer given on the notification is an ordinary
 `POST utterance` with `re` set to the notification's `id`.

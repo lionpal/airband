@@ -34,6 +34,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
         let call = inner.call(&radio);
         if call.presence.showing_chat() {
             call.has = call.has.max(has);
+            // what it now has on screen is no longer news on his other devices
+            crate::tower::push::read_on(&app, &mut inner, &radio);
         }
     }
     // while a request for the whole chat is open, what agents say is read by it

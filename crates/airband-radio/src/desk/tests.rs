@@ -320,15 +320,17 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
 
 #[test]
 fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
-    use airband_core::radio::Notice;
+    use airband_core::radio::{Notice, NotRead, Pushed, Withdrawn};
     let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link("laptop", "").unwrap();
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
-    let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false, holding: false, over: false, until: None };
+    let seal_as = |p: &Pushed| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(p).unwrap()));
+    let seal = |n: &Notice| seal_as(&Pushed::Show { notice: n.clone() });
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false, holding: false, rev: 7, until: None };
     let open = |links: Vec<String>, sealed: String, colours: HashMap<String, u8>| match open_notice(links, Some(sealed), colours) {
         NoticeOpening::Opened { notice } => Ok(notice),
         NoticeOpening::Plain { why } => Err(why),
+        NoticeOpening::Withdrawn { .. } => panic!("a notification to show was taken as one taking another down"),
     };
     let got = open(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
     assert_eq!(got.buttons, NoticeButtonSet::Answers);
@@ -358,8 +360,12 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     assert_eq!(got.level, NoticeLevel::Active);
     let report = open(vec![link(&laptop)], seal(&Notice { kind: Some(Kind::Report), options: Vec::new(), ..question.clone() }), Default::default()).unwrap();
     assert_eq!(report.level, NoticeLevel::Active);
-    let over = open(vec![link(&laptop)], seal(&Notice { permission: true, over: true, text: "Wants to run `ls`. Settled at the keyboard.".into(), ..question.clone() }), Default::default()).unwrap();
-    assert_eq!((over.level, over.buttons, over.permission, over.question), (NoticeLevel::Passive, NoticeButtonSet::Nothing, false, false));
+    // kept under the line's tag, which the tower gave the push service too; with the line's change count, for
+    // the app to follow the chat to before it shows it
+    assert_eq!((got.tag.clone(), got.rev), (keys.notice_tag("m1"), 7));
+    // one that takes it down when it is no longer news names the same tag, and shows nothing
+    let why = Withdrawn::NotRead { reason: NotRead::Superseded };
+    assert_eq!(open_notice(vec![link(&mini), link(&laptop)], Some(seal_as(&Pushed::Withdraw { id: "m1".into(), why })), Default::default()), NoticeOpening::Withdrawn { message: "m1".into(), tag: got.tag.clone(), why });
     // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all: each
     // with its own reason
     assert_eq!(open(vec![link(&mini), link(&stranger)], seal(&question), Default::default()), Err(NoticeTrouble::NoPairingOpensIt));
@@ -1045,6 +1051,7 @@ mod fake;
 mod intents;
 mod kept_files;
 mod lifetimes;
+mod opening;
 mod scenarios;
 mod sending;
 

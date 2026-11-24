@@ -19,6 +19,10 @@ enum Opening {
         let note: OpenedNotice
         switch opening {
         case .plain(let why): return hand(request.content, .plain(why: why))
+        case .withdrawn(let message, let tag, let why):
+            // the message is no longer news: what was shown for it is taken down, and nothing takes its place
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [tag])
+            return hand(UNNotificationContent(), .withdrawn(message: message, why: why))
         case .opened(let opened): note = opened
         }
         // a notification's content always copies as one that can be changed
@@ -28,15 +32,12 @@ enum Opening {
         content.body = note.body
         content.threadIdentifier = note.thread
         // added to what came, not in place of it: the system needs its own part of a notification left alone
-        content.userInfo.merge(["station": note.station, "message": note.message, "room": note.room, "agent": note.agent, "options": note.options]) { _, mine in mine }
+        content.userInfo.merge(["station": note.station, "message": note.message, "rev": NSNumber(value: note.rev), "tag": note.tag, "room": note.room, "agent": note.agent, "options": note.options]) { _, mine in mine }
         content.categoryIdentifier = NoticeButtons.name(for: note.buttons, options: note.options)
         // how hard it breaks in on him, as the core decided from what the notification is
         switch note.level {
         case .timeSensitive: content.interruptionLevel = .timeSensitive
         case .active: content.interruptionLevel = .active
-        case .passive:
-            content.interruptionLevel = .passive
-            content.sound = nil
         }
         let picture = badgeImage(note.badge, colour: note.colour)
         let opened = NoticeHow.opened(message: note.message, buttons: note.buttons, permission: note.permission)

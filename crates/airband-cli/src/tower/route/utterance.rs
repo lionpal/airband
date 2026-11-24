@@ -416,6 +416,7 @@ fn answering(app: &App, re: Option<&str>) -> impl Fn(&str) -> String {
 /// reached.
 fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, Reached { sent, failed, queued }: Reached, shown: Option<String>, shown_files: Vec<airband_core::radio::Picture>) -> Reply {
     let mut inner = app.change();
+    let ended = inner.ended.len();
     for t in &sent {
         let id = t.agent.id.clone();
         if let Some(s) = inner.session(&id) {
@@ -423,6 +424,8 @@ fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, Reached { se
         }
         inner.no_longer_waiting(&id);
     }
+    // answered from this radio: what it answered is done with there
+    super::super::push::done_on(&mut inner, ended, radio);
     if let [one] = sent.as_slice() {
         inner.call(radio).focus = Some(one.agent.id.clone());
     }

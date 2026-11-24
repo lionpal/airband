@@ -23,11 +23,13 @@ pub struct PushRequest {
     /// It is a question to him. All the relay and the push service learn about what is inside.
     #[serde(default)]
     pub question: bool,
-    /// Which notification this one takes the place of: an opaque id the tower makes up, the same for every
-    /// notification about one line. The push service keeps only the newest under it.
+    /// Which notification this one takes the place of: the line's tag ([`super::Keys::notice_tag`]), which
+    /// says nothing of the line, the same for every notification about it. The push service keeps only the
+    /// newest under it, and the phone's system keeps a notification under it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<String>,
-    /// Shown without a sound: it closes what an earlier one asked.
+    /// It takes down an earlier one under the same tag: nothing to hear, and nothing to show when the phone
+    /// opens it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quiet: bool,
     /// Not worth delivering after this, in seconds since 1970: what it asks will be over by then.

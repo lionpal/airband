@@ -32,14 +32,19 @@ pub(super) async fn pump(app: &Arc<App>) {
         return remind(app, &mut inner, &radio);
     };
     let callsign = inner.sender_name(next);
-    let say = next.line();
     let kind = next.kind.unwrap_or(Kind::Unjudged);
+    let spoken_line = aloud_line(&inner, next);
     // the line by its id and length: what agents say is never written in the log
-    log(format!("→ {}: ({kind:?}) line {} ({} characters)", radio_tag(&radio), next.id, say.chars().count()));
-    let spoken_line = format!("{}. {say}", airband_core::prose::capital(&callsign));
+    log(format!("→ {}: ({kind:?}) line {} ({} characters)", radio_tag(&radio), next.id, spoken_line.chars().count()));
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
     transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), agent: said_by(next), callsign, kind, say: spoken_line, waiting });
+}
+
+/// What is read out for a line: who said it, then the line in the very words the chat shows and its
+/// notification says. Nothing else is added and nothing is said in their place.
+pub(super) fn aloud_line(inner: &Inner, e: &Entry) -> String {
+    format!("{}. {}", airband_core::prose::capital(&inner.sender_name(e)), e.line())
 }
 
 /// Who said a line, as a transmission names it: the agent's id, or the empty id the radio protocol gives

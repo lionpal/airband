@@ -108,6 +108,15 @@ final class PhonePushTests: XCTestCase {
             if notification.request.trigger is UNPushNotificationTrigger { pushed.append(notification.request.content) } else { added.append(notification.request.content) }
             done([.list])
         }
+        /// What the simulator showed for this push, as Apple's own few words: found by what it carried.
+        func plain(of push: Tower.Push, within seconds: Double) -> UNNotificationContent? {
+            var found: UNNotificationContent?
+            _ = until(seconds) {
+                found = pushed.first { ($0.userInfo["sealed"] as? String) == push.payload.sealed }
+                return found != nil
+            }
+            return found
+        }
         /// Run the main loop until `fact` holds, up to `seconds`.
         func until(_ seconds: Double, _ fact: () -> Bool) -> Bool {
             let end = Date().addingTimeInterval(seconds)
@@ -147,21 +156,18 @@ final class PhonePushTests: XCTestCase {
         _ = try phone.until("the computer can wake the phone", seconds: 60) { _ in (try? tower.wakeable()) == true ? true : nil }
 
         let kept = folder.notices().count
+        let start = try tower.pushes().count
         /// Ask for one kind: what the relay handed the push service for it, what the simulator showed of that
         /// push, and what the extension's code showed of it and kept.
         /// With `asking` false nothing is asked: it is the next push that is taken, as one the tower sends itself.
         func ask(_ kind: String, asking: Bool = true) throws -> (push: Tower.Push, plain: UNNotificationContent, content: UNNotificationContent, how: NoticeHow) {
-            let (pushes, plains, added) = (try tower.pushes().count, shown.pushed.count, shown.added.count)
+            let (pushes, added) = (try tower.pushes().count, shown.added.count)
             if asking { try tower.ask(kind) }
-            XCTAssertTrue(shown.until(60) { ((try? tower.pushes().count) ?? 0) > pushes }, "the tower woke the phone for the \(kind)")
-            let push = try tower.pushes()[pushes]
-            XCTAssertTrue(shown.until(30) { shown.pushed.count > plains }, "the simulator showed the push for the \(kind)")
-            let plain = try XCTUnwrap(shown.pushed.dropFirst(plains).first)
-            // as the extension is handed it: Apple's few words, and the payload as it came
-            let came = UNMutableNotificationContent()
-            (came.title, came.body, came.userInfo) = (push.payload.aps.alert.title, push.payload.aps.alert.body, try tower.payload(pushes))
+            // the next that shows a line on this phone: one taking another down may come before it
+            let push = try XCTUnwrap(tower.next(after: pushes, to: address, within: 60, shown) { if case .opened = opening($0, pairing) { true } else { false } }, "the tower woke the phone for the \(kind)")
+            let plain = try XCTUnwrap(shown.plain(of: push, within: 30), "the simulator showed the push for the \(kind)")
             var opened: (UNNotificationContent, NoticeHow)?
-            Opening.open(UNNotificationRequest(identifier: UUID().uuidString, content: came, trigger: nil)) { content, how in
+            Opening.open(UNNotificationRequest(identifier: UUID().uuidString, content: push.came(), trigger: nil)) { content, how in
                 Opening.keep(how)
                 opened = (content, how)
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
@@ -202,35 +208,39 @@ final class PhonePushTests: XCTestCase {
         guard case .opened(_, .permitAfterReading, true) = long.how else { return XCTFail("\(long.how)") }
         XCTAssertEqual(categories[NoticeButtons.permitAfterReading], [noticeDenyId(), NoticeButtons.typed])
 
-        // a request whose tool gives it 8 seconds: when they are up, a quiet notification with nothing to answer
-        // takes its place, under the same id, and says how it ended
+        // a request whose tool gives it 8 seconds: when they are up its line is no longer news, and a quiet
+        // notification under the same tag takes it down, showing nothing
         let brief = try ask("brief-permission")
         XCTAssertEqual(brief.content.interruptionLevel, .timeSensitive)
         guard case .opened(let briefLine, .permit, true) = brief.how else { return XCTFail("\(brief.how)") }
-        XCTAssertEqual(brief.push.collapse, briefLine, "kept under its line's id, for what follows to take its place")
-        let over = try ask("brief-permission over", asking: false)
-        XCTAssertEqual([over.plain.title, over.plain.body], ["airband", "That request is over"])
-        XCTAssertEqual(over.content.body, "Wants to run `make release`. Its time ran out.")
-        XCTAssertEqual(over.content.categoryIdentifier, NoticeButtons.over)
-        XCTAssertEqual(over.content.interruptionLevel, .passive)
-        XCTAssertNil(over.content.sound)
-        XCTAssertNil(over.push.payload.aps.sound, "Apple is asked for no sound")
-        XCTAssertEqual(over.push.collapse, briefLine)
-        guard case .opened(briefLine, .nothing, false) = over.how else { return XCTFail("\(over.how)") }
-        XCTAssertEqual(try categoriesNow(center)[NoticeButtons.over], [])
+        let briefTag = try XCTUnwrap(brief.content.userInfo["tag"] as? String)
+        XCTAssertEqual(brief.push.collapse, briefTag, "kept under its line's tag, for what follows to take its place")
+        XCTAssertNotEqual(brief.push.collapse, briefLine, "never its line's id")
+        let over = try XCTUnwrap(tower.next(after: start, to: address, within: 60, shown) { if case .withdrawn(briefLine, _, _) = opening($0, pairing) { true } else { false } })
+        XCTAssertEqual(over.collapse, briefTag)
+        XCTAssertNil(over.payload.aps.sound, "Apple is asked for no sound")
+        XCTAssertEqual(over.payload.aps.alert.body, "An earlier message is out of date")
+        var taken: (UNNotificationContent, NoticeHow)?
+        Opening.open(UNNotificationRequest(identifier: UUID().uuidString, content: over.came(), trigger: nil)) { content, how in taken = (content, how) }
+        let (nothing, takenHow) = try XCTUnwrap(taken)
+        XCTAssertEqual([nothing.title, nothing.body], ["", ""], "nothing is shown in its place")
+        XCTAssertEqual(takenHow, .withdrawn(message: briefLine, why: .notRead(reason: .permissionEnded)))
 
         // what reached the push service, as Apple is handed it: an alert, at once, for this app, that the
         // phone may change, carrying nothing readable but the same few words
-        // read again: the simulator was handed each after the relay had its answer
-        let pushes = try tower.pushes()
-        XCTAssertEqual(pushes.count, 6, "one each, and nothing else")
-        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), [report.push, question.push, card.push, long.push, brief.push, over.push].map(\.payload.aps.alert.body))
-        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you", "An agent needs you", "That request is over"])
+        let pushes = try tower.pushes().dropFirst(start).filter { $0.to == address }
+        let shows = pushes.filter { if case .opened = opening($0, pairing) { true } else { false } }
+        XCTAssertEqual(shows.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you", "An agent needs you"], "one each")
+        // the report, which the question from its agent took the place of, and the brief request, once over
+        let downs = pushes.compactMap { if case .withdrawn(let line, _, let why) = opening($0, pairing) { (line, why) } else { nil } }
+        XCTAssertEqual(downs.map(\.1), [.notRead(reason: .superseded), .notRead(reason: .permissionEnded)])
+        XCTAssertEqual(downs.first?.0, report.content.userInfo["message"] as? String)
         for push in pushes {
             XCTAssertEqual([push.to, push.pushType, push.priority, push.topic], [address, "alert", "10", "dev.airband.app"])
             XCTAssertTrue(push.delivered)
             XCTAssertEqual(push.payload.aps.mutableContent, 1)
             XCTAssertEqual(push.payload.aps.alert.title, "airband")
+            XCTAssertNotNil(push.collapse, "every one is kept under its line's tag")
         }
 
         // one no pairing here opens is still shown, in the push service's few words, and why is kept
@@ -248,6 +258,92 @@ final class PhonePushTests: XCTestCase {
         XCTAssertTrue(phone.desk.diagnostics(notices: folder).contains("shown without its words: none of the computers paired here sent it"))
     }
 
+    /// A notification's life: a report wakes the phone; a question from the same agent takes its place, and the
+    /// report's notification is taken down under the tag it was shown under, with nothing in its place. Opened
+    /// from the question's notification, the app follows the chat to it and shows it, in the words the
+    /// notification had; turned on, reading aloud reads those words, with only who said it in front, and never
+    /// the report it took the place of.
+    func testWhatANotificationSaysIsTheChatsLineUntilItIsTakenDown() throws {
+        let tower = try Tower()
+        let pairing = try tower.pair()
+        let before = Keychain.links()
+        XCTAssertTrue(Keychain.keepLinks([pairing.link]))
+        defer { if case .found(let links) = before { Keychain.keepLinks(links) } else { Keychain.keepLinks([]) } }
+        let center = UNUserNotificationCenter.current()
+        let shown = Shown()
+        center.delegate = shown
+        let allowed = expectation(description: "notifications allowed")
+        center.requestAuthorization(options: [.provisional, .alert, .sound]) { _, _ in allowed.fulfill() }
+        wait(for: [allowed], timeout: 20)
+
+        // in his pocket: following the chat, not showing it
+        let phone = Phone(front: false)
+        defer { phone.unpair() }
+        XCTAssertEqual(phone.desk.setLinks(links: [pairing.link]).links, [pairing.link])
+        _ = try phone.until("the computer answers", seconds: 60) { $0.online ? true : nil }
+        let address = String(repeating: "cd", count: 32)
+        phone.desk.setPush(provider: .apns, token: address)
+        _ = try phone.until("the computer can wake the phone", seconds: 60) { _ in (try? tower.wakeable()) == true ? true : nil }
+        let start = try tower.pushes().count
+        /// Open a push as the extension does, and put what it shows where the system keeps it: under the tag it
+        /// came with, as the system keeps a notification that has one.
+        func deliver(_ push: Tower.Push) throws -> (UNNotificationContent, NoticeHow) {
+            var opened: (UNNotificationContent, NoticeHow)?
+            Opening.open(UNNotificationRequest(identifier: push.collapse ?? UUID().uuidString, content: push.came(), trigger: nil)) { content, how in opened = (content, how) }
+            let (content, how) = try XCTUnwrap(opened)
+            if case .opened = how {
+                let added = expectation(description: "shown")
+                center.add(UNNotificationRequest(identifier: try XCTUnwrap(push.collapse), content: content, trigger: nil)) { _ in added.fulfill() }
+                wait(for: [added], timeout: 20)
+            }
+            return (content, how)
+        }
+        func delivered() -> [String] {
+            var ids: [String] = []
+            let read = expectation(description: "delivered read")
+            center.getDeliveredNotifications { all in ids = all.map(\.request.identifier); read.fulfill() }
+            wait(for: [read], timeout: 20)
+            return ids
+        }
+
+        try tower.ask("news-report")
+        let report = try XCTUnwrap(tower.next(after: start, to: address, within: 60, shown) { if case .opened = opening($0, pairing) { true } else { false } }, "the report woke the phone")
+        let (reportShown, _) = try deliver(report)
+        let reportLine = try XCTUnwrap(reportShown.userInfo["message"] as? String)
+        XCTAssertTrue(shown.until(20) { delivered().contains(report.collapse ?? "") }, "kept under its tag")
+
+        try tower.ask("news-question")
+        let question = try XCTUnwrap(tower.next(after: start, to: address, within: 60, shown) { if case .opened(let n) = opening($0, pairing) { n.message != reportLine } else { false } }, "the question woke the phone")
+        let down = try XCTUnwrap(tower.next(after: start, to: address, within: 60, shown) { if case .withdrawn(reportLine, _, _) = opening($0, pairing) { true } else { false } }, "the report it took the place of is taken down")
+        XCTAssertEqual(down.collapse, report.collapse, "under the tag it was shown under")
+        XCTAssertNil(down.payload.aps.sound)
+        let (nothing, how) = try deliver(down)
+        XCTAssertEqual([nothing.title, nothing.body], ["", ""], "nothing in its place")
+        XCTAssertEqual(how, .withdrawn(message: reportLine, why: .notRead(reason: .superseded)))
+        XCTAssertTrue(shown.until(20) { !delivered().contains(report.collapse ?? "") }, "it is no longer on the phone")
+        let (asked, _) = try deliver(question)
+        XCTAssertTrue(delivered().contains(question.collapse ?? ""))
+
+        // he taps the question's notification: the chat is followed to it, then it is there, in its words
+        let info = asked.userInfo
+        let (station, message, rev) = (try XCTUnwrap(info["station"] as? String), try XCTUnwrap(info["message"] as? String), try XCTUnwrap((info["rev"] as? NSNumber)?.uint64Value))
+        phone.desk.openMessage(station: station, message: message, rev: rev, room: info["room"] as? String ?? "", agent: info["agent"] as? String ?? "")
+        let view = try phone.until("the message opened from its notification is in the chat", seconds: 60) { $0.opening?.state == .here ? $0 : nil }
+        XCTAssertEqual(view.opening?.message, message)
+        let line = try XCTUnwrap(view.feed.first { $0.id == message }, "it is in the feed shown")
+        XCTAssertEqual(line.text, asked.body, "the chat says what the notification said")
+        XCTAssertEqual(line.from, asked.title)
+
+        // reading aloud turned on: what is still waiting is read, the question in the notification's words with
+        // only who said it in front, and the report it took the place of never
+        let handed = try tower.aloud(line: message)
+        let read = try XCTUnwrap(handed.last)
+        XCTAssertEqual(read.id, message)
+        XCTAssertFalse(handed.contains { $0.id == reportLine }, "nothing superseded is read")
+        XCTAssertEqual(read.callsign, asked.title)
+        XCTAssertEqual(read.say, read.callsign.prefix(1).uppercased() + read.callsign.dropFirst() + ". " + asked.body)
+    }
+
     /// Each registered set of buttons, by its name: the ids of its buttons in order.
     private func categoriesNow(_ center: UNUserNotificationCenter) throws -> [String: [String]] {
         var have: [String: [String]] = [:]
@@ -259,6 +355,11 @@ final class PhonePushTests: XCTestCase {
         wait(for: [read], timeout: 20)
         return have
     }
+}
+
+/// What a push does, opened with this pairing as the extension opens it.
+func opening(_ push: Tower.Push, _ pairing: Tower.Pairing) -> NoticeOpening {
+    openNotice(links: [pairing.link], sealed: push.payload.sealed, colours: [:])
 }
 
 /// The computer's side, as tools/e2e-phone.py serves it.
@@ -328,10 +429,25 @@ struct Tower {
         return try JSONDecoder().decode(Said.self, from: call("GET", "wakeable")).wakeable
     }
 
-    /// The payload of the push at `index`, as the phone is handed it.
-    func payload(_ index: Int) throws -> [AnyHashable: Any] {
-        let all = try XCTUnwrap(JSONSerialization.jsonObject(with: call("GET", "pushes")) as? [[String: Any]])
-        return try XCTUnwrap(all[index]["payload"] as? [String: Any])
+    /// The first push after the first `after` to this address that `match` takes, waiting up to `seconds` (with
+    /// the main loop running, for what the system shows meanwhile).
+    func next(after: Int, to address: String, within seconds: Double, _ shown: PhonePushTests.Shown, where match: (Push) -> Bool) throws -> Push? {
+        var found: Push?
+        _ = shown.until(seconds) {
+            found = ((try? pushes()) ?? []).dropFirst(after).first { $0.to == address && match($0) }
+            return found != nil
+        }
+        return found
+    }
+
+    /// One transmission the reading-aloud queue handed a radio.
+    struct Transmitted: Decodable {
+        let id, callsign, say: String
+    }
+    /// Turn reading aloud on, on a radio of the computer's own, and take what it reads out in order until this
+    /// line, each heard; then off again. What was handed, in order.
+    func aloud(line: String) throws -> [Transmitted] {
+        try JSONDecoder().decode([Transmitted].self, from: call("GET", "aloud?line=" + line))
     }
 
     /// What the relay handed the push service, in order.
@@ -355,6 +471,12 @@ struct Tower {
         let collapse: String?
         let payload: Payload
         let delivered: Bool
+        /// As the extension is handed it: Apple's few words, and what it carried.
+        func came() -> UNMutableNotificationContent {
+            let content = UNMutableNotificationContent()
+            (content.title, content.body, content.userInfo) = (payload.aps.alert.title, payload.aps.alert.body, ["sealed": payload.sealed])
+            return content
+        }
         enum CodingKeys: String, CodingKey {
             case to, priority, topic, payload, delivered, collapse
             case pushType = "push_type"

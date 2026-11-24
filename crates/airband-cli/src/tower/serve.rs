@@ -24,7 +24,7 @@ pub(crate) fn run(cfg: Config) -> Result<(), String> {
         drain_spool(&app);
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         tokio::spawn(tidy(app.clone()));
-        tokio::spawn(push::close_ended(app.clone()));
+        tokio::spawn(push::withdraw_ended(app.clone()));
         let writer = app.clone();
         tokio::select! {
             served = serve(app, router, port) => served,

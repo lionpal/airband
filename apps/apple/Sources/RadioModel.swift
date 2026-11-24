@@ -14,7 +14,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], takes: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), stoppable: [], newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "", noWayIn: nil)
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], takes: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), opening: nil, stoppable: [], newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "", noWayIn: nil)
     /// A project: show just its agents, and keep what he says among them. The desk keeps it ([`look`]).
     var room: String? { view.focus.room }
     /// An agent, by id: show just that agent.
@@ -201,9 +201,17 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         refresh()
     }
 
-    /// He tapped a notification: show that agent.
-    func show(room: String, agent: String) {
-        look(room: room.orNone, agent: agent.orNone)
+    /// He tapped a notification: the chat is followed up to it, then it is shown on its agent and marked
+    /// (`view.opening` says where it stands).
+    func openMessage(station: String, message: String, rev: UInt64, room: String, agent: String) {
+        replyingTo = nil
+        desk.openMessage(station: station, message: message, rev: rev, room: room, agent: agent)
+        refresh()
+    }
+    /// Done with the message opened from a notification.
+    func closeOpening() {
+        desk.closeOpening()
+        refresh()
     }
 
     /// A team on his screen, by its room id.

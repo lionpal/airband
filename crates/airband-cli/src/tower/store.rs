@@ -199,6 +199,15 @@ impl Store {
         Self::warn("saving where phones can be woken", db.execute(KEEP_UNDER, params!["push", serde_json::to_string(targets).unwrap()]));
     }
 
+    /// The lines whose notification is on a phone, with the radios woken for each.
+    pub(super) fn notified(&self) -> Result<BTreeMap<String, super::push::Woken>, String> {
+        Self::kept(&self.db.lock().unwrap(), "notified")
+    }
+    pub(super) fn save_notified(&self, shown: &BTreeMap<String, super::push::Woken>) {
+        let db = self.db.lock().unwrap();
+        Self::warn("saving which notifications are on a phone", db.execute(KEEP_UNDER, params!["notified", serde_json::to_string(shown).unwrap()]));
+    }
+
     /// Write new messages, and messages whose short or fuller version has just been made.
     #[cfg(test)]
     pub(super) fn put_messages(&self, entries: &[Entry]) {

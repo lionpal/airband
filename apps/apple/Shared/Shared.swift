@@ -129,8 +129,6 @@ enum NoticeButtons {
     /// A request for leave shown by its opening: Deny and the reply box, and no Allow under part of a command.
     static let permitAfterReading = "airband.permit.read"
     static let failed = "airband.failed"
-    /// One that says what an earlier one asked is over: nothing to answer.
-    static let over = "airband.over"
     static let typed = "reply"
 
     private static var type: UNTextInputNotificationAction {
@@ -148,7 +146,6 @@ enum NoticeButtons {
                 UNNotificationAction(identifier: noticeDenyId(), title: "Deny", options: [.destructive]), type,
             ], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: failed, actions: [], intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: over, actions: [], intentIdentifiers: [], options: []),
         ]
     }
     /// The registered name of the set the core chose for a notification.
@@ -158,7 +155,6 @@ enum NoticeButtons {
         case .permitAfterReading: return permitAfterReading
         case .answers: return name(for: options)
         case .reply: return reply
-        case .nothing: return over
         }
     }
     /// The name for a set of answers: the same answers always get the same name.

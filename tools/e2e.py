@@ -167,7 +167,7 @@ def interactive():
 # woken, so the lock screen's notification is seen too. Nothing is removed: the target is a folder at the top
 # of the disk that is not there and could not be made.
 UNATTENDED = ["a request Claude Code will block by itself reaches the phone, and wakes it", "Claude Code counts down to blocking it",
-              "once Claude Code blocks it, the card says its tool refused it", "and the phone woken for it is told so, in the card's own words",
+              "once Claude Code blocks it, the card says its tool refused it", "and the notification the phone was woken with is taken down",
               "a late Allow from the phone is refused as over"]
 def unattended():
     import base64
@@ -198,7 +198,9 @@ def unattended():
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
             raw = base64.b64decode(body["sealed"])
-            pushes.append(json.loads(ChaCha20Poly1305(derived("push")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {channel} push".encode())))
+            # what it does: shows a line (its notice), or takes one down (its line's id and why)
+            pushed = json.loads(ChaCha20Poly1305(derived("push")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {channel} push".encode()))
+            pushes.append(pushed["notice"] if pushed["act"] == "show" else {**pushed, "quiet": body.get("quiet")})
             self.reply(200, b'{"sent":true}')
     server = ThreadingHTTPServer(("127.0.0.1", relay), Relay)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -255,8 +257,8 @@ def unattended():
         # left unanswered: Claude Code blocks it after its two minutes, and the card says so at once
         closed = next((m for _ in range(170) for m in [next((m for m in messages() if m["id"] == card["id"] and not m.get("options")), None)] if m or time.sleep(1)), None)
         check(UNATTENDED[2], closed and closed["text"] == asks + " Its tool refused it.", closed or pane()[-1500:])
-        over = next((n for _ in range(40) for n in [next((n for n in pushes if n["id"] == card["id"] and n.get("over")), None)] if n or time.sleep(0.25)), None)
-        check(UNATTENDED[3], over and over["text"] == asks + " Its tool refused it." and not over.get("permission") and not over.get("options"), over or pushes)
+        over = next((n for _ in range(40) for n in [next((n for n in pushes if n["id"] == card["id"] and n.get("act") == "withdraw"), None)] if n or time.sleep(0.25)), None)
+        check(UNATTENDED[3], over and over["why"] == {"why": "not_read", "reason": "permission_ended"} and over["quiet"] is True, over or pushes)
         late = None
         body = {"text": "Allow", "id": os.urandom(6).hex(), "re": card["id"], "act": {"kind": "verdict", "allow": True}}
         for _ in range(300):

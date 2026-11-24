@@ -34,6 +34,12 @@ pub struct OpenedNotice {
     pub thread: String,
     /// How hard it breaks in on him.
     pub level: NoticeLevel,
+    /// The tag the system keeps it under, the same for every notification about this message: what takes it
+    /// down when the message stops being news ([`NoticeOpening::Withdrawn`]).
+    pub tag: String,
+    /// The message's change count when it was sent: opened from here, the app follows the chat at least this
+    /// far before it shows the message ([`Desk::open_message`]).
+    pub rev: u64,
 }
 
 /// How hard a notification breaks in on him, as the host's system has it.
@@ -44,18 +50,12 @@ pub enum NoticeLevel {
     TimeSensitive,
     /// A report, a question that holds nothing up: shown and sounded as the system usually does.
     Active,
-    /// It closes what an earlier one asked: shown in its place, with no sound and nothing lit up.
-    Passive,
 }
 
 impl NoticeLevel {
     /// The level for a notification, from what the tower says it is.
     pub(super) fn of(n: &airband_core::radio::Notice) -> NoticeLevel {
-        match (n.over, n.holding) {
-            (true, _) => NoticeLevel::Passive,
-            (false, true) => NoticeLevel::TimeSensitive,
-            (false, false) => NoticeLevel::Active,
-        }
+        if n.holding { NoticeLevel::TimeSensitive } else { NoticeLevel::Active }
     }
 }
 /// What a button under a question stood for.
@@ -98,8 +98,6 @@ pub enum NoticeButtonSet {
     Answers,
     /// A reply box alone.
     Reply,
-    /// None: what it asked is over.
-    Nothing,
 }
 
 /// Why a notification could not be opened on this device. It is then shown as the push service delivered it,
@@ -136,6 +134,9 @@ impl std::fmt::Display for NoticeTrouble {
 #[expect(clippy::large_enum_variant, reason = "made once for each notification and handed to the host as it is")]
 pub enum NoticeOpening {
     Opened { notice: OpenedNotice },
+    /// It takes down what was shown for `message`, which is no longer news: the host removes the notification
+    /// kept under `tag` and shows nothing for this one.
+    Withdrawn { message: String, tag: String, why: airband_core::radio::Withdrawn },
     /// Shown as delivered, with why.
     Plain { why: NoticeTrouble },
 }
@@ -147,13 +148,10 @@ pub enum NoticeOpening {
 /// not in it has none.
 #[uniffi::export]
 pub fn open_notice(links: Vec<String>, sealed: Option<String>, colours: std::collections::HashMap<String, u8>) -> NoticeOpening {
-    match opened(links, sealed, colours) {
-        Ok(notice) => NoticeOpening::Opened { notice },
-        Err(why) => NoticeOpening::Plain { why },
-    }
+    opened(links, sealed, colours).unwrap_or_else(|why| NoticeOpening::Plain { why })
 }
 
-fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections::HashMap<String, u8>) -> Result<OpenedNotice, NoticeTrouble> {
+fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections::HashMap<String, u8>) -> Result<NoticeOpening, NoticeTrouble> {
     let sealed = sealed.and_then(|s| airband_core::encode::unbase64(&s)).ok_or(NoticeTrouble::NotSealed)?;
     let keys: Vec<Keys> = links.iter().filter_map(|link| match Pairing::parse(link).ok()? {
         Pairing::Relay { secret, .. } => Keys::derive(&secret).ok(),
@@ -164,18 +162,21 @@ fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections:
     }
     let several = links.len() > 1;
     let (keys, plain) = keys.into_iter().find_map(|k| k.open(Direction::Push, &sealed).ok().map(|p| (k, p))).ok_or(NoticeTrouble::NoPairingOpensIt)?;
-    let n: airband_core::radio::Notice = serde_json::from_slice(&plain).map_err(|_| NoticeTrouble::NotANotice)?;
+    let n = match serde_json::from_slice(&plain).map_err(|_| NoticeTrouble::NotANotice)? {
+        airband_core::radio::Pushed::Show { notice } => notice,
+        airband_core::radio::Pushed::Withdraw { id, why } => return Ok(NoticeOpening::Withdrawn { tag: keys.notice_tag(&id), message: id, why }),
+    };
     let room = n.team.as_ref().map(|t| room_id(&StationId::new(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
     let level = NoticeLevel::of(&n);
     let agent = n.agent.unwrap_or_default();
-    let buttons = match (n.over, n.permission, n.cut, n.options.is_empty()) {
-        (true, ..) => NoticeButtonSet::Nothing,
-        (false, true, false, _) => NoticeButtonSet::Permit,
-        (false, true, true, _) => NoticeButtonSet::PermitAfterReading,
-        (false, false, _, true) => NoticeButtonSet::Reply,
-        (false, false, _, false) => NoticeButtonSet::Answers,
+    let buttons = match (n.permission, n.cut, n.options.is_empty()) {
+        (true, false, _) => NoticeButtonSet::Permit,
+        (true, true, _) => NoticeButtonSet::PermitAfterReading,
+        (false, _, true) => NoticeButtonSet::Reply,
+        (false, _, false) => NoticeButtonSet::Answers,
     };
-    Ok(OpenedNotice {
+    let tag = keys.notice_tag(&n.id);
+    Ok(NoticeOpening::Opened { notice: OpenedNotice {
         thread: format!("{}/{agent}", keys.channel),
         colour: colours.get(&room).copied(),
         room,
@@ -186,12 +187,14 @@ fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections:
         body: n.text,
         badge: n.badge,
         agent,
-        question: n.kind == Some(Kind::NeedsYou) && !n.over,
+        question: n.kind == Some(Kind::NeedsYou),
         options: if n.permission { Vec::new() } else { n.options },
-        permission: n.permission && !n.over,
+        permission: n.permission,
         buttons,
         level,
-    })
+        tag,
+        rev: n.rev,
+    } })
 }
 
 /// The id of the button for the answer at `index` among a notification's answers. [`notice_tap`] reads it back.

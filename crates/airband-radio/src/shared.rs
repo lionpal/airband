@@ -151,6 +151,8 @@ pub enum NoticeHow {
     Plain { why: crate::NoticeTrouble },
     /// The system's time for opening it ran out first: shown in the push service's few words.
     OutOfTime,
+    /// It took down what was shown for `message`, which was no longer news, for this reason.
+    Withdrawn { message: String, why: airband_core::radio::Withdrawn },
 }
 
 impl NoticeShown {
@@ -164,13 +166,13 @@ impl NoticeShown {
                     crate::NoticeButtonSet::PermitAfterReading => "Deny only (too long to allow unread)",
                     crate::NoticeButtonSet::Answers => "its answers",
                     crate::NoticeButtonSet::Reply => "a reply box",
-                    crate::NoticeButtonSet::Nothing => "nothing: what it asked is over",
                 };
                 format!("{when} {what} {message} shown with {with}")
             }
             NoticeHow::AnswersNotRegistered { message } => format!("{when} notification {message} shown with a reply box: its answers could not be made buttons"),
             NoticeHow::Plain { why } => format!("{when} a notification shown without its words: {why}"),
             NoticeHow::OutOfTime => format!("{when} a notification shown without its words: the phone ran out of time to open it"),
+            NoticeHow::Withdrawn { message, why } => format!("{when} notification {message} taken down: {}", withdrawn(*why)),
         }
     }
 }
@@ -180,6 +182,24 @@ impl NoticeShown {
 pub struct AnswerSets {
     pub rev: u64,
     pub sets: Vec<Vec<String>>,
+}
+
+/// Why a notification was taken down, as the connection record says it.
+fn withdrawn(why: airband_core::radio::Withdrawn) -> &'static str {
+    use airband_core::radio::{NotRead, Withdrawn};
+    match why {
+        Withdrawn::Heard => "he heard it read aloud",
+        Withdrawn::Read => "he had it on screen on another device",
+        Withdrawn::NotRead { reason } => match reason {
+            NotRead::Routine => "nothing in it needed him",
+            NotRead::Superseded => "its agent said something newer",
+            NotRead::Answered => "he answered its agent, or it went back to work",
+            NotRead::Dismissed => "he let the question go",
+            NotRead::AgentGone => "its agent stopped running",
+            NotRead::Stale => "it was old news when he turned reading aloud on",
+            NotRead::PermissionEnded => "the request was over",
+        },
+    }
 }
 
 #[cfg(test)]
@@ -260,3 +280,4 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+

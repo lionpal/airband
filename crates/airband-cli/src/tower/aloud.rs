@@ -47,6 +47,15 @@ impl Aloud {
             _ => None,
         }
     }
+    /// Leaving the queue for this state ends the line as news, and why: heard, or not to be read after all.
+    /// Nothing for a state that is still on its way to him, or was never for him.
+    pub(super) fn ends_news(&self) -> Option<airband_core::radio::Withdrawn> {
+        match self {
+            Aloud::Heard { .. } => Some(airband_core::radio::Withdrawn::Heard),
+            Aloud::Dropped { why, .. } => Some(airband_core::radio::Withdrawn::NotRead { reason: *why }),
+            Aloud::No | Aloud::Waiting | Aloud::Handed { .. } => None,
+        }
+    }
     /// For the log: the state in a word or two.
     pub(super) fn words(&self) -> String {
         match self {
@@ -73,7 +82,12 @@ impl Inner {
             return;
         }
         let line = format!("aloud: line {id} {} → {}", e.aloud.words(), to.words());
+        // it was news and is not any more: a notification it woke a phone with is taken down, whatever ended it
+        let ended = if e.aloud.unheard() { to.ends_news() } else { None };
         e.aloud = to;
+        if let Some(why) = ended {
+            self.ended.push(super::push::Ending { id: id.to_string(), why, by: None });
+        }
         self.unsaved.borrow_mut().insert(id.to_string());
         // a radio showing the chat is sent the line again, to mark it
         if e.aloud.not_read().is_some() {

@@ -1,4 +1,4 @@
-//! `airband.radio/5` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
+//! `airband.radio/6` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
 //!
 //! The radio asks; the tower answers. All under `/v1/radio/`; every route, with the types it takes and gives,
 //! is one [`wire::Endpoint`] in [`wire::at`]. Sent straight to the tower with
@@ -29,7 +29,7 @@ pub mod wire;
 pub use asks::*;
 pub use feed::*;
 
-pub const SCHEMA: &str = "airband.radio/5";
+pub const SCHEMA: &str = "airband.radio/6";
 
 /// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
 pub const PATH: &str = "/v1/radio/";

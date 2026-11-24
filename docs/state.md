@@ -57,6 +57,11 @@ simulator, through Apple's sandbox push service: a question arrived with the age
 as buttons, tapping one answered it on the tower, and a permission card was denied from its notification. Not
 seen: the production push service delivering to a phone, the move of the pairing links to the shared Keychain
 group on a phone that was already paired, a typed reply, Allow behind Face ID, and the "not sent" notification.
+A notification's life (radio/6): each line's notification goes under a keyed tag, and when the line stops being
+news (heard, read in the chat, answered, superseded, permission ended) a sealed push under the same tag takes it
+down. `e2e-push` checks this against the tower; `e2e-phone` checks it in the simulator: the extension removes
+the superseded line's notification, opening a notification catches the chat up to that line, and the text read
+aloud is the notification's. Not seen on a phone: the extension showing nothing for a push that takes one down.
 
 The folder the app and its extension share (App Group `group.dev.airband`): the team colours' one move out of
 the Keychain, and answer buttons kept newest first with a change number that tells a process to register again, are tested in the core

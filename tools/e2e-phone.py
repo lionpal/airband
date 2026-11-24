@@ -26,9 +26,12 @@ push service on this machine. What the relay hands that stand-in, headers and pa
 to the push service, is delivered to the simulator with `xcrun simctl push`, and the test opens the same payload
 with the extension's own code (the simulator runs no extension for a push it is handed). It checks what was
 shown for a report, a question, a request for leave, a request for leave too long to allow unread, and one no
-pairing on the phone can open.
+pairing on the phone can open. And a notification's life: a report pushed, then a question from the same agent
+that takes its place, which takes the report's notification down (under the same tag); opened from the
+question's notification, the app follows the chat to it and shows it in the words the notification had, and
+the reading-aloud queue reads those same words, with only who said it in front.
 """
-import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, wave
+import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, wave
 import wire
 from listening_stand_ins import Listening
 from cryptography.hazmat.primitives import serialization
@@ -115,6 +118,9 @@ shape = next((r["shape"] for r in rows if model in r["models"]), "")
 lock, radios = threading.Lock(), []
 # what the relay handed the push service, in order: its headers and payload, and what `simctl push` said
 pushes, sim, sims = [], None, None
+# the relay may send two at once (a line and the one it takes down); each is kept under its own number, and
+# handed to the simulator in the order they came
+handing = threading.Lock()
 
 
 class Apns(http.server.BaseHTTPRequestHandler):
@@ -126,18 +132,19 @@ class Apns(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("content-length", 0)))
-        path = os.path.join(work, f"push-{len(pushes)}.apns")
-        # as Apple would hand it to the phone; the app is named on the command line
-        open(path, "wb").write(body)
         push = {"to": self.path.rsplit("/", 1)[-1], "push_type": self.headers.get("apns-push-type"), "priority": self.headers.get("apns-priority"),
                 "topic": self.headers.get("apns-topic"), "collapse": self.headers.get("apns-collapse-id"), "payload": json.loads(body), "delivered": False}
-        pushes.append(push)
-        # accepted at once, as Apple does; the simulator is handed it after
-        self.send_response(200)
-        self.send_header("content-length", "0")
-        self.end_headers()
-        self.wfile.flush()
-        done = subprocess.run(["xcrun", "simctl", "push", sim, APP, path], capture_output=True, text=True, timeout=120) if sim else None
+        with handing:
+            path = os.path.join(work, f"push-{len(pushes)}.apns")
+            # as Apple would hand it to the phone; the app is named on the command line
+            open(path, "wb").write(body)
+            pushes.append(push)
+            # accepted at once, as Apple does; the simulator is handed it after
+            self.send_response(200)
+            self.send_header("content-length", "0")
+            self.end_headers()
+            self.wfile.flush()
+            done = subprocess.run(["xcrun", "simctl", "push", sim, APP, path], capture_output=True, text=True, timeout=120) if sim else None
         push["delivered"] = bool(done and done.returncode == 0)
         if done and done.returncode != 0:
             print(f"simctl push: {done.stderr.strip()}", flush=True)
@@ -152,7 +159,39 @@ LONG = "cd /tmp/shop && " + " && ".join(f"echo step {n} of the long build" for n
 # The brief one's tool stops waiting after 8 seconds, and settles it itself.
 ASKS = {"report": ("a1", ["said", "The checker passes on all twelve units."]), "question": ("a1", ["asked", "Rewrite the two easy questions, or leave them?"]),
         "permission": ("p1", ["permission", "run `npm run deploy`"]), "long-permission": ("p2", ["permission", f"run `{LONG}`"]),
-        "brief-permission": ("p3", ["--within", "8", "permission", "run `make release`"])}
+        "brief-permission": ("p3", ["--within", "8", "permission", "run `make release`"]),
+        # an agent of its own for a notification's life: a report, then a question that takes its place
+        "news-report": ("n1", ["said", "The lifecycle report is ready."]), "news-question": ("n1", ["asked", "Ship the lifecycle fix now?"])}
+
+
+def tower_call(method, path, body=None, presence=None):
+    """A radio of the computer's own (not the phone), speaking to the tower straight with its radio token."""
+    req = urllib.request.Request(f"http://127.0.0.1:{TOWER_PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"authorization": "Bearer radio", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": "car",
+                                          "x-airband-presence": json.dumps(presence or {"on_call": False, "showing_chat": False})})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        raw = r.read()
+    return json.loads(raw) if raw else None
+
+
+def aloud(line):
+    """Turn reading aloud on, on a radio of the computer's own, and take what the queue reads out, in order, until
+    this line comes: what is said before it is heard, as a car would. Then reading aloud is off again. Each
+    transmission handed, in order."""
+    on, handed = {"on_call": True, "showing_chat": False}, []
+    try:
+        for n in range(12):
+            t = tower_call("GET", "/v1/radio/next" + ("?joined=true" if n == 0 else ""), presence=on)
+            if not t:
+                continue
+            handed.append(t)
+            if t["id"] == line:
+                break
+            tower_call("POST", "/v1/radio/heard", {"id": t["id"]}, presence=on)
+            tower_call("POST", "/v1/radio/ready", {}, presence=on)
+    finally:
+        tower_call("POST", "/v1/radio/presence", {"on_call": False, "showing_chat": False})
+    return handed
 
 
 class Control(http.server.BaseHTTPRequestHandler):
@@ -175,6 +214,8 @@ class Control(http.server.BaseHTTPRequestHandler):
             return self.answer({"wakeable": "can be woken with a notification" in logged()})
         if self.path == "/heard":
             return self.answer([json.loads(l) for l in open(heard)] if os.path.exists(heard) else [])
+        if self.path.startswith("/aloud?"):
+            return self.answer(aloud(dict(urllib.parse.parse_qsl(self.path.split("?", 1)[1]))["line"]))
         if self.path == "/listening":
             with services.lock:
                 return self.answer(services.seen)

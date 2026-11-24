@@ -271,6 +271,8 @@ pub struct Keys {
     to_tower: [u8; 32],
     to_radio: [u8; 32],
     push: [u8; 32],
+    /// What a line's notification tag is made with ([`Keys::notice_tag`]).
+    tag: [u8; 32],
 }
 
 /// A new pairing secret: 32 random bytes, as hex.
@@ -291,7 +293,7 @@ impl Keys {
             hk.expand(label.as_bytes(), &mut out).expect("32 bytes is a valid length");
             out
         };
-        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), radio_token: hex(&take("radio")), to_tower: take(Direction::ToTower.label()), to_radio: take(Direction::ToRadio.label()), push: take(Direction::Push.label()) })
+        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), radio_token: hex(&take("radio")), to_tower: take(Direction::ToTower.label()), to_radio: take(Direction::ToRadio.label()), push: take(Direction::Push.label()), tag: take("notice tag") })
     }
 
     fn cipher(&self, dir: Direction) -> ChaCha20Poly1305 {
@@ -321,6 +323,16 @@ impl Keys {
         }
         let (nonce, body) = sealed.split_at(12);
         self.cipher(dir).decrypt(Nonce::from_slice(nonce), Payload { msg: body, aad: &self.bound(dir) }).map_err(|_| "not sealed with this pairing's key".to_string())
+    }
+
+    /// The tag a line's notification is kept under by the push service and the phone's system: the same for
+    /// every notification about that line, so a later one takes the place of an earlier one, and the phone can
+    /// take it down. Made with this pairing's key, so neither the relay nor the push service learns the line's
+    /// id, or that two pairings' notifications are about one line. 32 hex characters.
+    pub fn notice_tag(&self, line: &str) -> String {
+        let mut out = [0u8; 16];
+        Hkdf::<Sha256>::new(Some(&self.tag), line.as_bytes()).expand(b"notice", &mut out).expect("16 bytes is a valid length");
+        hex(&out)
     }
 
     /// This channel's address at a relay for one of its routes: the one place the relay's addresses are put
@@ -458,6 +470,19 @@ mod tests {
         let mut bent = sealed.clone();
         *bent.last_mut().unwrap() ^= 1;
         assert!(tower.open(Direction::ToTower, &bent).is_err());
+    }
+    #[test]
+    fn a_lines_notification_tag_is_the_same_at_both_ends_and_says_nothing_of_the_line() {
+        let secret = new_secret();
+        let (tower, radio) = (Keys::derive(&secret).unwrap(), Keys::derive(&secret).unwrap());
+        let tag = tower.notice_tag("0089774e1d547896");
+        assert_eq!(tag, radio.notice_tag("0089774e1d547896"), "the phone finds what the tower tagged");
+        assert_ne!(tag, tower.notice_tag("0089774e1d547897"));
+        assert_ne!(tag, Keys::derive(&new_secret()).unwrap().notice_tag("0089774e1d547896"), "another pairing's tag for the same line is its own");
+        assert!(!tag.contains("0089774e1d547896"));
+        // the shape a push service takes as a collapse id, and the relay passes on
+        assert_eq!(tag.len(), 32);
+        assert!(tag.bytes().all(|b| b.is_ascii_hexdigit()));
     }
     #[test]
     fn an_answer_through_a_relay_is_never_larger_than_the_relay_passes_and_one_too_large_says_so() {

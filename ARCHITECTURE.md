@@ -16,7 +16,7 @@ The only things read by rule are a radio's own buttons (sent as typed acts, neve
 agent, and the shape of a credential.
 
 ```
- agents ──▶ adapters ──airband.agent/1──▶ ┌────────────┐ ◀──airband.radio/4──▶ radio core ──▶ hosts ──▶ you
+ agents ──▶ adapters ──airband.agent/1──▶ ┌────────────┐ ◀──airband.radio/6──▶ radio core ──▶ hosts ──▶ you
  (any harness, any model, any job)        │ the tower  │      (sealed: straight, or        (phone, terminal,
  agents ◀── delivery kinds ◀───────────── │ dispatcher │       through the relay)           car, desktop)
                                           └────────────┘
@@ -308,8 +308,12 @@ offer. All of it is worked out in the core, so every host shows the same thing.
 ## Notifications
 
 What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a message no model read (`unjudged`), a permission card,
-when the phone is neither on a call nor showing the chat. The tower seals it and the relay hands it to the push
-service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
+when the phone is neither on a call nor showing the chat, and only while the line is news. The tower seals it and
+the relay hands it to the push service, so neither can read it. One line, one notification, in the chat's words,
+kept under the line's tag: when the line stops being news (its place in the reading queue ends for any reason, the
+one change `Inner::set_aloud`, or he has it on screen on another device) the phone is sent a sealed withdrawal
+under the same tag and the notification is removed (`push::withdraw_ended`). Opened from a notification, the app
+follows the chat to the line's change count and then shows it (`Desk::open_message`, `DeskView::opening`). On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
 radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later. The app
 and the extension share a folder (the App Group `group.dev.airband`) for what both keep that is no secret, through
 the core (`airband-radio/src/shared.rs`): each team's colour, and the sets of a question's answer buttons, newest
