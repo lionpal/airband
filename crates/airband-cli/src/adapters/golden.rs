@@ -7,7 +7,9 @@
 //! - `{"append": {"path": …, "line": …}}`: a line added to such a file;
 //! - `{"env": {…}}`: the variables the hook runs with from then on (`{}` for none).
 //!
-//! `$D` in a step is the test's own folder. Paths under it are written down as `<tmp>`.
+//! `$D` in a step is the test's own folder. Paths under it are written down as `<tmp>`, with `/` between their
+//! parts on every system. What was made is held to the golden file as JSON, never as text: how the file's lines
+//! end on a checkout is not what an adapter made.
 use airband_core::agent::AgentEvent;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -28,9 +30,29 @@ impl Scratch {
     pub(crate) fn path(&self, rel: &str) -> PathBuf {
         self.dir.join(rel)
     }
-    /// A tool's fixture steps, with `$D` made this folder.
+    /// A tool's fixture steps, with `$D` made this folder in every string: after they are read, so a folder
+    /// whose path has `\` in it is never read as JSON.
     pub(crate) fn steps(&self, text: &str) -> Vec<Value> {
-        serde_json::from_str(&text.replace("$D", &self.dir.display().to_string())).expect("the fixture steps read")
+        let mut steps: Value = serde_json::from_str(text).expect("the fixture steps read");
+        let dir = self.dir.display().to_string();
+        strings(&mut steps, &|s| s.replace("$D", &dir));
+        serde_json::from_value(steps).expect("the fixture is a list of steps")
+    }
+    /// A string as it is held to: each path under this folder written from `<tmp>`, its parts after that
+    /// joined by `/` as far as the path goes (to a space or a closing bracket, where a sentence names it).
+    fn written_down(&self, s: &str) -> String {
+        let dir = self.dir.display().to_string();
+        let (mut out, mut rest) = (String::new(), s);
+        while let Some(at) = rest.find(&dir) {
+            out.push_str(&rest[..at]);
+            out.push_str("<tmp>");
+            rest = &rest[at + dir.len()..];
+            let end = rest.find(|c: char| c.is_whitespace() || c == ')').unwrap_or(rest.len());
+            out.push_str(&rest[..end].replace(std::path::MAIN_SEPARATOR, "/"));
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
     }
     /// Run the steps that are not notifications; give back the notification of one that is.
     pub(crate) fn step<'a>(&self, step: &'a Value) -> Option<&'a Value> {
@@ -57,11 +79,21 @@ impl Scratch {
     /// Hold what was made to the golden file `golden` (its text). On a difference, what was made is written
     /// beside the system's temporary files and named, to compare.
     pub(crate) fn hold(&self, name: &str, made: &Value, golden: &str) {
-        let text = serde_json::to_string_pretty(made).unwrap().replace(&self.dir.display().to_string(), "<tmp>");
-        if text.trim() != golden.trim() {
+        let mut made = made.clone();
+        strings(&mut made, &|s| self.written_down(s));
+        let golden: Value = serde_json::from_str(golden).expect("the golden file reads");
+        if made != golden {
+            let (text, was) = (serde_json::to_string_pretty(&made).unwrap(), serde_json::to_string_pretty(&golden).unwrap());
             let out = std::env::temp_dir().join(format!("airband-golden-{name}.json"));
             std::fs::write(&out, &text).unwrap();
-            panic!("{name}: what the adapter made is not what it made before; it is in {}", out.display());
+            let first = text.lines().zip(was.lines()).position(|(a, b)| a != b).unwrap_or(text.lines().count().min(was.lines().count()));
+            panic!(
+                "{name}: what the adapter made is not what it made before; it is in {}. From line {}, made:\n{}\nbefore:\n{}",
+                out.display(),
+                first + 1,
+                text.lines().skip(first).take(6).collect::<Vec<_>>().join("\n"),
+                was.lines().skip(first).take(6).collect::<Vec<_>>().join("\n")
+            );
         }
     }
 }
@@ -70,6 +102,16 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         super::test_env::clear();
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Every string in `v`, as `change` makes it.
+fn strings(v: &mut Value, change: &impl Fn(&str) -> String) {
+    match v {
+        Value::String(s) => *s = change(s),
+        Value::Array(items) => items.iter_mut().for_each(|v| strings(v, change)),
+        Value::Object(fields) => fields.values_mut().for_each(|v| strings(v, change)),
+        _ => {}
     }
 }
 

@@ -295,6 +295,10 @@ mod breaking_off {
             let _ = s.read(&mut asked).unwrap();
             s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/pcm\r\nContent-Length: 48000\r\n\r\n").unwrap();
             s.write_all(&[0u8; 24000]).unwrap();
+            // hung up cleanly, and kept until it lets go: a socket closed with what was sent to it unread is
+            // reset, and on Windows a reset throws away what the other end had not read yet
+            s.shutdown(std::net::Shutdown::Write).unwrap();
+            let _ = s.read_to_end(&mut Vec::new());
         });
         let mut with = airband_core::providers::Use::of("local", "voice-server");
         with.set.insert(crate::models::field::URL.into(), serde_json::json!(at));

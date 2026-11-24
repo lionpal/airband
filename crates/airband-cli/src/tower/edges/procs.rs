@@ -45,9 +45,21 @@ impl Procs for SystemProcs {
         // signal 0 only asks; "not permitted" still means it exists
         unsafe { libc::kill(pid as i32, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
     }
-    #[cfg(not(unix))]
-    fn alive(&self, _pid: u32) -> bool {
-        true // not checked on this platform yet: an agent leaves when it signs off or a delivery fails
+    #[cfg(windows)]
+    fn alive(&self, pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+        // SAFETY: the handle is opened here, only asked whether it has ended (without waiting), and closed
+        unsafe {
+            let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if process.is_null() {
+                // "not permitted" still means it exists; any other refusal is no such process
+                return GetLastError() == ERROR_ACCESS_DENIED;
+            }
+            let running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+            CloseHandle(process);
+            running
+        }
     }
     #[cfg(unix)]
     fn terminate(&self, pid: u32) {

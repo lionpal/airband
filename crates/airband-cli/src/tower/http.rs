@@ -216,7 +216,9 @@ pub(super) mod tests {
     pub(in crate::tower) fn app_on(name: &str, mut settings: serde_json::Value, procs: Arc<dyn edges::procs::Procs + Send>, deliverer: Option<Arc<dyn edges::deliver::Deliverer + Send>>) -> Arc<App> {
         settings["token"] = "own".into();
         settings["radio_token"] = "radio".into();
-        let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", std::process::id()));
+        // a file of its own every time: a test that makes more than one under one name never has one take the
+        // file from under another whose saver is still writing it
+        let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", crate::config::random_hex(6)));
         let _ = std::fs::remove_file(&path);
         let store = Arc::new(Store::open(&path).unwrap());
         let cfg: Config = serde_json::from_value(settings).unwrap();

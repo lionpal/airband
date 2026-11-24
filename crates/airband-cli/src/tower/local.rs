@@ -130,7 +130,7 @@ fn end_the_last_one() {
     }
 }
 
-/// Whether nothing is listening on the server's port: what a server starting there needs.
+/// Whether nothing holds the server's port: what a server starting there needs.
 fn port_free(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
@@ -225,11 +225,25 @@ mod tests {
 
     #[test]
     fn a_port_is_free_only_when_nothing_listens_there() {
+        // Asked in a run of this test alone. On macOS a new socket is kept from programs started after it only
+        // once it is made, so a program another thread starts meanwhile can be handed it, and holds its port for
+        // as long as it runs; the other tests of this run start programs all the time.
+        const ALONE: &str = "AIRBAND_TEST_PORT_ALONE";
+        let Some(ran) = std::env::var_os(ALONE) else {
+            let ran = std::env::temp_dir().join(format!("airband-port-alone-{}", crate::config::random_hex(6)));
+            let name = format!("{}::a_port_is_free_only_when_nothing_listens_there", module_path!().split_once("::").unwrap().1);
+            let out = std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact", &name, "--test-threads=1", "--nocapture"]).env(ALONE, &ran).output().unwrap();
+            assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            // and it was run there, never filtered out
+            assert!(std::fs::remove_file(&ran).is_ok(), "the run alone did not run it");
+            return;
+        };
         let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = held.local_addr().unwrap().port();
         assert!(!port_free(port));
         drop(held);
         assert!(port_free(port));
+        std::fs::write(ran, "").unwrap();
     }
 
     #[test]

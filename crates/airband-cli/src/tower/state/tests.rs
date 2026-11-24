@@ -9,6 +9,10 @@ fn agent(id: &str, cwd: &str, title: Option<&str>) -> Agent {
 fn joins(inner: &mut Inner, agent: &Agent) -> Callsign {
     inner.check_in(agent).expect("taken in")
 }
+/// A folder as this computer reads its path: a folder's team is known by that (`/x/shop` is `\x\shop` on Windows).
+fn real(folder: &str) -> String {
+    edges::folders::Folders::real(&edges::folders::Disk, folder)
+}
 fn says(inner: &mut Inner, agent_id: &str, kind: Kind, text: &str) -> String {
     let s = inner.find(agent_id).unwrap().clone();
     let id = format!("m{}", inner.seq + 1);
@@ -70,7 +74,7 @@ fn a_team_is_a_folder_and_two_folders_that_read_alike_are_two_teams_called_apart
     let named = |inner: &Inner, folder: &str| inner.team_name(&inner.team_at(folder).unwrap()).unwrap().to_string();
     assert_eq!(named(&inner, "/b/work/shop"), "work shop");
     let d = inner.folder_team("/d/shop").unwrap();
-    assert_eq!((d.as_str(), inner.team_name(&d).unwrap()), ("/d/shop", "d shop"));
+    assert_eq!((d.as_str(), inner.team_name(&d).unwrap()), (real("/d/shop").as_str(), "d shop"));
 }
 
 #[test]
@@ -590,7 +594,7 @@ fn a_kept_agent_whose_team_is_gone_goes_to_its_folders_team_or_is_let_go() {
     inner.settle_teams();
     // no team is made from a name nothing has, and nobody is left in no team
     assert_eq!(inner.teams.values().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["shop"]);
-    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_str())).collect::<Vec<_>>(), [("a", "/x/shop")]);
+    assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_str())).collect::<Vec<_>>(), [("a", real("/x/shop").as_str())]);
 }
 
 #[test]
@@ -645,10 +649,10 @@ fn a_start_keeps_the_name_he_gave_a_configured_team_and_makes_no_ghost() {
     let mut inner = Inner::default();
     inner.new_folder_team("/x/shop", TeamName::new("garden").unwrap(), true);
     let mut kept = kept_session("a", Some("/x/shop"), "garden");
-    kept.team = TeamId::new("/x/shop");
+    kept.team = TeamId::new(real("/x/shop"));
     inner.sessions.push(kept);
     inner.teams_at_start(&listed);
-    assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [("/x/shop", "garden", true)]);
+    assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [(real("/x/shop").as_str(), "garden", true)]);
     assert_eq!(inner.sessions[0].callsign.text(), "garden one");
 }
 
@@ -658,11 +662,11 @@ fn a_start_keeps_the_name_the_tower_gave_a_configured_team_to_stay_distinct() {
     let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
     inner.configure_teams(&listed);
     assert!(inner.taken_elsewhere(&[Callsign { project: "shop".into(), number: "one".into(), named: false }]));
-    assert_eq!(inner.team_name(&TeamId::new("/x/shop")), Some("laptop shop"));
+    assert_eq!(inner.team_name(&TeamId::new(real("/x/shop"))), Some("laptop shop"));
     // the next start knows nothing of the other computer yet: the name it was given stays
     let mut next = Inner { here: "Laptop".into(), teams: inner.teams.clone(), ..Inner::default() };
     next.configure_teams(&listed);
-    assert_eq!(next.team_name(&TeamId::new("/x/shop")), Some("laptop shop"));
+    assert_eq!(next.team_name(&TeamId::new(real("/x/shop"))), Some("laptop shop"));
 }
 
 #[test]
