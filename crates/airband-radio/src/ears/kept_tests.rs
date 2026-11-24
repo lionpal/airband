@@ -58,10 +58,12 @@ struct Mic {
     /// What the host's model engine gives back (nothing: it could not), and how many times it was asked.
     model: Mutex<Option<Vec<u8>>>,
     asked: Mutex<usize>,
+    /// What was shown of his words as he spoke.
+    shown: Mutex<Vec<String>>,
 }
 impl Mic {
     fn of(sound: &[u8], pause: Duration) -> Mic {
-        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false), told: Mutex::new(0), model: Mutex::new(None), asked: Mutex::new(0) }
+        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false), told: Mutex::new(0), model: Mutex::new(None), asked: Mutex::new(0), shown: Mutex::new(Vec::new()) }
     }
 }
 impl RadioHost for Mic {
@@ -91,7 +93,9 @@ impl RadioHost for Mic {
         *self.asked.lock().unwrap() += 1;
         self.model.lock().unwrap().clone()
     }
-    fn hearing(&self, _: String) {}
+    fn hearing(&self, text: String) {
+        self.shown.lock().unwrap().push(text);
+    }
 }
 
 /// A listening model the host runs, whose row says the phone gets it ready before first use.
@@ -296,4 +300,17 @@ fn a_model_that_gives_back_nothing_leaves_what_he_said_unheard_and_says_so() {
     assert!(matches!(&why, Unheard::Model { why } if why.starts_with("Tiny did not run on this phone")), "{why:?}");
     assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why }), Some(sound.len())));
     assert_eq!(*mic.told.lock().unwrap(), 1);
+}
+
+#[test]
+fn a_model_on_the_phone_shows_his_words_as_he_speaks() {
+    let dir = Folder::new();
+    let ears = ears_in(&dir);
+    let held = host_model();
+    held.set_ready(true);
+    let mic = Mic::of(&speech(3), Duration::from_millis(100));
+    *mic.model.lock().unwrap() = Some(b"ship it".to_vec());
+    let Listened::Said { text, .. } = ears.hear_by(&mic, super::Mic::Model(held), false, Aim::default()) else { panic!("not heard") };
+    assert_eq!(text, "ship it");
+    assert!(!mic.shown.lock().unwrap().is_empty(), "nothing shown as he spoke");
 }

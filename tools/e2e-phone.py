@@ -44,6 +44,9 @@ COMPUTER = "Sim Desk"
 # the simulator this run makes for itself, of this kind (any iPhone the newest iOS runtime here supports)
 SIM_TYPE = os.environ.get("AIRBAND_E2E_SIMULATOR", "com.apple.CoreSimulator.SimDeviceType.iPhone-17")
 DERIVED = os.environ.get("AIRBAND_E2E_DERIVED", os.path.join(TARGET, "phone-e2e-derived"))
+# What the simulator keeps (gigabytes) lives in a disk image next to the build, not on the Mac's own disk. An APFS
+# image, so it works on any drive: Core ML will not load a model from exFAT.
+SIMS_IMAGE = os.environ.get("AIRBAND_E2E_SIMS", os.path.join(TARGET, "phone-e2e-sims.sparsebundle"))
 
 work = tempfile.mkdtemp(prefix="airband-phone-e2e-")
 home, data, project, heard = (os.path.join(work, d) for d in ("tower", "relay", "shop", "heard.jsonl"))
@@ -111,7 +114,7 @@ rows = [json.load(open(os.path.join(ROOT, "catalog", "machines", f))) for f in s
 shape = next((r["shape"] for r in rows if model in r["models"]), "")
 lock, radios = threading.Lock(), []
 # what the relay handed the push service, in order: its headers and payload, and what `simctl push` said
-pushes, sim = [], None
+pushes, sim, sims = [], None, None
 
 
 class Apns(http.server.BaseHTTPRequestHandler):
@@ -230,7 +233,24 @@ try:
     runtime = max(runtimes, key=lambda r: tuple(int(p) for p in r["version"].split(".")))
     if not any(t["identifier"] == SIM_TYPE for t in runtime["supportedDeviceTypes"]):
         raise SystemExit(f"iOS {runtime['version']} has no {SIM_TYPE}: set AIRBAND_E2E_SIMULATOR to one it has")
+    if not os.path.isdir(SIMS_IMAGE):
+        subprocess.run(["hdiutil", "create", "-size", "60g", "-type", "SPARSEBUNDLE", "-fs", "APFS", "-volname", "airband-e2e-sims", SIMS_IMAGE], check=True, capture_output=True)
+    sims = os.path.join(work, "sims")
+    os.makedirs(sims)
+    subprocess.run(["hdiutil", "attach", "-nobrowse", "-mountpoint", sims, SIMS_IMAGE], check=True, capture_output=True)
     sim = subprocess.run(["xcrun", "simctl", "create", "airband-e2e-" + os.urandom(4).hex(), SIM_TYPE, runtime["identifier"]], capture_output=True, text=True, check=True).stdout.strip()
+    # its data (what fills up) in the image; xcodebuild reaches only simulators in the usual set, so the device
+    # stays listed there, and its data folder points into the image
+    data = os.path.expanduser(f"~/Library/Developer/CoreSimulator/Devices/{sim}/data")
+    kept = os.path.join(sims, sim)
+    shutil.move(data, kept)
+    os.symlink(kept, data)
+    # no Siri and no dictation: nothing here uses Apple's speech recognition, and left on, a new simulator
+    # fetches gigabytes of its assets
+    subprocess.run(["xcrun", "simctl", "boot", sim], check=True, capture_output=True)
+    for key in ("Assistant Enabled", "Dictation Enabled"):
+        subprocess.run(["xcrun", "simctl", "spawn", sim, "defaults", "write", "com.apple.assistant.support", key, "-bool", "false"], capture_output=True)
+    subprocess.run(["xcrun", "simctl", "spawn", sim, "defaults", "write", "com.apple.keyboard.preferences", "KeyboardDictationEnabled", "-bool", "false"], capture_output=True)
     # the Rust core for the simulator, the Swift it is reached by, and the Xcode project
     subprocess.run([os.path.join(ROOT, "scripts", "build-apple.sh")], env=dict(os.environ, CARGO_TARGET_DIR=TARGET, AIRBAND_STAND_INS="1"), check=True, stdout=open(os.path.join(work, "build.log"), "w"), stderr=subprocess.STDOUT)
     # what he says to the listening checks (ListeningEndToEndTests): this Mac's own voice saying it, as the
@@ -265,8 +285,15 @@ finally:
         except subprocess.TimeoutExpired:
             p.kill()
     if sim:
+        # what the app logged of its own (codes and ids only), for a failure
+        shown = subprocess.run(["xcrun", "simctl", "spawn", sim, "log", "show", "--last", "1h", "--style", "compact", "--predicate", 'eventMessage CONTAINS "airband:"'], capture_output=True, text=True)
+        open(os.path.join(work, "app.log"), "w").write(shown.stdout + shown.stderr)
         subprocess.run(["xcrun", "simctl", "shutdown", sim], capture_output=True)
         subprocess.run(["xcrun", "simctl", "delete", sim], capture_output=True)
+    if sims:
+        if sim:
+            shutil.rmtree(os.path.join(sims, sim), ignore_errors=True)
+        subprocess.run(["hdiutil", "detach", sims], capture_output=True)
 print("\nThe phone's checks passed." if code == 0 else f"\nThe phone's checks failed. Logs: {work}")
 if code == 0:
     shutil.rmtree(work, ignore_errors=True)

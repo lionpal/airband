@@ -47,7 +47,7 @@ final class ListeningEndToEndTests: XCTestCase {
         // his words showed while he was still talking
         // his words were shown before he was given what it heard: read again as he talks, here on the simulator's
         // CPU, which takes longer than the short recording does, so they may come just after he stops
-        XCTAssertFalse(host.shownAtAll().isEmpty, "nothing was shown as he spoke")
+        XCTAssertFalse(host.shownAtAll().isEmpty, "nothing was shown as he spoke; the model's runs: \(host.ranModel())")
         XCTAssertTrue(host.told().isEmpty, "he was told something went wrong: \(host.told())")
     }
 
@@ -189,8 +189,14 @@ final class Speaking: DeskHost, @unchecked Sendable {
         if !text.isEmpty { shownEver.append(text) }
     }
     func runModel(engine: String, folder: String, job: ChoiceJob, input: Data) -> Data? {
-        engine == NeuralEngineListening.name && job == .ears ? listening.hear(folder: folder, pcm: input) : nil
+        let began = Date()
+        let out = engine == NeuralEngineListening.name && job == .ears ? listening.hear(folder: folder, pcm: input) : nil
+        lock.lock(); runs.append("\(input.count / 32000)s of sound: \(out.map { "\($0.count) bytes" } ?? "nothing") in \(Int(Date().timeIntervalSince(began) * 1000)) ms"); lock.unlock()
+        return out
     }
+    /// Each run of the model: how much sound, what came back (its size only), how long it took.
+    private var runs: [String] = []
+    func ranModel() -> [String] { lock.lock(); defer { lock.unlock() }; return runs }
     func device() -> HostDevice {
         HostDevice(engines: [NeuralEngineListening.name], os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), osBuild: NeuralEngineListening.systemBuild, teamColours: UInt8(TeamColours.rgb.count))
     }
