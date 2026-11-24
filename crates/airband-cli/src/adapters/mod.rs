@@ -55,10 +55,11 @@ pub(crate) trait Harness: Sync {
     fn permission(&self, _notification: &Value) -> Option<PermissionAsk> {
         None
     }
-    /// For a harness that also shows its prompt itself while the hook waits: whether that prompt is still
-    /// waiting, asked every few seconds, from what the tool itself writes down. Nothing where the tool says
-    /// nothing of it; then the request stands until he answers or the time runs out.
-    fn still_asking(&self, _notification: &Value) -> Option<Box<dyn Fn() -> bool>> {
+    /// For a harness that also shows its prompt itself while the hook waits, and writes down how each call came
+    /// out (`PermissionAsk::settled_in`): a watch on that record, asked every few seconds by the tower, which
+    /// says once the prompt has been settled at the tool, and how. Nothing where the tool writes nothing of it;
+    /// then the request stands until he answers or the time runs out.
+    fn settled(&self, _record: &airband_core::agent::CallRecord) -> Option<Watch> {
         None
     }
     /// For a tool held through the Agent Client Protocol whose requests for leave say what will be done in a
@@ -259,6 +260,23 @@ pub(crate) fn called(tool: &str) -> (String, String) {
     airband_core::catalog::current().tools.iter().find(|t| t.id == tool).map(|t| (t.name.clone(), t.maker.clone())).unwrap_or_default()
 }
 
+
+/// How a request for leave was settled at the tool itself, as its record of the call says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Settled {
+    /// At its keyboard, by him: allowed or refused there.
+    There,
+    /// By the tool itself, by its own rules, with nobody's answer: refused.
+    RefusedByTool,
+}
+
+/// A watch on the record of one call: nothing while its prompt still waits, how it was settled once it is.
+pub(crate) type Watch = Box<dyn FnMut() -> Option<Settled> + Send>;
+
+/// The watch on where this call's outcome is written down, by the harness the request came from.
+pub(crate) fn settled(harness_name: &str, record: &airband_core::agent::CallRecord) -> Option<Watch> {
+    harness(harness_name)?.settled(record)
+}
 
 fn harness(name: &str) -> Option<&'static dyn Harness> {
     HARNESSES.iter().copied().find(|h| h.name() == name)
@@ -483,8 +501,8 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
     if let Some(mut request) = adapter.permission(&notification) {
         as_held(&mut request.agent);
-        let still = adapter.still_asking(&notification);
-        if let Answer::Said(allow, reason) = ask_him_while(&request, still.as_deref()) {
+        // a prompt settled at the tool meanwhile is seen by the tower, which takes the question back
+        if let Some((allow, reason)) = ask_him(&request) {
             println!("{}", adapter.permission_answer(&request, allow, &reason));
         }
         // no answer in time, or nobody there: print nothing, and the harness asks in its own way

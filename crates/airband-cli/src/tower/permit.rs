@@ -67,7 +67,15 @@ impl NotAsked {
 
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
 pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
-    match put(app, &ask) {
+    // A tool that settles its own prompt meanwhile writes down how: watched here, not by the hook, which the tool
+    // can end with no word. Its first look is now, as the request comes: the call it is for is the one open now,
+    // or the next one written.
+    let watch = ask.settled_in.as_ref().and_then(|record| crate::adapters::settled(&ask.agent.harness, record)).map(|mut watch| {
+        // a first look finds the call; nothing is settled before the call it is for is known
+        let _first: Option<crate::adapters::Settled> = watch();
+        watch
+    });
+    match put(app, &ask, watch) {
         Ok(state) => state,
         Err(why) => {
             log(format!("{}: asks permission; not put to him, so it is asked at the keyboard: {}", short_id(&ask.agent.id), why.said()));
@@ -76,7 +84,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     }
 }
 
-fn put(app: &Arc<App>, ask: &PermissionAsk) -> Result<PermissionState, NotAsked> {
+fn put(app: &Arc<App>, ask: &PermissionAsk, watch: Option<crate::adapters::Watch>) -> Result<PermissionState, NotAsked> {
     if ask.schema != agent::SCHEMA {
         return Err(NotAsked::OtherSchema);
     }
@@ -143,7 +151,54 @@ fn put(app: &Arc<App>, ask: &PermissionAsk) -> Result<PermissionState, NotAsked>
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
     inner.tell();
+    if let Some(watch) = watch {
+        watch_settled(app.clone(), id.clone(), entry_id.clone(), watch);
+    }
     Ok(PermissionState { id, state: agent::Leave::Pending, message: String::new(), wait_seconds: wait_for(app.cfg().permission_wait, ask.until) })
+}
+
+/// How often a tool's record of a call is looked at while its request is open.
+const RECORD_LOOKED_AT: Duration = Duration::from_secs(1);
+
+/// Watch the tool's record of the call request `id` (its line `entry`) is for, until the request is over. Settled
+/// at the tool while it is on his phone, it is taken back saying how; settled after it moved to the keyboard
+/// (his time to answer from the phone ran out first), its line says how it ended there. Answered from the phone,
+/// or replaced, or closed any other way, there is nothing more to watch.
+fn watch_settled(app: Arc<App>, id: String, entry: String, mut watch: crate::adapters::Watch) {
+    use crate::adapters::Settled;
+    let (request, line) = (id.clone(), entry.clone());
+    let open = move |app: &App| {
+        let inner = app.read();
+        let on_phone = inner.permits.get(&request).is_some_and(|p| p.decided.is_none());
+        let at_keyboard = || inner.log.iter().any(|e| e.id == line && e.leave.as_ref().is_some_and(|r| r.ended == Some(RequestEnded::AtKeyboard)));
+        (on_phone, on_phone || at_keyboard())
+    };
+    std::thread::spawn(move || {
+        loop {
+            if !open(&app).1 {
+                return;
+            }
+            let Some(how) = watch() else {
+                std::thread::sleep(RECORD_LOOKED_AT);
+                continue;
+            };
+            let (why, ended) = match how {
+                Settled::There => (airband_core::radio::wire::Withdrawn::SettledThere, RequestEnded::SettledThere),
+                Settled::RefusedByTool => (airband_core::radio::wire::Withdrawn::RefusedByTool, RequestEnded::RefusedByTool),
+            };
+            match open(&app) {
+                (true, _) => withdraw(&app, &id, why),
+                (false, true) => {
+                    let mut inner = app.change();
+                    log(format!("{}: settled at its tool after it moved to the keyboard: {}", short_id(&id), if how == Settled::RefusedByTool { "its tool refused it" } else { "at the keyboard" }));
+                    inner.close_line(&entry, ended);
+                    inner.tell();
+                }
+                (false, false) => {}
+            }
+            return;
+        }
+    });
 }
 
 /// How long the harness is to wait on him now: his setting, and never past the tool's own time for it.
@@ -191,12 +246,14 @@ pub(super) fn withdraw(app: &App, id: &str, why: airband_core::radio::wire::With
             Withdrawn::Unanswered => "no answer from the phone in time; it asks at the keyboard",
             Withdrawn::SettledThere => "it was settled at the keyboard",
             Withdrawn::RanOut => "the time its tool gave it ran out",
+            Withdrawn::RefusedByTool => "its tool refused it itself",
         }));
     }
     inner.close_permit(id, match why {
         Withdrawn::Unanswered => Ended::AtKeyboard,
         Withdrawn::SettledThere => Ended::SettledThere,
         Withdrawn::RanOut => Ended::RanOut,
+        Withdrawn::RefusedByTool => Ended::RefusedByTool,
     });
     inner.tell();
 }
@@ -211,6 +268,8 @@ pub(super) enum Ended {
     SettledThere,
     /// The time the tool gave it ran out: the tool settled it itself.
     RanOut,
+    /// The tool refused it itself, by its own rules, with nobody's answer.
+    RefusedByTool,
     /// The same agent asked something newer.
     Replaced,
     /// Nobody asks after it any more: it was answered at the keyboard, or the agent has gone.
@@ -224,6 +283,7 @@ const ASKS: &str = " Allow?";
 const MOVED: &str = " It's asking at the keyboard now.";
 const SETTLED: &str = " Settled at the keyboard.";
 const RAN_OUT: &str = " Its time ran out.";
+const TOOL_REFUSED: &str = " Its tool refused it.";
 
 /// A line that is, or was, a request for leave: what it asked to do, and how it ended once it is over. The
 /// line's words are made from this, so its ending is never read back out of its text.
@@ -246,6 +306,8 @@ pub(super) enum RequestEnded {
     SettledThere,
     /// The time the tool gave it ran out, and the tool settled it itself.
     RanOut,
+    /// The tool refused it itself, by its own rules, with nobody's answer.
+    RefusedByTool,
     /// He allowed it, from a radio.
     Allowed,
     /// He refused it, from a radio.
@@ -264,6 +326,7 @@ impl Request {
             Some(RequestEnded::AtKeyboard) => MOVED,
             Some(RequestEnded::SettledThere) => SETTLED,
             Some(RequestEnded::RanOut) => RAN_OUT,
+            Some(RequestEnded::RefusedByTool) => TOOL_REFUSED,
             Some(RequestEnded::Allowed) => " Allowed.",
             Some(RequestEnded::Refused) => " Refused.",
         };
@@ -359,6 +422,7 @@ impl Inner {
             }),
             permit::Ended::SettledThere => self.close_line(&entry, permit::RequestEnded::SettledThere),
             permit::Ended::RanOut => self.close_line(&entry, permit::RequestEnded::RanOut),
+            permit::Ended::RefusedByTool => self.close_line(&entry, permit::RequestEnded::RefusedByTool),
             _ => self.close_line(&entry, permit::RequestEnded::AtKeyboard),
         }
         // a phone woken for it still shows it with its buttons: it is told the request is over, all but the
@@ -416,7 +480,7 @@ mod tests {
         let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
         let channel = push::channel_of(&phone).unwrap();
         let app = super::super::http::tests::app_with("permit-wake", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
-        let ask = || PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `ls`".into(), detail: String::new(), question: None, until: None };
+        let ask = || PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `ls`".into(), detail: String::new(), question: None, until: None, settled_in: None };
         super::super::logged::take();
         assert_eq!(super::ask(&app, ask()).state, agent::Leave::Nobody, "nobody there and nothing to wake");
         // and the log says so, by the agent and why: the keyboard asks, and it is never silent
@@ -465,7 +529,7 @@ mod tests {
         let app = super::super::http::tests::app_with("permit-until", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
         push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
         let now = airband_core::clock::now_secs();
-        let ask = |until: Option<u64>| PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `make release`".into(), detail: String::new(), question: None, until };
+        let ask = |until: Option<u64>| PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `make release`".into(), detail: String::new(), question: None, until, settled_in: None };
         assert_eq!(super::ask(&app, ask(None)).wait_seconds, 30, "a tool that gives no time: his setting");
         let asked = super::ask(&app, ask(Some(now + 10)));
         assert!((9..=10).contains(&asked.wait_seconds), "{}", asked.wait_seconds);
@@ -490,6 +554,70 @@ mod tests {
         assert_eq!(app.read().log.iter().find(|e| e.id == card).and_then(|e| e.short.clone()).as_deref(), Some("Wants to run `make release`. Its time ran out."));
     }
 
+    /// A request its tool refused itself, by its own rules (Claude Code blocking it once its countdown is up), is
+    /// over as that: the card says its tool refused it, a phone woken for it is told, and an answer from the
+    /// phone afterwards does nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_its_tool_refused_itself_is_over_as_that() {
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = push::channel_of(&phone).unwrap();
+        let app = super::super::http::tests::app_with("permit-stopped", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 180 }));
+        push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
+        let asked = super::ask(&app, PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `rm -rf build`".into(), detail: String::new(), question: None, until: None, settled_in: None });
+        let card = app.read().log.iter().find(|e| e.permit.as_deref() == Some(asked.id.as_str())).map(|e| e.id.clone()).unwrap();
+        super::super::logged::take();
+        super::withdraw(&app, &asked.id, airband_core::radio::wire::Withdrawn::RefusedByTool);
+        let line = app.read().log.iter().find(|e| e.id == card).cloned().unwrap();
+        assert_eq!((line.short.as_deref(), line.options.is_empty()), (Some("Wants to run `rm -rf build`. Its tool refused it."), true));
+        assert_eq!(line.leave.as_ref().and_then(|r| r.ended), Some(RequestEnded::RefusedByTool));
+        assert!(app.read().ended.iter().any(|(id, by)| id == &card && by.is_none()), "the phones woken for it are told it is over");
+        assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: its request for leave is taken back: its tool refused it itself")));
+        assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
+        assert_eq!(super::state(&app, &asked.id, 0).await.state, agent::Leave::Gone, "and the harness, asking after it, is told it is gone");
+    }
+
+    /// The tower watches the tool's own record of the call, so a request settled at the tool is closed on the
+    /// phone however the hook that asked ended (Claude Code ends it with no word when it blocks the request): at
+    /// once while it is on his phone, and on the card still after it moved to the keyboard.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_settled_at_its_tool_is_seen_there_whatever_became_of_the_hook() {
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = push::channel_of(&phone).unwrap();
+        let app = super::super::http::tests::app_with("permit-record", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 180 }));
+        push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
+        let dir = std::env::temp_dir().join(format!("airband-record-{}", config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = serde_json::json!({ "command": "rm -rf build" });
+        let used = |id: &str| serde_json::json!({ "message": { "content": [{ "type": "tool_use", "id": id, "name": "Bash", "input": input }] } }).to_string() + "\n";
+        let blocked = |id: &str| serde_json::json!({ "message": { "content": [{ "type": "tool_result", "tool_use_id": id, "is_error": true }] }, "permissionDecision": { "decision": "reject", "source": "config" } }).to_string() + "\n";
+        let asking = |record: &std::path::Path| {
+            let agent = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "claude-code") };
+            let settled_in = Some(airband_core::agent::CallRecord { record: record.display().to_string(), tool: "Bash".into(), input: input.clone() });
+            super::ask(&app, PermissionAsk { schema: agent::SCHEMA.into(), agent, what: "run `rm -rf build`".into(), detail: String::new(), question: None, until: None, settled_in })
+        };
+        let line_of = |id: &str| app.read().log.iter().find(|e| e.permit.as_deref() == Some(id)).map(|e| e.id.clone()).unwrap();
+        let short = |line: &str| app.read().log.iter().find(|e| e.id == line).and_then(|e| e.short.clone()).unwrap_or_default();
+        let becomes = |line: &str, want: &str| (0..50).any(|_| short(line) == want || { std::thread::sleep(Duration::from_millis(100)); false });
+        // refused by the tool while on his phone, the hook that asked long gone
+        let first = dir.join("first.jsonl");
+        std::fs::write(&first, used("t1")).unwrap();
+        let asked = asking(&first);
+        let line = line_of(&asked.id);
+        std::fs::write(&first, used("t1") + &blocked("t1")).unwrap();
+        assert!(becomes(&line, "Wants to run `rm -rf build`. Its tool refused it."), "{}", short(&line));
+        assert!(matches!(super::asked_leave(&app, Some(&line)), Leave::Over));
+        // his time to answer from the phone ran out first: the card says it is at the keyboard, then how it ended
+        let second = dir.join("second.jsonl");
+        std::fs::write(&second, used("t2")).unwrap();
+        let asked = asking(&second);
+        let line = line_of(&asked.id);
+        super::withdraw(&app, &asked.id, airband_core::radio::wire::Withdrawn::Unanswered);
+        assert_eq!(short(&line), "Wants to run `rm -rf build`. It's asking at the keyboard now.");
+        std::fs::write(&second, used("t2") + &blocked("t2")).unwrap();
+        assert!(becomes(&line, "Wants to run `rm -rf build`. Its tool refused it."), "{}", short(&line));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     /// The tool's nudge and its request come by two hooks in no set order: either way he gets one card. A
     /// question of the agent's waiting does not hide a nudge about something else.
     #[tokio::test(flavor = "multi_thread")]
@@ -499,7 +627,7 @@ mod tests {
         let app = super::super::http::tests::app_with("permit-nudge", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
         push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
         let agent = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") };
-        let ask = |question: Option<airband_core::agent::Asked>| PermissionAsk { schema: agent::SCHEMA.into(), agent: agent.clone(), what: "run `ls`".into(), detail: String::new(), question, until: None };
+        let ask = |question: Option<airband_core::agent::Asked>| PermissionAsk { schema: agent::SCHEMA.into(), agent: agent.clone(), what: "run `ls`".into(), detail: String::new(), question, until: None, settled_in: None };
         let nudge = || -> airband_core::agent::AgentEvent {
             serde_json::from_value(serde_json::json!({ "schema": agent::SCHEMA, "agent": agent, "event": { "type": "notice", "text": "Claude needs your permission", "leave": true } })).unwrap()
         };

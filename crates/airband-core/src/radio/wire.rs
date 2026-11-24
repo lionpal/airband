@@ -216,6 +216,9 @@ pub enum Withdrawn {
     /// The time the tool gave the request ran out (its [`crate::agent::PermissionAsk::until`]): the tool
     /// settles it itself.
     RanOut,
+    /// The tool settled it itself, by its own rules, with nobody's answer: refused it (Claude Code blocking a
+    /// request at the end of its countdown, rather than hold up a session it takes for unattended).
+    RefusedByTool,
 }
 
 /// `GET permission/{id}`: how many seconds to wait for his answer.

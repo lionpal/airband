@@ -87,7 +87,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             return Err("say what it wants to do: permission \"run the production migration\"".into());
         }
         let until = within.map(|s| airband_core::clock::now_secs() + s);
-        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new(), question: None, until };
+        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new(), question: None, until, settled_in: None };
         match super::ask_him(&ask) {
             Some((true, _)) => return Ok(()),
             Some((false, reason)) => {

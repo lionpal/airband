@@ -6,6 +6,7 @@ pub(crate) const HARNESS: &str = "claude-code";
 use crate::adapters::env;
 use crate::adapters::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
+use serde::Deserialize;
 use serde_json::Value;
 
 pub(crate) mod accounts;
@@ -72,21 +73,15 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     })
     .filter(|q| !q.text.is_empty());
     // one too long to put in front of him whole is not asked on the phone: Claude Code asks at its keyboard
-    crate::adapters::hooks::leave(agent_of(hook)?, tool, what, input, crate::adapters::hooks::AT_KEYBOARD, question)
+    let ask = crate::adapters::hooks::leave(agent_of(hook)?, tool, what, input, crate::adapters::hooks::AT_KEYBOARD, question)?;
+    // where the prompt is seen settled at the keyboard, or by Claude Code itself
+    Some(PermissionAsk { settled_in: call_record(hook), ..ask })
 }
 
-/// Is the prompt this PermissionRequest hook is for still waiting? Claude Code shows its own prompt while the
-/// hook waits, and it does not stop the hook when the prompt is settled there (answered at its keyboard, or
-/// refused by Claude Code itself). What it does is write the call's result into the transcript of the agent
-/// that made the call: the main one, or a subagent's of its own. Once a result for the call is written, the
-/// prompt is over. Nothing when there is no transcript.
-///
-/// The hook is not told which call it is for (its input has no call id), only the tool and its input. At the
-/// first look it is the one call with this tool and input that has no result yet; when there is none, it is the
-/// next such call written (the call is written about when the hook starts, sometimes just after). When two are
-/// open with the same tool and input, which one is asked about cannot be known: then nothing is watched, and
-/// the request stands until he answers or its time runs out.
-fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
+/// Where Claude Code writes down how the call a PermissionRequest hook is for comes out: the transcript of the
+/// agent that made the call, the main one or a subagent's of its own. Nothing when there is no transcript, or a
+/// subagent's id that is no file's name.
+fn call_record(hook: &Value) -> Option<airband_core::agent::CallRecord> {
     let (tool, input) = crate::adapters::hooks::permission_hook(hook)?;
     let main = std::path::PathBuf::from(text(hook, "transcript_path")?);
     let path = match text(hook, "agent_id") {
@@ -94,19 +89,65 @@ fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
         Some(_) => return None,
         None => main,
     };
-    let (tool, input) = (tool.to_string(), input.clone());
-    let seen = std::sync::Mutex::new(Calls::default());
-    Some(Box::new(move || {
-        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    Some(airband_core::agent::CallRecord { record: path.display().to_string(), tool: tool.to_string(), input: input.clone() })
+}
+
+/// Who decided a call Claude Code asked leave for, as the transcript line with its result says
+/// (`permissionDecision`).
+#[derive(serde::Deserialize)]
+struct Decided {
+    decision: Option<Verdict>,
+    source: Option<DecidedBy>,
+}
+#[derive(serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Verdict {
+    Reject,
+    #[serde(other)]
+    Other,
+}
+#[derive(serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DecidedBy {
+    /// By its own rules, nobody's answer: what it writes when it blocks a request at the end of its countdown.
+    Config,
+    #[serde(other)]
+    Other,
+}
+
+/// How the call was settled, from the transcript line that holds its result.
+fn settled_how(line: &Value) -> crate::adapters::Settled {
+    match Decided::deserialize(&line["permissionDecision"]) {
+        Ok(Decided { decision: Some(Verdict::Reject), source: Some(DecidedBy::Config) }) => crate::adapters::Settled::RefusedByTool,
+        _ => crate::adapters::Settled::There,
+    }
+}
+
+/// Is the prompt a request is for still waiting? Claude Code shows its own prompt while the hook waits, and
+/// settles it there: answered at its keyboard, or refused by Claude Code itself (it blocks a request once its
+/// countdown is up, and ends the hook that was asking with no word). Either way it writes the call's result into
+/// the transcript of the agent that made the call, saying who decided it. Once a result for the call is written,
+/// the prompt is over. Watched by the tower, so how the hook ended does not matter.
+///
+/// The record does not say which call it is (the hook's input has no call id), only the tool and its input. At
+/// the first look it is the one call with this tool and input that has no result yet; when there is none, it is
+/// the next such call written (the call is written about when the hook starts, sometimes just after). When two
+/// are open with the same tool and input, which one is asked about cannot be known: then nothing is watched,
+/// and the request stands until he answers or its time runs out.
+fn settled(record: &airband_core::agent::CallRecord) -> crate::adapters::Watch {
+    let path = std::path::PathBuf::from(&record.record);
+    let (tool, input) = (record.tool.clone(), record.input.clone());
+    let mut seen = Calls::default();
+    Box::new(move || {
         if seen.unknowable {
-            return true;
+            return None;
         }
         // the first look reads only the end: a call that is waiting on him now was made last
         let from = if seen.looked { seen.read } else { airband_io::files::metadata(&path).map_or(0, |m| m.len().saturating_sub(FIRST_LOOK)) };
         let (lines, end) = transcript_from(&path, from, !seen.looked && from > 0);
         if !seen.looked && from > 0 && end == from {
             // not one whole line in the end of it yet: looked at again from its end next time
-            return true;
+            return None;
         }
         for line in &lines {
             for c in line["message"]["content"].as_array().into_iter().flatten() {
@@ -120,7 +161,7 @@ fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
                     }
                     Some("tool_result") => {
                         if seen.call.as_deref().is_some_and(|call| c["tool_use_id"] == call) {
-                            return false;
+                            return Some(settled_how(line));
                         }
                         seen.open.retain(|open| c["tool_use_id"] != open.as_str());
                     }
@@ -135,13 +176,13 @@ fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
                 [one] => seen.call = Some(one.clone()),
                 _ => {
                     seen.unknowable = true;
-                    return true;
+                    return None;
                 }
             }
         }
         seen.read = end;
-        true
-    }))
+        None
+    })
 }
 
 /// How much of the end of a transcript the first look reads.
@@ -317,8 +358,8 @@ impl crate::adapters::Harness for ClaudeCode {
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
     }
-    fn still_asking(&self, hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
-        still_asking(hook)
+    fn settled(&self, record: &airband_core::agent::CallRecord) -> Option<crate::adapters::Watch> {
+        Some(settled(record))
     }
     fn accounts(&self) -> Option<&'static crate::adapters::AccountBook> {
         Some(&ACCOUNTS)
@@ -513,6 +554,39 @@ mod tests {
         let quoted = json!({ "type": "user", "message": { "content": "<command-name>/remote-control</command-name> <command-args>shop 9</command-args> \"commandRun\"" } });
         assert_eq!(remote_control_line(quoted.to_string().as_bytes()), None);
     }
+    /// The watch on a hook's call, asked as the tower asks it: true while its prompt still waits.
+    fn still_asking(hook: &Value) -> Option<impl Fn() -> bool + use<>> {
+        let watch = std::cell::RefCell::new(settled(&call_record(hook)?));
+        Some(move || (watch.borrow_mut())().is_none())
+    }
+
+    #[test]
+    fn who_settled_a_prompt_is_read_from_the_line_with_its_result() {
+        // the lines as Claude Code 2.1.331 writes them (their other fields left out)
+        let allowed = json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "t1", "is_error": false }] }, "permissionDecision": { "decision": "accept", "source": "user_temporary", "grantScope": "once", "reasonCode": "unknown" } });
+        let refused = json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "t1", "is_error": true }] }, "toolDenialKind": "user-rejected" });
+        let blocked = json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "t1", "is_error": true }] }, "toolDenialKind": "permission-rule",
+                              "permissionDecision": { "decision": "reject", "source": "config", "reasonType": "safetyCheck", "reasonCode": "safetyCheck", "circuitBreaker": "dangerousRemoval" } });
+        assert_eq!(settled_how(&allowed), crate::adapters::Settled::There);
+        assert_eq!(settled_how(&refused), crate::adapters::Settled::There);
+        // blocked once its countdown was up: by its own rules, with nobody's answer
+        assert_eq!(settled_how(&blocked), crate::adapters::Settled::RefusedByTool);
+        // and the watch says so of the call it is for
+        let dir = std::env::temp_dir().join(format!("airband-settled-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("s1.jsonl");
+        let input = json!({ "command": "rm -rf \"$(printf %s /x)\"" });
+        std::fs::write(&main, json!({ "message": { "content": [{ "type": "tool_use", "id": "t1", "name": "Bash", "input": input }] } }).to_string() + "\n").unwrap();
+        let hook = json!({ "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": input, "transcript_path": main });
+        let record = call_record(&hook).unwrap();
+        assert_eq!(permission(&json!({ "cwd": "/x/shop", "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": input, "transcript_path": main })).unwrap().settled_in, Some(record.clone()));
+        let mut watch = settled(&record);
+        assert_eq!(watch(), None);
+        std::fs::write(&main, airband_io::files::read_text(&main).unwrap().unwrap() + &blocked.to_string() + "\n").unwrap();
+        assert_eq!(watch(), Some(crate::adapters::Settled::RefusedByTool));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn a_prompt_settled_at_the_keyboard_is_seen_in_the_transcript_of_the_agent_that_asked() {
         let dir = std::env::temp_dir().join(format!("airband-still-{}", crate::config::random_hex(4)));

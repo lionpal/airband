@@ -9,8 +9,10 @@ each result. Nothing here touches the real tower or its files.
                                                      about two minutes, some dozens of small model calls (built in a
                                                      folder of its own, never where the README installs from)
     tools/e2e.py --local                             the same, with the model the tower runs itself doing the reading
-    tools/e2e.py --claude                            also asks a real `claude -p` session for permission, and a real
-                                                     interactive one in tmux (Allow and Deny from the phone)
+    tools/e2e.py --claude                            also asks a real `claude -p` session for permission, a real
+                                                     interactive one in tmux (Allow and Deny from the phone), and one
+                                                     in auto mode that blocks a request by itself, left unanswered
+                                                     (two minutes more)
     tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything
 
 Checks that depend on a model's judgement (what kind a message is, who an untagged reply is for) can fail now
@@ -156,6 +158,121 @@ def interactive():
         subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
         if os.path.exists(login):
             os.remove(login)
+
+# Left unanswered, a request Claude Code will not decide for itself in auto mode (a removal whose target it cannot
+# work out before it runs) is blocked by Claude Code once its countdown is up ("Claude Code will automatically
+# block this request in 2:00, to avoid holding up an unattended session"), and the hook that was asking is ended
+# with no word. This runs on a tower of its own, with his default time to answer from the phone (three minutes,
+# longer than the countdown), a stand-in for the relay and a phone paired with it that has said where it can be
+# woken, so the lock screen's notification is seen too. Nothing is removed: the target is a folder at the top
+# of the disk that is not there and could not be made.
+UNATTENDED = ["a request Claude Code will block by itself reaches the phone, and wakes it", "Claude Code counts down to blocking it",
+              "once Claude Code blocks it, the card says its tool refused it", "and the phone woken for it is told so, in the card's own words",
+              "a late Allow from the phone is refused as over"]
+def unattended():
+    import base64
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    root = os.path.join(work, "unattended")
+    there, proj, config_dir = os.path.join(root, "home"), os.path.realpath(os.path.join(projects, "unattended")), os.path.join(root, "claude-config")
+    os.makedirs(os.path.join(there, ".airband"))
+    os.makedirs(proj)
+    os.makedirs(config_dir, mode=0o700)
+    port, relay, secret, address = wire.free_port(), wire.free_port(), os.urandom(32).hex(), os.urandom(32).hex()
+    json.dump({"port": port, "token": OWN, "radio_token": RADIO, "name": NAME, "station": "e2e", "permission_wait": 180, "summarizer": {"kind": "none"},
+               "relay": f"http://127.0.0.1:{relay}", "pairings": [{"name": "phone", "secret": secret}]}, open(os.path.join(there, ".airband", "config.json"), "w"))
+    derived = lambda label: HKDF(algorithm=hashes.SHA256(), length=32, salt=b"airband.relay/1", info=label.encode()).derive(bytes.fromhex(secret))
+    channel = derived("channel")[:16].hex()
+    pushes = []
+    class Relay(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *_): pass
+        def reply(self, code, body=b""):
+            self.send_response(code); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        def do_PUT(self): self.reply(204)
+        def do_GET(self):
+            time.sleep(3)
+            self.reply(204)
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
+            raw = base64.b64decode(body["sealed"])
+            pushes.append(json.loads(ChaCha20Poly1305(derived("push")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {channel} push".encode())))
+            self.reply(200, b'{"sent":true}')
+    server = ThreadingHTTPServer(("127.0.0.1", relay), Relay)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    def phone(method, path, body=None):
+        """The paired phone, in his pocket: sealed to the tower, and not showing the chat."""
+        call = {"t": int(time.time() * 1000), "id": os.urandom(8).hex(), "method": method, "path": path, "body": body if body is not None else {},
+                "schema": wire.SCHEMA, "presence": {"on_call": False, "showing_chat": False}}
+        nonce = os.urandom(12)
+        sealed = nonce + ChaCha20Poly1305(derived("to tower")).encrypt(nonce, json.dumps(call).encode(), f"airband.relay/1 {channel} to tower".encode())
+        try:
+            with urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/v1/sealed/{channel}", method="POST", data=sealed), timeout=40) as r:
+                raw = r.read()
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            return None
+        return json.loads(ChaCha20Poly1305(derived("to radio")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {channel} to radio".encode())).get("body")
+    tower2 = subprocess.Popen([BIN, "run"], env=dict(env, HOME=there), stdout=open(os.path.join(root, "tower.log"), "w"), stderr=subprocess.STDOUT)
+    hook = f"env HOME={there} {BIN} hook claude-code"
+    json.dump({"hooks": {"PermissionRequest": [{"hooks": [{"type": "command", "command": hook, "timeout": 900}]}],
+                         "Notification": [{"hooks": [{"type": "command", "command": hook, "timeout": 5}]}]}}, open(os.path.join(config_dir, "settings.json"), "w"))
+    json.dump({"hasCompletedOnboarding": True, "projects": {proj: {"hasTrustDialogAccepted": True}}}, open(os.path.join(config_dir, ".claude.json"), "w"))
+    login = os.path.join(config_dir, ".credentials.json")
+    session = f"airband-e2e-unattended-{RUN}"
+    target = f"/airband-e2e-none-{RUN}"
+    command = f'rm -rf "$(printf %s {target})"'
+    try:
+        for _ in range(100):
+            if (phone("GET", "/v1/radio/feed?since=0") or {}).get("rev") is not None: break
+            time.sleep(0.1)
+        phone("POST", "/v1/radio/push", {"provider": "apns", "token": address})
+        fd = os.open(login, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            if subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"], stdout=f, stderr=subprocess.DEVNULL).returncode != 0:
+                return skip(UNATTENDED, "no Claude Code login in this Mac's keychain")
+        clean = " ".join(f"-u {k}" for k in os.environ if k.startswith("CLAUDE") or k == "CLAUDECODE")
+        subprocess.run(["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50", "-c", proj], check=True)
+        subprocess.run(["tmux", "set-option", "-t", session, "remain-on-exit", "on"], check=True)
+        subprocess.run(["tmux", "respawn-pane", "-k", "-t", session, f"env {clean} CLAUDE_CONFIG_DIR={config_dir} claude --model haiku --permission-mode auto"], check=True)
+        pane = lambda: subprocess.run(["tmux", "capture-pane", "-p", "-t", session], capture_output=True, text=True).stdout
+        for _ in range(60):
+            if "auto mode on" in pane(): break
+            time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", session, "-l", f"Use the Bash tool to run exactly this command and nothing else: {command}"])
+        time.sleep(1)
+        subprocess.run(["tmux", "send-keys", "-t", session, "Enter"])
+        messages = lambda: (phone("GET", "/v1/radio/feed?since=0") or {"messages": []})["messages"]
+        card = next((m for _ in range(240) for m in [next((m for m in messages() if m.get("permission") and m["open"] and target in m["text"]), None)] if m or time.sleep(0.5)), None)
+        asks = f"Wants to run `{command}`."
+        woke = next((n for _ in range(40) for n in [next((n for n in pushes if card and n["id"] == card["id"] and n.get("permission")), None)] if n or time.sleep(0.25)), None)
+        check(UNATTENDED[0], card and card["text"] == asks + " Allow?" and card["options"] == ["Allow", "Deny"] and woke and woke["text"] == card["text"], card or pane()[-1500:])
+        if not card:
+            return [check(name, False) for name in UNATTENDED[1:]]
+        counting = any("automatically block this request" in pane() or time.sleep(0.5) for _ in range(60))
+        check(UNATTENDED[1], counting, pane()[-1500:])
+        # left unanswered: Claude Code blocks it after its two minutes, and the card says so at once
+        closed = next((m for _ in range(170) for m in [next((m for m in messages() if m["id"] == card["id"] and not m.get("options")), None)] if m or time.sleep(1)), None)
+        check(UNATTENDED[2], closed and closed["text"] == asks + " Its tool refused it.", closed or pane()[-1500:])
+        over = next((n for _ in range(40) for n in [next((n for n in pushes if n["id"] == card["id"] and n.get("over")), None)] if n or time.sleep(0.25)), None)
+        check(UNATTENDED[3], over and over["text"] == asks + " Its tool refused it." and not over.get("permission") and not over.get("options"), over or pushes)
+        late = None
+        body = {"text": "Allow", "id": os.urandom(6).hex(), "re": card["id"], "act": {"kind": "verdict", "allow": True}}
+        for _ in range(300):
+            took = phone("POST", "/v1/radio/utterance", body)
+            if took and took["state"] == "answered":
+                late = took["reply"]
+                break
+            time.sleep(0.1)
+        check(UNATTENDED[4], late and late.get("request_over") is True and late["say"] == "That request isn't waiting anymore. Nothing was allowed.", late)
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
+        if os.path.exists(login):
+            os.remove(login)
+        tower2.terminate()
+        tower2.wait(10)
+        server.shutdown()
 
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
@@ -727,8 +844,11 @@ Send it as written, or do you want changes?""")
     if "--claude" in sys.argv and shutil.which("tmux"):
         print("A real interactive Claude Code session asks permission")
         interactive()
+        print("A real Claude Code session in auto mode blocks a request by itself, left unanswered")
+        unattended()
     else:
         skip(INTERACTIVE, "run with --claude, with tmux installed")
+        skip(UNATTENDED, "run with --claude, with tmux installed")
     print("An answer that comes late")
     os.makedirs(os.path.join(projects, "late"), exist_ok=True)
     report("late1", "late", "late", "checkin")

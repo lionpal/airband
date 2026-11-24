@@ -269,7 +269,7 @@ pub(crate) fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsew
         _ => whole,
     };
     // none of these tools says how long it waits on a request: it waits as long as he takes
-    Some(PermissionAsk { schema: SCHEMA.into(), agent, what, detail: format!("{tool}\n{detail}"), question, until: None })
+    Some(PermissionAsk { schema: SCHEMA.into(), agent, what, detail: format!("{tool}\n{detail}"), question, until: None, settled_in: None })
 }
 
 /// His answer to a request, as a tool with hooks of this shape wants it printed. A refusal carries his reason.

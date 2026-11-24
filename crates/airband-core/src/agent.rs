@@ -135,6 +135,20 @@ pub struct PermissionAsk {
     /// Nothing when it waits for as long as it takes. Past it, an answer from him would do nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<u64>,
+    /// Where the tool writes down how the call this request is for came out, for a tool that also shows its own
+    /// prompt meanwhile and can settle it there: the tower watches it, so a request settled at the tool is closed
+    /// on the phone however the hook that asked ended. Nothing for a tool that writes no such record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_in: Option<CallRecord>,
+}
+
+/// A tool call as its tool writes it down: the file it is written in, and the tool and input it was made with.
+/// The record's shape is the tool's own, read by its adapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallRecord {
+    pub record: String,
+    pub tool: String,
+    pub input: serde_json::Value,
 }
 
 /// A question an agent put through its harness's own asking tool.
