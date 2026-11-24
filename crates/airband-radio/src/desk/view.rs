@@ -199,6 +199,7 @@ impl Desk {
             choose_main: state.computers.len() > 1 && state.main().is_none() && state.computers.iter().all(|s| !state.computer_name(&s.id()).trim().is_empty()),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             intents: self.intents_view(&state),
+            commands: super::slash::view(&state),
             asking: state.asking.as_ref().map(|asking| asked(&state, &agents, asking)),
         }
     }

@@ -14,6 +14,7 @@
 //!   watch says how (`watch`), and either says how his words get into a session of its own (`deliver`), which of
 //!   its sessions are open now (`open`) and which folders it has worked in (`worked`). Each folder's
 //!   `golden.rs` holds its adapter to what it made of real-shaped fixtures (`golden.rs` here).
+pub(crate) mod commands;
 pub(crate) mod hooks;
 pub(crate) mod report;
 mod tools;
@@ -130,6 +131,14 @@ pub(crate) trait Harness: Sync {
     /// The folders this tool has had sessions in, by its own record, each with when the last one was.
     fn worked(&self) -> Vec<Worked> {
         Vec::new()
+    }
+    /// The commands and skills an agent of this tool takes as a turn of his that starts with `/` and a name, for
+    /// the folder it works in and on this computer, each with whether its way in runs it, and the files whose
+    /// change means the list must be read again. `listed` is what the tool itself listed for the agent's
+    /// session, for a tool that lists them that way (held through the Agent Client Protocol). Nothing when the
+    /// tool cannot say. Blocks: it may start the tool for a moment to ask it.
+    fn commands(&self, _agent: &Agent, _listed: Option<&[airband_core::commands::Listed]>) -> Option<commands::Found> {
+        None
     }
 }
 
@@ -398,6 +407,11 @@ pub(crate) fn newest(found: impl IntoIterator<Item = Worked>) -> Vec<Worked> {
 /// When a file was last written, in milliseconds since 1970.
 pub(crate) fn written(path: &std::path::Path) -> Option<u64> {
     crate::config::stamp_of(path).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64)
+}
+
+/// The commands and skills this agent's tool takes, if its adapter can tell. Blocks.
+pub(crate) fn commands(agent: &Agent, listed: Option<&[airband_core::commands::Listed]>) -> Option<commands::Found> {
+    harness(&agent.harness)?.commands(agent, listed)
 }
 
 /// His words into a session of a tool's own, by that tool's way in. Blocks.

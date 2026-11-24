@@ -21,6 +21,8 @@ mod reading;
 mod records;
 mod rules;
 mod send;
+mod slash;
+pub use slash::{CommandOffer, CommandsView};
 mod talk;
 mod station_host;
 mod takes;
@@ -191,6 +193,8 @@ pub(crate) struct State {
     read: ReadMarks,
     /// What he is looking at: kept here so it stays valid as teams come and go ([`Desk::look`]).
     focus: Focus,
+    /// The box he types in, as far as the commands it can offer go.
+    slash: slash::Slash,
 }
 /// What he is looking at: everyone, one team, or one agent; and a team he has just made, which stays open
 /// while it waits for its first agent.

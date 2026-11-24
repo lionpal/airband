@@ -23,6 +23,7 @@ pub mod agent;
 pub mod audio;
 pub mod catalog;
 pub mod clock;
+pub mod commands;
 pub mod encode;
 pub mod identity;
 pub mod ids;

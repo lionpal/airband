@@ -193,7 +193,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     };
     // where he was looking: where it is shown until it is delivered
     let sent_from = crate::SentFrom { room: room.clone(), agent: agent.clone() };
-    let line = |text: String| Outgoing { id: said.clone().unwrap_or_else(|| random_hex(12)), sent_from: sent_from.clone(), ..Outgoing::of(text) };
+    let line = |text: String| Outgoing { id: said.clone().unwrap_or_else(|| random_hex(12)), sent_from: sent_from.clone(), spoken: said.is_some(), ..Outgoing::of(text) };
     let text = text.trim().to_string();
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();

@@ -8,6 +8,7 @@
 #                              (e2e-scenarios), notifications (e2e-push), the phone's own core in a simulator of its
 #                              own, with each kind of notification handed to it as the push service would (e2e-phone),
 #                              the whole tower with real model calls (a few minutes, and it needs `claude` signed in),
+#                              a skill picked from the phone run by a real held Claude Code agent (e2e-commands),
 #                              and Antigravity CLI for real on Gemini 4 Neon (e2e-antigravity: it needs `agy`, and a
 #                              Gemini API key in GEMINI_API_KEY, which only agy is given)
 #
@@ -49,7 +50,7 @@ cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/
 # (tools/wire.py free_port), so none reaches another's. Each is told apart in what it prints, with how long it took.
 logs=$(mktemp -d "${TMPDIR:-/tmp}/airband-suites.XXXXXX")
 began=$(date +%s)
-for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" e2e-push e2e-phone e2e-antigravity; do
+for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" e2e-commands e2e-push e2e-phone e2e-antigravity; do
   name=${suite%% *}
   (
     start=$(date +%s)
@@ -60,7 +61,7 @@ for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" 
 done
 wait
 failed=0
-for name in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios e2e e2e-push e2e-phone e2e-antigravity; do
+for name in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios e2e e2e-commands e2e-push e2e-phone e2e-antigravity; do
   result=$(cat "$logs/$name.result")
   printf '%-14s %-6s %4ss  %s\n' "$name" "$result" "$(cat "$logs/$name.seconds")" "$logs/$name.log"
   if [ "$result" != ok ]; then failed=1; tail -n 30 "$logs/$name.log"; fi

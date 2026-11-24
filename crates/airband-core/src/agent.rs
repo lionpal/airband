@@ -265,6 +265,10 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         why: Option<String>,
     },
+    /// The commands and skills its tool says this session takes, in the tool's own words: sent by a tool that
+    /// lists them for a session (one held through the Agent Client Protocol), when it opens and again when the
+    /// list changes. Each list replaces the one before.
+    Commands { list: Vec<crate::commands::Listed> },
     /// It has taken in what the tower gave it under `receipt` (`airband_core::agent::Deliver::Held`): the
     /// messages that delivery carried are marked read. For a tool whose own record does not name the receipt.
     Took { receipt: String },

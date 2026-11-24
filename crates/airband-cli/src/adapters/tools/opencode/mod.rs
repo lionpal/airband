@@ -12,6 +12,7 @@
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
 #![expect(clippy::disallowed_macros, reason = "the tool's own request bodies")]
+mod commands;
 use crate::adapters::Tower;
 use airband_io::http::Ask;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -256,6 +257,9 @@ impl crate::adapters::Harness for OpenCode {
     }
     fn watch(&self, tower: Tower) {
         watch(tower)
+    }
+    fn commands(&self, agent: &Agent, listed: Option<&[airband_core::commands::Listed]>) -> Option<crate::adapters::commands::Found> {
+        commands::commands(agent, listed)
     }
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)

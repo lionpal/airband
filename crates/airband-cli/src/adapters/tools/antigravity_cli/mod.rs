@@ -16,6 +16,7 @@
 //! - no way into a session that is open: his words reach only an agent the tower holds;
 //! - no hook when a session ends: one has ended when the lock it holds while open (`presence/`) is let go.
 #![cfg_attr(test, allow(clippy::disallowed_macros, reason = "fixtures in the tool's own shapes"))]
+mod commands;
 use crate::adapters::hooks::On;
 use airband_core::agent::{Agent, AgentEvent, Event};
 use serde::Deserialize;
@@ -407,6 +408,9 @@ impl crate::adapters::Harness for AntigravityCli {
     }
     fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked()
+    }
+    fn commands(&self, agent: &Agent, listed: Option<&[airband_core::commands::Listed]>) -> Option<crate::adapters::commands::Found> {
+        commands::commands(agent, listed)
     }
 }
 

@@ -53,11 +53,18 @@ pub(super) struct Session {
     /// The same turn told a second time, by another way the tool has of saying it, is not taken again.
     #[serde(default)]
     pub(super) turn: Option<String>,
+    /// The commands and skills its tool listed for its session, as it listed them last, for a tool that lists
+    /// them that way. Kept, since the tool lists them only when the session opens and when they change.
+    #[serde(default)]
+    pub(super) tool_commands: Option<Vec<airband_core::commands::Listed>>,
+    /// How many times its tool has listed them anew: told in the roster, so a radio holding the list asks again.
+    #[serde(default)]
+    pub(super) tool_commands_rev: u64,
 }
 impl Session {
     /// One just met: nothing heard, nothing queued, nothing known of what it is doing.
     pub(super) fn new(agent: Agent, callsign: Callsign, team: TeamId) -> Session {
-        Session { agent, callsign, team, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+        Session { agent, callsign, team, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None, tool_commands: None, tool_commands_rev: 0 }
     }
     /// It is in the room he was looking at, or he was in none.
     pub(super) fn in_room(&self, room: Option<&str>) -> bool {

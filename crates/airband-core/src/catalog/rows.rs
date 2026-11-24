@@ -65,6 +65,8 @@ pub(super) struct ToolRow {
     launchers: Vec<Value>,
     #[serde(default)]
     with: BTreeMap<String, Value>,
+    #[serde(default)]
+    commands: crate::commands::Terms,
 }
 
 #[derive(Deserialize)]
@@ -153,7 +155,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
                 .filter_map(|l| serde_json::from_value::<crate::tools::Launcher>(l).map_err(|e| left_out.push(format!("{}: a launcher ({e})", t.id))).ok())
                 .map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l })
                 .collect();
-            Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
+            Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with, commands: t.commands }
         })
         .collect();
     // a phrase or a retired id that is not text is left out and said, like any row; `rev` is what the copy is, so

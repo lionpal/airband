@@ -37,7 +37,7 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
-            let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team.to_string(), room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort, reaches: r.reach == airband_core::radio::Reach::Reaches, take_over: r.reach == airband_core::radio::Reach::NoWayIn { take_over: true } };
+            let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team.to_string(), room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort, reaches: r.reach == airband_core::radio::Reach::Reaches, take_over: r.reach == airband_core::radio::Reach::NoWayIn { take_over: true }, commands: r.commands };
             agent.call(r.callsign);
             agent
         }).collect(),
@@ -199,6 +199,8 @@ pub struct ChatAgent {
     pub reaches: bool,
     /// They cannot reach it, and its computer can take it over, after which they do.
     pub take_over: bool,
+    /// How many times its tool has listed its commands anew: its list is asked for again when this changes.
+    pub commands: u64,
 }
 
 /// Something he says all the time, as a button: `label` is what the button says, `text` what is sent.

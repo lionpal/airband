@@ -46,6 +46,7 @@ mod accounts;
 mod aloud;
 mod attachments;
 mod calls;
+mod commands;
 mod deliver;
 mod edges;
 mod entries;
@@ -180,6 +181,8 @@ pub(crate) struct App {
     /// the next of the same radio is begun, so an agent gets what he said in the order he said it.
     said: Mutex<HashMap<String, Line>>,
     accounts: accounts::Kept,
+    /// What each agent's tool takes as a command, as last found.
+    commands: commands::Kept,
     /// Where each paired phone can be woken with a notification.
     push: push::Wake,
     /// Every pairing being served, by its channel.

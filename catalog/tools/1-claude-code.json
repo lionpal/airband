@@ -87,6 +87,11 @@
       ]
     }
   ],
+  "commands": {
+    "term": "Skills",
+    "skill": "skill",
+    "command": "command"
+  },
   "with": {
     "program": "claude",
     "accounts_api": "https://api.anthropic.com",
@@ -248,6 +253,22 @@
     "projects": "projects",
     "subagent_transcript": "subagents/agent-{agent}.jsonl",
     "session_kind": "interactive",
-    "session_entry": "cli"
+    "session_entry": "cli",
+    "commands_ask": [
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--no-session-persistence",
+      "--settings",
+      "{\"disableAllHooks\":true}"
+    ],
+    "project_folder": ".claude",
+    "skills_folder": "skills",
+    "commands_folder": "commands",
+    "plugins_installed": "plugins/installed_plugins.json",
+    "plugin_manifest": ".claude-plugin/plugin.json"
   }
 }

@@ -1,0 +1,8 @@
+[
+  {"name": "review-branch", "about": "Review changes relative to a base branch.", "hint": "branch name"},
+  {"name": "compact", "about": "Summarize conversation to avoid hitting the context limit."},
+  {"name": "$sheets:budget", "about": "Make a budget"},
+  {"name": "$imagegen", "about": "Make images"},
+  {"name": "$ship", "about": "Ship the branch"},
+  {"name": "$tidy", "about": "Tidy up"}
+]

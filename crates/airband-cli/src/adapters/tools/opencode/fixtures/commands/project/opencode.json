@@ -1,0 +1,1 @@
+{"$schema":"https://opencode.ai/config.json","command":{"fix-tests":{"template":"Fix the failing tests","description":"Fix the failing tests"}}}
