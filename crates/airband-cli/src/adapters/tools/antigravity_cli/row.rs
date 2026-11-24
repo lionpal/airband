@@ -6,9 +6,11 @@ use airband_core::identity::AccountIdentity;
 
 #[test]
 fn every_row_fact_this_code_asks_for_is_there() {
-    for fact in ["home", "state", "program", "hooks_file", "presence", "conversations", "brain", "transcript", "last_conversations"] {
+    for fact in ["home", "state", "program", "hooks_file", "presence", "conversations", "brain", "transcript", "last_conversations", "summaries", "presence_lock"] {
         assert!(!row_says(NAME, fact).is_empty(), "its row says nothing for {fact}");
     }
+    // the lock an open conversation holds is the kind asked here
+    assert_eq!(row_says(NAME, "presence_lock"), super::SYSTEM_LOCK);
     // where it keeps its files, by the same rule as every tool, from its own row
     assert_eq!(crate::adapters::home_given(NAME, None), crate::config::home().join(".gemini"));
     // an agent the tower starts is held through the Agent Client Protocol, and says for itself what it runs on

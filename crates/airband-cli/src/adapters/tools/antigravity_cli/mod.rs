@@ -246,19 +246,74 @@ fn folders() -> Vec<(String, String)> {
     read.unwrap_or_default().into_iter().filter(|(folder, id)| !folder.is_empty() && !id.is_empty()).collect()
 }
 
+/// The folder a conversation works in, by its own record in Antigravity's database of conversations (the
+/// `conversation_summaries` table, its `workspace_uris`: a JSON list of `file://` addresses). A conversation it
+/// records no folder for, or more than one, has no one folder by that record. Opened read-only: Antigravity
+/// may be writing it.
+fn own_folders(path: &Path, ids: &[&str]) -> std::collections::BTreeMap<String, String> {
+    use rusqlite::{Connection, OpenFlags};
+    let mut found = std::collections::BTreeMap::new();
+    if ids.is_empty() || !path.is_file() {
+        return found;
+    }
+    let Ok(db) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX) else { return found };
+    let Ok(mut q) = db.prepare("SELECT workspace_uris FROM conversation_summaries WHERE conversation_id = ?1") else { return found };
+    for id in ids {
+        let Ok(uris) = q.query_row([id], |r| r.get::<_, String>(0)) else { continue };
+        let Ok(uris) = serde_json::from_str::<Vec<String>>(&uris) else { continue };
+        if let [one] = uris.as_slice()
+            && let Some(folder) = file_path(one)
+        {
+            found.insert((*id).to_string(), folder);
+        }
+    }
+    found
+}
+
+/// The path a `file://` address names (RFC 8089, on this computer: no host, or `localhost`), its escapes undone.
+/// Nothing for any other address, or one whose path is not text.
+fn file_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let path = rest.strip_prefix("localhost").unwrap_or(rest);
+    path.starts_with('/').then_some(())?;
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok().filter(|p| p.len() > 1)
+}
+
 fn transcript_of(id: &str) -> PathBuf {
     state().join(crate::adapters::row_says(NAME, "brain")).join(id).join(crate::adapters::row_says(NAME, "transcript"))
 }
 
+/// The kind of lock its row says a conversation holds on its file in `presence/`: `system` is the system's own
+/// whole-file lock, the kind `airband_io::files::locked` asks (flock on Unix, LockFileEx on Windows). Antigravity
+/// 1.5.15 takes it with its bundled flock library's `TryLock`, an exclusive flock(2), and that library opens the
+/// file sharing it for reading on Windows, so another process can open it to ask.
+const SYSTEM_LOCK: &str = "system";
+
 /// The conversations open now: each holds a lock on its file in `presence/` for as long as it is open. Nothing
-/// when that folder cannot be read (it is not on this computer).
+/// when that folder cannot be read (it is not on this computer), or when its row says it locks some other way
+/// than the one asked here.
 fn open() -> Option<Vec<crate::adapters::Open>> {
     let dir = state().join(crate::adapters::row_says(NAME, "presence"));
-    if !dir.is_dir() {
+    if crate::adapters::row_says(NAME, "presence_lock") != SYSTEM_LOCK || !dir.is_dir() {
         return None;
     }
     let files = airband_io::files::entries(&dir).ok()?;
     let folders = folders();
+    let ids: Vec<String> = files.iter().filter(|f| f.extension().is_some_and(|e| e == "lock")).filter_map(|f| f.file_stem().and_then(|s| s.to_str()).map(String::from)).collect();
+    let own = own_folders(&state().join(crate::adapters::row_says(NAME, "summaries")), &ids.iter().map(String::as_str).collect::<Vec<_>>());
     let mut open = Vec::new();
     let mut transcripts = Vec::new();
     for file in files {
@@ -273,7 +328,9 @@ fn open() -> Option<Vec<crate::adapters::Open>> {
             // one that cannot be asked is not one that has closed: nothing is said of any this look
             Err(_) => return None,
         }
-        let cwd = folders.iter().find(|(_, last)| last == id).map(|(folder, _)| folder.clone());
+        // where it works, by its own record; one not recorded there yet (a conversation that has not been
+        // summed up) by the record of the latest conversation in each folder, which names it when it is that
+        let cwd = own.get(id).cloned().or_else(|| folders.iter().find(|(_, last)| last == id).map(|(folder, _)| folder.clone()));
         let transcript = transcript_of(id);
         open.push(crate::adapters::Open { agent: agent(id, cwd, None), idle: waiting(&transcript) });
         transcripts.push(transcript);
@@ -414,6 +471,26 @@ mod tests {
         // forgotten once the conversation is no longer open
         forget_all_but(&[]);
         assert!(!READ.lock().unwrap().contains_key(&t));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_conversation_works_in_the_one_folder_its_own_record_names() {
+        let dir = std::env::temp_dir().join(format!("airband-agy-{}", crate::config::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("conversation_summaries.db");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE conversation_summaries (conversation_id text, workspace_uris text NOT NULL, PRIMARY KEY (conversation_id))").unwrap();
+        for (id, uris) in [("c1", r#"["file:///x/my%20shop"]"#), ("c2", r#"["file:///x/a","file:///x/b"]"#), ("c3", "[]"), ("c4", r#"["https://example.com/x"]"#)] {
+            db.execute("INSERT INTO conversation_summaries VALUES (?1, ?2)", [id, uris]).unwrap();
+        }
+        drop(db);
+        let found = own_folders(&path, &["c1", "c2", "c3", "c4", "c5"]);
+        // one folder: that one; several, none, another kind of address, or no record: no one folder
+        assert_eq!(found.into_iter().collect::<Vec<_>>(), [("c1".to_string(), "/x/my shop".to_string())]);
+        assert_eq!(file_path("file://localhost/x/shop").as_deref(), Some("/x/shop"));
+        assert_eq!(file_path("file:///"), None);
+        assert!(own_folders(&dir.join("none.db"), &["c1"]).is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 
