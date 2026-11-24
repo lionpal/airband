@@ -22,6 +22,8 @@ mod reading;
 mod records;
 mod rules;
 mod send;
+mod slash;
+pub use slash::{CommandOffer, CommandsView};
 mod talk;
 mod station_host;
 mod takes;
@@ -195,6 +197,8 @@ pub(crate) struct State {
     focus: Focus,
     /// The message he opened the app from a notification for, while he is still on it.
     opening: Option<Opening>,
+    /// The box he types in, as far as the commands it can offer go.
+    slash: slash::Slash,
 }
 /// What he is looking at: everyone, one team, or one agent; and a team he has just made, which stays open
 /// while it waits for its first agent.

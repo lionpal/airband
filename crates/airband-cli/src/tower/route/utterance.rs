@@ -89,6 +89,13 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         // asked who among all of them, by id: a radio keeps his words as not delivered until he says
         return if to.names.is_empty() { nobody_running() } else { Reply { ask: to.everyone.clone(), ..ask(format!("Who is that for? {}.", either(&to.names))) } };
     }
+    // words he said aloud to one agent may ask its tool to run one of its commands: given to it as the tool takes one
+    if said.spoken && !wordless
+        && let [one] = to.targets.as_slice()
+        && let Some(command) = command::read(app, one, &to.rest).await
+    {
+        to.rest = command;
+    }
     // his words by their length only, and who they are for by id: what he says is never written in the log.
     // What came of handing them over is logged once that is known (`send`, `kept`)
     log(format!("← radio: {} characters for {}", to.rest.chars().count(), ids_of(&to.targets)));
@@ -349,6 +356,9 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
             // One the tower runs itself gets his words as his own turn, with nothing in front. If it is in the
             // middle of something they wait here, where he can still take them back, until it stops.
             Some(Deliver::Held) => {
+                // a turn that starts with "/" is one of its tool's commands, as the tool reads it: nothing goes in
+                // front of it, or the tool would read it as words
+                let about = if rest.starts_with('/') { "" } else { about.as_str() };
                 let words = format!("{about}{rest}{files}");
                 let busy = {
                     let mut inner = app.change();

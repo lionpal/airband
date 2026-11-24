@@ -5,6 +5,7 @@
 //! effort.
 use super::*;
 
+mod command;
 mod start;
 mod understand;
 mod utterance;

@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub(crate) mod accounts;
+mod commands;
 mod sessions;
 mod transcript;
 use sessions::*;
@@ -381,6 +382,9 @@ impl crate::adapters::Harness for ClaudeCode {
     }
     fn worked(&self) -> Vec<crate::adapters::Worked> {
         worked_in(&claude_home())
+    }
+    fn commands(&self, agent: &Agent, _listed: Option<&[airband_core::commands::Listed]>) -> Option<crate::adapters::commands::Found> {
+        commands::commands(agent)
     }
 }
 

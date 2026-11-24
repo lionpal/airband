@@ -22,7 +22,7 @@ extension FeedView {
     /// Who his words go to whenever that is already settled: the message he picked, or the agent he is looking at.
     private var aim: String? { model.replyingTo.map { name(of: $0) } ?? model.onlyName }
     /// The agent it will go to, by id: the one that wrote the message he picked, or the one he is looking at.
-    private var aimedAgent: String? {
+    var aimedAgent: String? {
         // a message he picked says who, even when that is nobody: the agent he is looking at does not stand in
         if let re = model.replyingTo { return re.agent.flatMap(\.orNone) }
         return model.only
@@ -49,6 +49,14 @@ extension FeedView {
             if let shut = model.view.noWayIn { NoWayIn(shut: shut) }
             if !model.tray.isEmpty { Tray(sends: !model.listening && !typingOpen) }
             if showQuick { quickGrid }
+            // the commands and skills of the agent his words go to, while the box holds "/" and the start of a name
+            if typingOpen, let list = model.view.commands {
+                // as tall as the chat's room above the box allows, less the box itself and a little of the chat
+                CommandList(list: list, most: chatRoom - 96) { picked in
+                    draft = picked.insert
+                    typing = true
+                }
+            }
             if typingOpen {
                 typingRow
             } else {
@@ -72,6 +80,20 @@ extension FeedView {
         }
         .animation(.easeOut(duration: 0.15), value: atEnd)
         .onChange(of: model.replyingTo?.id) { _, id in if id != nil && typingOpen { typing = true } }
+        // the core reads the box: what it holds, and who it is for, decide the list above it
+        .onChange(of: draft) { _, text in model.desk.typing(text: text, agent: aimedAgent) }
+        .onChange(of: aimedAgent) { _, agent in model.desk.typing(text: draft, agent: agent) }
+        // his words go to an agent as the chat opens: its list is asked for then, so it is here when he types "/"
+        .onAppear { model.desk.typing(text: draft, agent: aimedAgent) }
+    }
+
+    /// Open the list of commands as if he had typed "/": the keyboard, and "/" in the box with the cursor after it.
+    func openCommands() {
+        withAnimation(.snappy(duration: 0.2)) { showQuick = false }
+        draft = "/"
+        typingOpen = true
+        // the box is only there once this change is drawn: focused then, so the keyboard comes up
+        DispatchQueue.main.async { typing = true }
     }
 
     /// The box he types in, with the way to attach and the way back to talking.
@@ -236,6 +258,10 @@ extension FeedView {
         return VStack(spacing: 8) {
             RecentStrip { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
             AttachTile { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
+            // what is in the box would be lost to a "/": the way in is there while the box is empty or names one
+            if draft.isBlank || draft.hasPrefix("/") {
+                CommandsTile(title: model.desk.commandsTitle(agent: aimedAgent)) { openCommands() }
+            }
             // two to a row; an odd one out, usually one of his own, takes the whole row
             ForEach(Array(stride(from: 0, to: all.count, by: 2)), id: \.self) { i in
                 HStack(spacing: 8) {

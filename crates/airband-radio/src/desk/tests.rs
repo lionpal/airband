@@ -54,7 +54,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None, reaches: true, take_over: false }).collect(),
+        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None, reaches: true, take_over: false, commands: 0 }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         epoch: 0,
         was_waiting: Vec::new(),
@@ -1356,4 +1356,50 @@ fn hearing_him_however_long_it_takes_never_holds_up_the_radios_other_work() {
     host.let_go.notify_all();
     assert!(got.recv_timeout(Duration::from_secs(10)).unwrap());
     radio.stop();
+}
+
+#[test]
+fn the_box_offers_the_commands_of_the_agent_it_is_for_that_run_from_here_narrowed_to_what_he_typed() {
+    use super::slash::tests::{arrived, command};
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    let tool = airband_core::catalog::current().tools[0].clone();
+    let mut computer = station("studio", 1, &[("shop 1", "shop"), ("shop 2", "shop")], Vec::new());
+    computer.agents.iter_mut().for_each(|a| a.harness = tool.id.clone());
+    desk.shared.state.lock().unwrap().computers.push(computer);
+    let view = || desk.view().commands;
+    // closed until the box starts with a slash
+    desk.typing("rev".into(), Some("shop 1".into()));
+    assert!(view().is_none());
+    // asked for as it opens, and said to be on its way until it arrives
+    desk.typing("/".into(), Some("shop 1".into()));
+    assert!(view().unwrap().asking);
+    arrived(&mut desk.shared.state.lock().unwrap(), "shop 1", vec![command("code-review", true), command("review", true), command("compact", true), command("deploy-at-desk", false)]);
+    let open = view().unwrap();
+    assert_eq!(open.title, tool.commands.term, "headed by what its tool calls them");
+    assert_eq!(open.items.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["code-review", "review", "compact"], "only the ones that run from here, in the tool's order");
+    assert_eq!(open.items[0].kind.as_deref(), Some(tool.commands.skill.as_str()));
+    assert_eq!(open.items[1].insert, "/review ");
+    desk.typing("/rev".into(), Some("shop 1".into()));
+    assert_eq!(view().unwrap().items.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["review", "code-review"]);
+    desk.typing("/zz".into(), Some("shop 1".into()));
+    assert!(view().unwrap().items.is_empty() && view().unwrap().note.is_some());
+    // picked: the name and a space, and the list closes while he gives it what it takes
+    desk.typing("/review main".into(), Some("shop 1".into()));
+    assert!(view().is_none());
+    // an agent none of whose commands runs from here says so, and offers none
+    arrived(&mut desk.shared.state.lock().unwrap(), "shop 2", vec![command("review", false)]);
+    desk.typing("/".into(), Some("shop 2".into()));
+    let shut = view().unwrap();
+    assert!(shut.items.is_empty() && shut.note.is_some());
+    // one whose tool runs them but never says what came of them says that instead, and offers none either
+    let quiet = airband_core::commands::Command { runs: airband_core::commands::Runs::NoAnswer, ..command("review", true) };
+    arrived(&mut desk.shared.state.lock().unwrap(), "shop 2", vec![quiet]);
+    let unanswered = view().unwrap();
+    assert!(unanswered.items.is_empty() && unanswered.note.is_some() && unanswered.note != shut.note);
+    // words that would not go to one agent: a word for any tool's, and nothing to pick
+    desk.typing("/".into(), None);
+    let anyone = view().unwrap();
+    assert_eq!((anyone.title.as_str(), anyone.items.len()), (airband_core::commands::NEUTRAL, 0));
+    assert_eq!(desk.commands_title(None), airband_core::commands::NEUTRAL);
+    assert_eq!(desk.commands_title(Some("shop 1".into())), tool.commands.term);
 }

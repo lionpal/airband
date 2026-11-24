@@ -1,0 +1,8 @@
+[
+  {"name": "goal", "about": "Run until the specified goal is completely finished."},
+  {"name": "compact", "about": "Compact the conversation now."},
+  {"name": "migrate-db", "about": "Run the database migration"},
+  {"name": "weekly", "about": "Write the weekly update"},
+  {"name": "swarm-plan", "about": "Plan a swarm"},
+  {"name": "antigravity-guide", "about": "Provides a guide"}
+]

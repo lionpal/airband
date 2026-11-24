@@ -19,6 +19,8 @@ struct FeedView: View {
     @State var toEnd = 0
     /// How tall the buttons over the bottom of the chat are now.
     @State private var barHeight: CGFloat = 0
+    /// How tall the chat is between the teams and the bottom of what he can see (above the keyboard, when it is up).
+    @State var chatRoom: CGFloat = 400
     @FocusState var typing: Bool
     /// He has just turned reading aloud on: a line says so for a moment.
     @State var joined = false
@@ -36,7 +38,7 @@ struct FeedView: View {
                     .frame(width: 280).background(Palette.card.ignoresSafeArea())
                 Rectangle().fill(Palette.raised).frame(width: 1).ignoresSafeArea()
             }
-            column
+            column.onPreferenceChange(ChatRoom.self) { chatRoom = $0 }
         }
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)
@@ -65,8 +67,11 @@ struct FeedView: View {
                 // above the feed, so what a team is doing can hang down over the top of it
                 if model.view.rooms.count > 1 || model.only != nil || model.room != nil { teams.zIndex(1) }
                 if model.view.feed.isEmpty {
-                    blank
-                    bar
+                    VStack(spacing: 0) {
+                        blank
+                        bar
+                    }
+                    .background(GeometryReader { g in Color.clear.preference(key: ChatRoom.self, value: g.size.height) })
                 } else {
                     // The chat runs on under the buttons: they sit over it, frosted, and it fades towards the bottom
                     // edge. The room they take is part of the chat itself (an empty stretch as tall as they are, after
@@ -101,6 +106,7 @@ struct FeedView: View {
                         }
                     }
                     .onPreferenceChange(BarHeight.self) { barHeight = $0 }
+                    .background(GeometryReader { g in Color.clear.preference(key: ChatRoom.self, value: g.size.height) })
                 }
             }
         }
@@ -122,6 +128,25 @@ struct FeedView: View {
             if Dev.flag("devProse") { showProse = true }
             // `-airband.devNewAgent YES` opens the sheet that starts a new agent, for a screenshot
             if Dev.text("devNewAgent") != nil { showNewAgent = true }
+        }
+        // `-airband.devSlash typed` or `plus`: once an agent is there, look at it and open its commands, by
+        // typing "/" and the start of a name, or from the + panel, for a screenshot of each way in
+        .task {
+            guard let way = Dev.text("devSlash") else { return }
+            while model.view.rooms.flatMap(\.members).isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+            model.look(agent: model.view.rooms.flatMap(\.members)[0].id)
+            try? await Task.sleep(for: .seconds(2))
+            if way == "plus" {
+                showQuick = true
+                try? await Task.sleep(for: .seconds(Double(Dev.number("devSlashWait"))))
+                openCommands()
+            } else {
+                typingOpen = true
+                typing = true
+                draft = "/"
+                try? await Task.sleep(for: .seconds(Double(Dev.number("devSlashWait"))))
+                draft = Dev.text("devSlashTyped") ?? "/"
+            }
         }
         // and once his computers are reached, so it opens with them known
         .onChange(of: model.online) { _, online in
@@ -215,6 +240,12 @@ struct FeedView: View {
         }
     }
 
+}
+
+/// How tall the chat is, told upward by the chat itself.
+struct ChatRoom: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// How tall the buttons over the bottom of the chat are, told upward by the buttons themselves.

@@ -223,11 +223,13 @@ struct Moves {
     stuck_at: Option<u64>,
     /// The transfers stopped, by id.
     stopped: Mutex<Vec<String>>,
+    /// How many transfers have told the fetch they ended: told in order with what he says after.
+    ended: Arc<Mutex<usize>>,
 }
 
 impl Moves {
     fn of(files: &[(String, Vec<u8>)]) -> Moves {
-        Moves { files: files.to_vec(), started: Mutex::new(Vec::new()), short_at: None, stuck_at: None, stopped: Mutex::new(Vec::new()) }
+        Moves { files: files.to_vec(), started: Mutex::new(Vec::new()), short_at: None, stuck_at: None, stopped: Mutex::new(Vec::new()), ended: Arc::default() }
     }
 }
 
@@ -241,11 +243,14 @@ impl Transfers for Moves {
         if self.stuck_at == Some(from) {
             return;
         }
+        let ended = self.ended.clone();
         std::thread::spawn(move || {
             heard(Event::Moved { id: id.clone(), bytes: body.len() as u64 / 2 });
             let body = if short { &body[..body.len() - 1] } else { &body[..] };
             std::fs::write(&to, body).unwrap();
             heard(Event::Ended { id, status: Some(206) });
+            *ended.lock().unwrap() += 1;
+            host_did();
         });
     }
     fn stop(&self, id: String) {
@@ -307,7 +312,8 @@ fn a_fetch_he_stops_ends_and_lets_the_next_one_start() {
         std::thread::spawn(move || fetch_local_model(at, &m, Some(host)))
     };
     // once the stuck one is all that is left, he stops it
-    when("every piece has started and the small file is whole", || (host.started.lock().unwrap().len() == 3 && dir.join("models/tiny/1/small.json").exists()).then_some(()));
+    // (every other piece has told the fetch it ended, before he does)
+    when("every piece has started and every one but the stuck one has ended", || (host.started.lock().unwrap().len() == 3 && *host.ended.lock().unwrap() == 2).then_some(()));
     // what `Desk::stop_model_fetch` tells
     heard(Event::Stop);
     assert_eq!(fetching.join().unwrap(), Err(FetchFailed::Cancelled));

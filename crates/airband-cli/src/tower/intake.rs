@@ -135,6 +135,15 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             // nothing to keep and nobody to wake: a radio that is looking sees it within a moment
             return Ok(());
         }
+        Event::Commands { list } => {
+            log(format!("{logged}: its tool lists {} commands and skills", list.len()));
+            let s = inner.session(&id).unwrap();
+            s.tool_commands = Some(list);
+            s.tool_commands_rev += 1;
+            // a radio holding its list sees the roster change and asks again
+            inner.tell();
+            return Ok(());
+        }
         Event::Model { name, effort } => {
             let short = |t: String| -> Option<String> { Some(airband_core::prose::clip(&t.split_whitespace().collect::<Vec<_>>().join(" "), 32)).filter(|t| !t.is_empty()) };
             let s = inner.session(&id).unwrap();

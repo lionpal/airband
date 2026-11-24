@@ -14,6 +14,11 @@
       }
     }
   ],
+  "commands": {
+    "term": "Commands",
+    "skill": "skill",
+    "command": "command"
+  },
   "with": {
     "home": ".local/state",
     "home_env": "XDG_STATE_HOME",
@@ -42,6 +47,16 @@
           ]
         }
       }
-    ]
+    ],
+    "config_home": ".config",
+    "config_env": "XDG_CONFIG_HOME",
+    "config": "opencode",
+    "project_folder": ".opencode",
+    "settings": "opencode.json",
+    "commands_folders": [
+      "command",
+      "commands"
+    ],
+    "held_commands": "no-answer"
   }
 }

@@ -213,6 +213,9 @@ pub struct Outgoing {
     /// the computer asked him something back.
     #[serde(default)]
     pub answers: Option<String>,
+    /// He said it aloud.
+    #[serde(default)]
+    pub spoken: bool,
     /// How many times it has been tried.
     #[serde(default)]
     pub tries: u32,
@@ -322,7 +325,7 @@ pub enum Stage {
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: Vec<airband_core::radio::Other>) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), undelivered: None, sent_from: SentFrom::default(), stage: Stage::Trying, taken_at: None }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), undelivered: None, sent_from: SentFrom::default(), stage: Stage::Trying, taken_at: None, spoken: false }
     }
     /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
     pub(crate) fn of(text: String) -> Outgoing {
@@ -351,7 +354,7 @@ impl Outgoing {
     }
     /// What the tower is sent for it: the one place an utterance is made from something he said.
     pub(crate) fn utterance(&self) -> Utterance {
-        Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone().map(airband_core::ids::QuestionId::new) }
+        Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone().map(airband_core::ids::QuestionId::new), spoken: self.spoken }
     }
 }
 

@@ -259,14 +259,26 @@ async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Resu
     tell_holder(&kept, words()).await
 }
 
+/// How many of what waits go to the agent as its next turn: a command alone, or the words before the next one.
+fn next_turn(queue: &[(String, String)]) -> usize {
+    let command = |(_, text): &(String, String)| text.starts_with('/');
+    match queue.first() {
+        Some(first) if command(first) => 1,
+        _ => queue.iter().position(command).unwrap_or(queue.len()),
+    }
+}
+
 /// A held agent has stopped (it finished its turn, or he stopped it): everything he said to it meanwhile, and
-/// did not take back, goes to it now as one turn, in the order he said it.
+/// did not take back, goes to it now as one turn, in the order he said it. One of its tool's commands (a turn
+/// that starts with "/", as the tool reads it) goes as a turn of its own: joined to other words it would be read
+/// as words. What comes after it waits for the stop after that turn.
 pub(super) async fn flush(app: &Arc<App>, id: &str) {
     let waiting: Vec<(String, String)> = {
         let mut inner = app.change();
         let Some(s) = inner.session(id).filter(|s| s.waiting && !s.queue.is_empty()) else { return };
         s.waiting = false;
-        let waiting = std::mem::take(&mut s.queue);
+        let take = next_turn(&s.queue);
+        let waiting: Vec<(String, String)> = s.queue.drain(..take).collect();
         inner.no_longer_waiting(id);
         waiting
     };
@@ -584,6 +596,15 @@ mod tests {
         assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);
     }
     use super::*;
+
+    #[test]
+    fn a_command_that_waited_goes_as_a_turn_of_its_own() {
+        let q = |texts: &[&str]| texts.iter().enumerate().map(|(i, t)| (format!("l{i}"), t.to_string())).collect::<Vec<_>>();
+        assert_eq!(next_turn(&q(&["words", "more"])), 2, "words go together");
+        assert_eq!(next_turn(&q(&["words", "/review main", "more"])), 1, "the words before the command");
+        assert_eq!(next_turn(&q(&["/review main", "more"])), 1, "the command alone");
+        assert_eq!(next_turn(&q(&["/compact", "/review"])), 1);
+    }
 
     #[test]
     fn a_take_over_is_carried_on_by_a_launcher_that_holds_its_agents_though_the_usual_one_does_not() {

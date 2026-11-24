@@ -14,6 +14,11 @@
       }
     }
   ],
+  "commands": {
+    "term": "Skills",
+    "skill": "skill",
+    "command": "command"
+  },
   "with": {
     "program": "agy",
     "home": ".gemini",
@@ -48,6 +53,16 @@
           "provider": "gemini"
         }
       }
-    ]
+    ],
+    "customization_folders": [
+      ".agents",
+      ".agent",
+      "_agents",
+      "_agent"
+    ],
+    "skills_folder": "skills",
+    "config_folder": "config",
+    "plugins_folder": "plugins",
+    "builtin_folder": "builtin"
   }
 }
