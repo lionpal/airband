@@ -1349,6 +1349,7 @@ fn hearing_him_however_long_it_takes_never_holds_up_the_radios_other_work() {
     host.let_go.notify_all();
     assert!(got.recv_timeout(Duration::from_secs(10)).unwrap());
     radio.stop();
+}
 
 #[test]
 fn the_box_offers_the_commands_of_the_agent_it_is_for_that_run_from_here_narrowed_to_what_he_typed() {
