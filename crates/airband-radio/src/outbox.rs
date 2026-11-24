@@ -271,11 +271,18 @@ pub(crate) fn not_delivered_why(o: &Outgoing, named: &dyn Fn(&str) -> String) ->
             // a sentence for each reason, naming the agents it holds for
             let of = |kind: NotReachable| missed.iter().filter(|m| m.why == kind).map(|m| named(&m.agent)).collect::<Vec<_>>();
             let mut said = Vec::new();
-            for (kind, says) in [(NotReachable::NoWayIn, "airband can\u{2019}t send messages to"), (NotReachable::Gone, "No longer running:"), (NotReachable::Failed, "Handing it over failed for")] {
+            for kind in [NotReachable::NoWayIn, NotReachable::Gone, NotReachable::Failed] {
                 let names = of(kind);
-                if !names.is_empty() {
-                    said.push(format!("{says} {}.", and_list(&names)));
+                if names.is_empty() {
+                    continue;
                 }
+                let who = and_list(&names);
+                said.push(match kind {
+                    NotReachable::NoWayIn => format!("airband can\u{2019}t send messages to {who}."),
+                    NotReachable::Gone if names.len() == 1 => format!("{who} isn\u{2019}t running anymore."),
+                    NotReachable::Gone => format!("{who} aren\u{2019}t running anymore."),
+                    NotReachable::Failed => format!("Couldn\u{2019}t hand it to {who}."),
+                });
             }
             said.join(" ")
         }
@@ -446,7 +453,7 @@ mod tests {
         assert_eq!(host.0.lock().unwrap().last().unwrap().1.as_deref(), Some("Not delivered: “words of a”."));
         // why, in words, naming each agent
         let named = |id: &str| if id == "x1" { "shop one".to_string() } else { "shop two".to_string() };
-        assert_eq!(not_delivered_why(&a, &named), "airband can\u{2019}t send messages to shop one. No longer running: shop two.");
+        assert_eq!(not_delivered_why(&a, &named), "airband can\u{2019}t send messages to shop one. shop two isn\u{2019}t running anymore.");
         // told again (the feed and the asking both say it): nothing changes
         settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply { undelivered: Some(Box::new(Undelivered::NobodyRunning)), ..Reply::default() } });
         assert!(kept("a").is_some());

@@ -9,7 +9,7 @@ with (Gemini Flash-Lite, as tools/e2e.py --gemini has it: in the throwaway tower
 user, and taken out of them when the run ends, kept folder or not). It is never printed or put on a command line.
 Nobody is signed in to anything.
 
-- An agent the tower starts and holds (`agy acp`), on Gemini 4 Neon: it says what it runs on, its request to run a
+- An agent the tower starts and holds (`agy acp`), on what agy itself starts on: it says what it runs on, its request to run a
   command is put to him as the command itself, his yes lets it run and his no stops it, what it says arrives, and
   a long report arrives summarized with the whole of it kept.
 - A session he opened himself in a terminal (here a tmux of the test's own): it reports through airband's entry in
@@ -100,13 +100,13 @@ cards = lambda a: [m for m in feed()["messages"] if a and m.get("permission") an
 tower = start_tower()
 tmux_up = False
 try:
-    print("An agent the tower runs (agy acp), on Gemini 4 Neon")
-    told = say("New agent in shop", act={"kind": "launch", "team": shop, "tool": "antigravity-cli", "model": "gemini-4-neon", "effort": "low",
+    print("An agent the tower runs (agy acp), on what agy itself starts on")
+    told = say("New agent in shop", act={"kind": "launch", "team": shop, "tool": "antigravity-cli",
                                          "task": "Use your shell tool to run exactly this command, and nothing else: echo airband-probe > made.txt\nThen reply with exactly the word done."})
-    # nothing of agy has been seen on this tower yet: what it is offered on is its row's, Gemini 4 Neon among it
-    check("before any agy agent has opened, it is offered on Gemini 4 Neon at its thinking levels, and started on them", told.startswith("Launching in shop with Gemini 4 Neon, low"), told)
+    # nothing of agy has been seen on this tower yet: nothing is offered for it until an agent of its has said
+    check("before any agy agent has said what it can be set to, it is started on its own settings", told.startswith("Launching in shop") and " with " not in told.split(".")[0], told)
     held = until(lambda: agy(True), 60)
-    check("it is on the radio, held, and says it runs on Gemini 4 Neon, low", held and until(lambda: ((agy(True) or {}).get("model"), (agy(True) or {}).get("effort")) == ("gemini-4-neon", "low"), 60), agy(True))
+    check("it is on the radio, held, and says the model it runs on", held and until(lambda: bool((agy(True) or {}).get("model")), 60), agy(True))
     card = until(lambda: cards(agy(True)), 120)
     check("its request to run a command is put to him as the command itself", card and card[0]["text"] == "Wants to run `echo airband-probe > made.txt`. Allow?" and card[0]["options"] == ["Allow", "Deny"], card)
     check("nothing has run while it waits for him", not os.path.exists(os.path.join(shop, "made.txt")))

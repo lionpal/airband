@@ -310,8 +310,9 @@ fn ask_leave(held: &Held, params: Value, request: Value, me: Agent) {
 
 /// A request for leave of the agent's, as he is asked it. For a command (the protocol's `execute` kind, with
 /// the command in its input) what he reads is the command itself; for anything else, the agent's own title
-/// for what it wants to do. With it goes everything the agent said about the request. Nothing when it is too
-/// long to put in front of him whole.
+/// for the call with exactly what the call was given, so what he reads is what will run, not only a title.
+/// With it goes everything the agent said about the request. Nothing when it is too long to put in front of
+/// him whole.
 fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::PermissionAsk> {
     let call = &params["toolCall"];
     let title = call["title"].as_str().map(str::trim).filter(|t| !t.is_empty());
@@ -324,7 +325,14 @@ fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::Permission
         Some(command) => adapters::hooks::to_run(&agent.harness, &command),
         // with neither a command nor a title it says nothing he could answer, and nothing is made up for it: it is
         // not asked, and so not allowed
-        None => title.and_then(|t| t.chars().next().map(|c| c.to_lowercase().collect::<String>() + &t[c.len_utf8()..]))?,
+        None => {
+            let title = title.and_then(|t| t.chars().next().map(|c| c.to_lowercase().collect::<String>() + &t[c.len_utf8()..]))?;
+            match &call["rawInput"] {
+                // a call given nothing is all in its title
+                Value::Null => title,
+                input => format!("{title} {input}"),
+            }
+        }
     };
     // what the request is called: its title, or with none the protocol's own kind for the call
     let tool = title.or_else(|| call["kind"].as_str())?;
@@ -359,7 +367,7 @@ mod tests {
         assert_eq!(option(&json!({ "options": [{ "optionId": "always", "kind": "allow_always" }] }), true), None);
         let me = airband_core::agent::Agent { deliver: Some(Deliver::Held), ..crate::adapters::agent_with("a", "some-tool") };
         let ask = leave(&params, me.clone()).unwrap();
-        assert_eq!(ask.what, "run echo hi");
+        assert_eq!(ask.what, r#"run echo hi {"command":"echo hi"}"#);
         let command = json!({ "toolCall": { "title": "echo hi", "kind": "execute", "rawInput": { "command": ["bash", "-lc", "echo hi"] } } });
         assert_eq!(leave(&command, me.clone()).unwrap().what, "run `bash -lc echo hi`");
         assert!(ask.detail.contains("echo hi"));

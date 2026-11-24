@@ -38,25 +38,50 @@ fn first_object(bytes: &[u8]) -> Option<Value> {
     serde_json::Deserializer::from_slice(bytes).into_iter::<Value>().next()?.ok().filter(Value::is_object)
 }
 
+/// What a file in Claude Code's folder of session records holds, as JSON reads it.
+enum Held {
+    /// A whole object: a record, or the token for a session's socket.
+    Object(Value),
+    /// Not yet whole (the start of a value and no more, or nothing yet), or it could not be read: it may be a
+    /// record being written.
+    Unfinished,
+    /// No JSON object at all, or gone: no record of Claude Code's.
+    Not,
+}
+
+fn held(path: &std::path::Path) -> Held {
+    let bytes = match airband_io::files::read_bytes(path) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Held::Not,
+        Err(_) => return Held::Unfinished,
+    };
+    match serde_json::Deserializer::from_slice(&bytes).into_iter::<Value>().next() {
+        None => Held::Unfinished,
+        Some(Ok(v)) if v.is_object() => Held::Object(v),
+        Some(Ok(_)) => Held::Not,
+        Some(Err(e)) if e.classify() == serde_json::error::Category::Eof => Held::Unfinished,
+        Some(Err(_)) => Held::Not,
+    }
+}
+
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
 /// (`sessions/<process>.json` in its folder: the session, its folder, the socket it takes messages on) and
 /// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
-/// have a record too, with another `entrypoint`: those are not his to talk to and are left out. A record that
-/// holds no whole JSON value (Claude Code was writing it just then) makes the listing less than whole: no
-/// session is taken to have ended on that look.
+/// have a record too, with another `entrypoint`: those are not his to talk to and are left out. A file that
+/// holds the start of a JSON value and no more (Claude Code was writing it just then), or that could not be
+/// read, makes the listing less than whole: no session is taken to have ended on that look. A file that is no
+/// JSON at all (the system's own, an editor's) is no record of Claude Code's, and is passed over.
 pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<crate::adapters::Listing> {
     let dir = claude.join(said("sessions"));
-    // each file's record (`first_object`); one that is not whole yet is told apart
-    let read = |path: &std::path::Path| -> Result<Value, ()> { airband_io::files::read_bytes(path).ok().flatten().and_then(|b| first_object(&b)).ok_or(()) };
     // no folder of records at all: Claude Code cannot say what is open
     if !dir.is_dir() {
         return None;
     }
     // what each file is, by what it holds, never by how its name ends: a session's record says its kind, and the
     // token for its socket is the one that holds a peer token
-    let read: Vec<(std::path::PathBuf, Result<Value, ()>)> = airband_io::files::entries(&dir).ok()?.into_iter().map(|p| { let v = read(&p); (p, v) }).collect();
-    let whole = read.iter().all(|(_, v)| v.is_ok());
-    let files: Vec<(std::path::PathBuf, Value)> = read.into_iter().filter_map(|(p, v)| v.ok().map(|v| (p, v))).collect();
+    let read: Vec<(std::path::PathBuf, Held)> = airband_io::files::entries(&dir).ok()?.into_iter().map(|p| { let v = held(&p); (p, v) }).collect();
+    let whole = !read.iter().any(|(_, v)| matches!(v, Held::Unfinished));
+    let files: Vec<(std::path::PathBuf, Value)> = read.into_iter().filter_map(|(p, v)| match v { Held::Object(v) => Some((p, v)), _ => None }).collect();
     let mut open = Vec::new();
     for (_, v) in &files {
         let field = |k: &str| text(v, k);
@@ -118,4 +143,28 @@ pub(super) fn worked_in(claude: &std::path::Path) -> Vec<crate::adapters::Worked
         })
     });
     crate::adapters::newest(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_that_is_no_json_at_all_leaves_the_listing_whole_and_one_being_written_does_not() {
+        let claude = std::env::temp_dir().join(format!("airband-claude-{}", crate::config::random_hex(6)));
+        let sessions = claude.join(said("sessions"));
+        std::fs::create_dir_all(&sessions).unwrap();
+        let never = |_: u32, _: &str| false;
+        // the system's own file, and an editor's: no record of Claude Code's
+        std::fs::write(sessions.join(".DS_Store"), [0u8, 0, 0, 1, b'B', b'u', b'd', b'1']).unwrap();
+        std::fs::write(sessions.join("notes.txt"), "not a record").unwrap();
+        std::fs::write(sessions.join("list.json"), "[1, 2]").unwrap();
+        assert!(open_in(&claude, &never).unwrap().whole);
+        // a record Claude Code is writing just then: the start of an object, or nothing yet
+        std::fs::write(sessions.join("21.json"), r#"{"pid": 21, "sessionId": "s"#).unwrap();
+        assert!(!open_in(&claude, &never).unwrap().whole);
+        std::fs::write(sessions.join("21.json"), "").unwrap();
+        assert!(!open_in(&claude, &never).unwrap().whole);
+        let _ = std::fs::remove_dir_all(&claude);
+    }
 }

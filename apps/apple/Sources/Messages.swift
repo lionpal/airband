@@ -76,17 +76,6 @@ struct Report: View {
         // anew when it is picked or let go
         .background { if picked { RoundedRectangle(cornerRadius: 16).fill(Palette.card).padding(.horizontal, -4).padding(.vertical, -8) } }
         .contextMenu { LineMenu(m: m) }
-        #if DEBUG
-        // development only: `-airband.devPick <callsign>` picks that agent's newest report a moment after it shows,
-        // lets it go and picks it again, as taps would: for a recording of what picking does to the chat
-        .task {
-            guard Dev.text("devPick") == m.from, model.view.feed.last(where: { !$0.his && !$0.needsYou && $0.from == m.from })?.id == m.id else { return }
-            for _ in 0..<3 {
-                try? await Task.sleep(for: .seconds(2))
-                model.replyingTo = model.replyingTo == nil ? m : nil
-            }
-        }
-        #endif
     }
 }
 /// What a long press on something an agent said offers: its words to copy and, for one that was not read
