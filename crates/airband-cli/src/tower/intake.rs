@@ -137,7 +137,11 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         }
         Event::Commands { list } => {
             log(format!("{logged}: its tool lists {} commands and skills", list.len()));
-            inner.session(&id).unwrap().tool_commands = Some(list);
+            let s = inner.session(&id).unwrap();
+            s.tool_commands = Some(list);
+            s.tool_commands_rev += 1;
+            // a radio holding its list sees the roster change and asks again
+            inner.tell();
             return Ok(());
         }
         Event::Model { name, effort } => {

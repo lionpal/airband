@@ -299,6 +299,14 @@ pub struct RosterEntry {
     pub effort: Option<String>,
     /// Whether his words can reach it.
     pub reach: crate::radio::Reach,
+    /// How many times its tool has listed its commands and skills anew for its session: a radio that holds its
+    /// list asks for it again when this changes (`GET commands`). Zero for a tool that lists them only when asked.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub commands: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

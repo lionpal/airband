@@ -18,6 +18,9 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
         let got = radio.followed(if first { 0 } else { 25 });
         first &= got.is_err();
         let Some(round) = take(&shared, &radio, &station, epoch, &got) else { return };
+        if got.is_ok() {
+            super::slash::roster_came(&shared);
+        }
         // the names he is likely to say, for whatever listens on this device: his agents and their teams
         if got.is_ok() {
             let names: Vec<String> = shared.state.lock().unwrap().computers.iter().flat_map(|s| s.agents.iter().flat_map(|a| [a.callsign.clone(), a.group.clone()])).collect();

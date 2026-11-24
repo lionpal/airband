@@ -54,7 +54,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None, reaches: true, take_over: false }).collect(),
+        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None, reaches: true, take_over: false, commands: 0 }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         epoch: 0,
         was_waiting: Vec::new(),
