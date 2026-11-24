@@ -8,8 +8,9 @@ on this machine.
 A relay and a tower in a throwaway folder, each on a port nothing else is on, with a stand-in agent that answers
 what it is given; a simulator made for this run alone and deleted at the end, so no pairing of his is ever on it.
 The checks themselves are an XCTest in the app (apps/apple/EndToEnd), run with `xcodebuild test`: it pairs from a
-fresh link, sees the computer's name and picture, types to the agent and gets its answer in the chat, and with the
-relay gone has what it typed wait and go once the relay is back. The test asks this script for what only the
+fresh link, sees the computer's name and picture, types to the agent and gets its answer in the chat, sees two agents
+started meanwhile in a new team (one of them renamed) in its list at once, and with the relay gone has what it typed
+wait and go once the relay is back. The test asks this script for what only the
 computer's side can do (a new pairing link, the relay stopped and started, what the agent was given) over a small
 local HTTP server whose address it is handed in its environment.
 """
@@ -120,6 +121,16 @@ class Control(http.server.BaseHTTPRequestHandler):
                     return self.answer({"wrong": "the tower did not serve the new pairing"}, 500)
                 carried = dict(urllib.parse.parse_qsl(link.split("?", 1)[1]))
                 return self.answer({"link": link, "name": COMPUTER, "model": model, "shape": shape, "carried": {"name": carried.get("name", ""), "model": carried.get("model", "")}})
+            if self.path.startswith("/agent?"):
+                # an agent of his checks in, in a folder of this run's (a team of its own), is renamed by him, or
+                # signs off: as a session he starts in a terminal, names, and ends reports itself
+                q = dict(urllib.parse.parse_qsl(self.path.split("?", 1)[1]))
+                folder = os.path.join(work, q["folder"])
+                os.makedirs(folder, exist_ok=True)
+                titled = ["--title", q["title"]] if q.get("title") else []
+                event = "signoff" if q.get("gone") else "checkin"
+                done = subprocess.run([BIN, "report", "--id", q["id"], "--harness", "script", "--cwd", folder, *titled, event], env=tower_env, capture_output=True, text=True)
+                return self.answer({"ok": done.returncode == 0, "said": done.stderr.strip()}, 200 if done.returncode == 0 else 500)
             if self.path == "/relay/stop":
                 relay.terminate()
                 relay.wait(10)

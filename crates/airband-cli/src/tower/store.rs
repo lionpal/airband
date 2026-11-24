@@ -487,6 +487,48 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// What this build writes of every kept table, this build reads back whole: written again after a restart,
+    /// each table is the same text, so no field of it is lost or read as something else on the way. (The 0.9.0
+    /// upgrade set aside a whole kept state that an older build had written in another shape; nothing of the
+    /// current shape may ever go that way.)
+    #[test]
+    fn every_kept_table_reads_back_as_this_build_wrote_it() {
+        let (s, path) = store("round-trip");
+        let mut inner = Inner::default();
+        let agent = |id: &str, cwd: &str, title: Option<&str>| airband_core::agent::Agent { cwd: Some(cwd.into()), title: title.map(String::from), pid: Some(4242), deliver: Some(Deliver::Command { argv: vec!["notify".into()] }), meta: [("branch".to_string(), serde_json::json!("main"))].into_iter().collect(), ..crate::adapters::agent_with(id, "test") };
+        inner.check_in(&agent("a", "/x/shop", Some("refunds"))).unwrap();
+        inner.check_in(&agent("b", "/x/shop", None)).unwrap();
+        inner.check_in(&agent("c", "/x/garden", None)).unwrap();
+        let (shop, garden) = (inner.team_at("/x/shop").unwrap(), inner.team_at("/x/garden").unwrap());
+        inner.rename_team(&shop, "store front").unwrap();
+        // placed by him in another team: the placement, the mover and the time are all kept
+        inner.move_to("b", &garden, sessions::Mover::Him).unwrap();
+        let s_a = inner.session("a").unwrap();
+        (s_a.waiting, s_a.last_heard, s_a.subagents, s_a.model, s_a.effort, s_a.reports, s_a.told_upto) = (true, Some("m1".into()), 2, Some("Opus 5.5".into()), Some("high".into()), 3, 77);
+        (s_a.queue, s_a.listed, s_a.hooked, s_a.turn) = (vec![("m2".into(), "and the tests".into())], true, true, Some("turn-9".into()));
+        inner.held.push(held::Kept { id: "h1".into(), cwd: "/x/shop".into(), launcher: "some-launcher".into(), model: Some("haiku".into()), effort: Some("low".into()), session: Some("tool-session".into()) });
+        inner.tools = vec!["some-tool".into()];
+        inner.links.made("a", "https://example.com/preview/7", Some("A preview".into()), Some("artifact".into()));
+        inner.links.said("a", "m3", "The preview is up.");
+        let wrote = inner.changes();
+        let mut keys: Vec<&str> = wrote.tables.iter().map(|(k, _)| *k).collect();
+        keys.sort();
+        let mut kept = KEPT.to_vec();
+        kept.sort();
+        assert_eq!(keys, kept, "every kept table is written");
+        s.write(&wrote).unwrap();
+        let (saved, _) = s.load(10).unwrap();
+        let mut again = Inner { sessions: saved.sessions, teams: saved.teams, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, links: saved.links, ..Inner::default() };
+        let read = again.changes();
+        for (key, text) in &wrote.tables {
+            let back = read.tables.iter().find(|(k, _)| k == key).map(|(_, t)| t.as_str());
+            assert_eq!(back, Some(text.as_str()), "the kept {key} reads back as it was written");
+        }
+        let aside: i64 = s.db.lock().unwrap().query_row("select count(*) from state where key like '%.unreadable'", [], |r| r.get(0)).unwrap();
+        assert_eq!(aside, 0, "nothing this build wrote is set aside as unreadable");
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn a_kept_table_that_cannot_be_read_is_set_aside_alone() {
         let (s, path) = store("one-table");

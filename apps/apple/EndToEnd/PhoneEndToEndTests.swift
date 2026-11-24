@@ -37,6 +37,32 @@ final class PhoneEndToEndTests: XCTestCase {
         XCTAssertEqual(phone.desk.view().feed.filter { !$0.his && $0.text == answer }.count, 1)
     }
 
+    /// Two sessions he starts in a terminal while the phone is following, in a team that had nobody in it, and one
+    /// of them renamed by him: both are in the phone's list within a moment, the renamed one by its new name, as
+    /// the tower has them. Nothing waits for a timer: the request the phone holds open ends when they arrive.
+    func testAgentsStartedMeanwhileAreInTheListAtOnce() throws {
+        let tower = try Tower()
+        let pairing = try tower.pair()
+        let phone = Phone()
+        defer { phone.unpair() }
+        XCTAssertEqual(phone.desk.setLinks(links: [pairing.link]).links, [pairing.link])
+        let first = try phone.agentOnline()
+        let (one, two) = ("new-" + UUID().uuidString.prefix(6), "new-" + UUID().uuidString.prefix(6))
+        // they end when this does: the other checks have the stand-in agent alone
+        defer { for id in [one, two] { try? tower.agent(id, folder: "arcady", gone: true) } }
+        try tower.agent(one, folder: "arcady")
+        try tower.agent(one, folder: "arcady", title: "biking two")
+        try tower.agent(two, folder: "arcady")
+        let room = try phone.until("both new agents are in the list, in their own team, the renamed one by its new name", seconds: 8) { view -> DeskRoom? in
+            guard let room = view.rooms.first(where: { r in r.members.contains { $0.id == one } }) else { return nil }
+            let ids = Set(room.members.map(\.id))
+            let renamed = room.members.first { $0.id == one }?.callsign.hasSuffix("biking two") ?? false
+            return ids == [one, two] && renamed ? room : nil
+        }
+        XCTAssertEqual(room.agents, 2)
+        XCTAssertTrue(phone.desk.view().rooms.flatMap(\.members).contains { $0.id == first }, "the one that was there stays")
+    }
+
     /// With the relay gone what he types waits on the phone, still being tried; once the relay is back it goes,
     /// reaches the agent once, and the answer comes back.
     func testWhatHeTypesWithTheRelayGoneWaitsAndGoesWhenItIsBack() throws {
@@ -115,6 +141,15 @@ struct Tower {
         return try JSONDecoder().decode(Done.self, from: call("POST", "relay/" + what)).listening
     }
 
+    /// An agent of his checks in, in this folder of the run's (each folder a team), with the name he gave its
+    /// session when there is one.
+    func agent(_ id: String, folder: String, title: String? = nil, gone: Bool = false) throws {
+        var at = URLComponents()
+        at.path = "agent"
+        at.queryItems = [URLQueryItem(name: "id", value: id), URLQueryItem(name: "folder", value: folder)] + (title.map { [URLQueryItem(name: "title", value: $0)] } ?? []) + (gone ? [URLQueryItem(name: "gone", value: "1")] : [])
+        _ = try call("POST", at.string!)
+    }
+
     /// Everything the stand-in agent has been given, and what it answered each.
     func heard() throws -> [Heard] {
         try JSONDecoder().decode([Heard].self, from: call("GET", "heard"))
@@ -128,7 +163,7 @@ struct Tower {
     }
 
     private func call(_ method: String, _ path: String) throws -> Data {
-        var request = URLRequest(url: control.appendingPathComponent(path), timeoutInterval: 60)
+        var request = URLRequest(url: URL(string: path, relativeTo: control)!.absoluteURL, timeoutInterval: 60)
         request.httpMethod = method
         var answer: Result<Data, Error> = .failure(URLError(.timedOut))
         let done = DispatchSemaphore(value: 0)

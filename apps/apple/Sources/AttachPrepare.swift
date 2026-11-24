@@ -1,6 +1,5 @@
 // What he attached, made ready to send: a photo or video picked, copied and shrunk, and handed to the core.
 import AVFoundation
-import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -24,8 +23,6 @@ struct TrayItem: Identifiable, Equatable {
     /// For a video: the part of it he kept, in seconds. Nothing means all of it.
     var kept: ClosedRange<Double>?
     let number: Int
-    /// The photo or video in his library it was taken from, when it was one of his newest.
-    var asset: String?
 }
 
 /// A video picked from the library, copied to somewhere the app can read it.
@@ -142,30 +139,6 @@ extension RadioModel {
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
-    /// He tapped one of his newest photos or videos: it goes the way a picked one does.
-    func attach(_ asset: PHAsset) {
-        let item = newItem(video: asset.mediaType == .video, asset: asset.localIdentifier)
-        if item.video {
-            let wanted = PHVideoRequestOptions()
-            wanted.isNetworkAccessAllowed = true
-            PHImageManager.default().requestAVAsset(forVideo: asset, options: wanted) { movie, _, _ in
-                // A copy of the app's own, as a picked video is: the tray trims its source and deletes it when the
-                // item is taken off, and neither may ever touch the one in his library.
-                guard let url = (movie as? AVURLAsset)?.url else { return self.unread(item) }
-                let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + Prepare.ending(url))
-                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return self.unread(item) }
-                Task { await self.ready(item, video: copy) }
-            }
-        } else {
-            let wanted = PHImageRequestOptions()
-            wanted.isNetworkAccessAllowed = true
-            wanted.deliveryMode = .highQualityFormat
-            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: wanted) { data, _, _, _ in
-                Task { await self.ready(item, photo: data) }
-            }
-        }
-    }
-
     /// He picked these from his photos: each appears in the tray at once, is made ready on the phone, then sent.
     func attach(_ picked: [PhotosPickerItem]) {
         for pick in picked {
@@ -181,8 +154,8 @@ extension RadioModel {
     }
 
     /// A new item in the tray, shown at once while it is made ready.
-    private func newItem(video: Bool, asset: String? = nil) -> TrayItem {
-        let item = TrayItem(video: video, number: nextNumber, asset: asset)
+    private func newItem(video: Bool) -> TrayItem {
+        let item = TrayItem(video: video, number: nextNumber)
         tray.append(item)
         return item
     }
@@ -195,9 +168,5 @@ extension RadioModel {
     private func ready(_ item: TrayItem, photo data: Data?) async {
         let made: Prepare.Made = data.flatMap { Prepare.photo($0, number: item.number) }.map { .success(($0.0, $0.1, $0.2)) } ?? .failure(Prepare.Unmade(why: Prepare.Unmade.unread))
         await MainActor.run { self.prepared(item.id, made, source: nil, making: item.making) }
-    }
-    /// What he attached could not be had at all.
-    private func unread(_ item: TrayItem) {
-        DispatchQueue.main.async { self.prepared(item.id, .failure(Prepare.Unmade(why: Prepare.Unmade.unread)), source: nil, making: item.making) }
     }
 }

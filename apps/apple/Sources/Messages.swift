@@ -48,7 +48,9 @@ struct Report: View {
             // finger. Seeing all of what it wrote is the small button beside it.
             HStack(alignment: .bottom, spacing: 6) {
                 Button { model.replyingTo = picked ? nil : m } label: {
-                    Prose(text: whole ? model.whole(m) : m.text, plain: !whole)
+                    // words are laid out once for their width and never moved by an animation: a change to them
+                    // (opened, closed, made shorter) is drawn at once, never word by word across the line
+                    Prose(text: whole ? model.whole(m) : m.text, plain: !whole).transaction { $0.animation = nil }
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(picked ? "Stop answering this one" : "Answer this agent: what you say or type next goes to it")
@@ -69,10 +71,22 @@ struct Report: View {
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 150).padding(.top, 3) }
             if !m.links.isEmpty { LinkRow(m: m).padding(.top, 3) }
         }
-        .padding(.horizontal, 6).padding(.vertical, picked ? 8 : 0)
-        .background(picked ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, picked ? -4 : 0)
+        .padding(.horizontal, 6)
+        // picked: a card drawn round it, reaching past its edges, so nothing in it or around it moves or wraps
+        // anew when it is picked or let go
+        .background { if picked { RoundedRectangle(cornerRadius: 16).fill(Palette.card).padding(.horizontal, -4).padding(.vertical, -8) } }
         .contextMenu { LineMenu(m: m) }
+        #if DEBUG
+        // development only: `-airband.devPick <callsign>` picks that agent's newest report a moment after it shows,
+        // lets it go and picks it again, as taps would: for a recording of what picking does to the chat
+        .task {
+            guard Dev.text("devPick") == m.from, model.view.feed.last(where: { !$0.his && !$0.needsYou && $0.from == m.from })?.id == m.id else { return }
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .seconds(2))
+                model.replyingTo = model.replyingTo == nil ? m : nil
+            }
+        }
+        #endif
     }
 }
 /// What a long press on something an agent said offers: its words to copy and, for one that was not read
@@ -114,6 +128,7 @@ struct Question: View {
                     .foregroundStyle(m.open ? Palette.ink : Palette.soft)
                     .lineSpacing(2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.trailing, m.open ? 72 : 0)
+                    .transaction { $0.animation = nil }
             }
             .buttonStyle(.plain).accessibilityHint(m.open ? (picked ? "Stop answering this one" : "Answer this one: what you say or type next goes to it") : "Show what was behind this question")
             .accessibilityAddTraits(picked ? .isSelected : [])
@@ -201,7 +216,7 @@ struct Mine: View {
             if !m.pictures.isEmpty, !beside { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? model.whole(m) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
-                    .lineLimit(whole ? nil : 5)
+                    .lineLimit(whole ? nil : 5).transaction { $0.animation = nil }
                 if long {
                     Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ground.opacity(0.45))
                 }
@@ -223,7 +238,7 @@ struct Mine: View {
                 guard long else { return }
                 // what the chat carries of a very long one is its opening: the rest is fetched when he opens it
                 if !whole && m.long { model.loadFull(m) }
-                withAnimation(.snappy(duration: 0.2)) { whole.toggle() }
+                whole.toggle()
             }
             }
             }
