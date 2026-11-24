@@ -56,7 +56,7 @@ pub(crate) mod tests_keychain {
 
 fn security() -> Command {
     // by its full path: the tower runs with his terminal's PATH, and every login goes to this program
-    let mut c = Command::new(crate::platform::SECURITY);
+    let mut c = airband_io::child::command(crate::platform::SECURITY);
     if let Some(a) = config::account().filter(|a| !a.home.is_empty()) {
         c.env("HOME", a.home);
     }

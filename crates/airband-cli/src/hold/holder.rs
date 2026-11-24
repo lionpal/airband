@@ -3,7 +3,7 @@ use super::{Answer, By, NotStarted, State, Tell, ToHolder};
 use serde_json::Value;
 use std::io::{BufRead, Read, Write};
 use std::os::unix::net::UnixListener;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -133,7 +133,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let state = Arc::new(Mutex::new(State::Starting));
     let (tx, rx) = mpsc::channel::<Msg>();
     listen(&sock, state.clone(), tx.clone())?;
-    let mut command = Command::new(program);
+    let mut command = airband_io::child::command(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
     // would be read to him twice.

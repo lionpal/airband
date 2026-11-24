@@ -73,7 +73,7 @@ fn deliver(session: &str, words: &str) -> Result<(), String> {
     let argv = crate::adapters::tool_row(NAME).map(|t| t.command("deliver", &[("program", &program), ("session", session), ("words", words)])).unwrap_or_default();
     let (program, args) = argv.split_first().ok_or("its row gives no way to hand it words")?;
     // what it writes on failing is its own, and can hold his words: never read to him or logged
-    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| format!("{} could not be started: {e}", crate::adapters::called(NAME).0))?;
+    let done = airband_io::child::command(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| format!("{} could not be started: {e}", crate::adapters::called(NAME).0))?;
     if done.success() { Ok(()) } else { Err(didnt_take(&crate::adapters::called(NAME).0, program)) }
 }
 

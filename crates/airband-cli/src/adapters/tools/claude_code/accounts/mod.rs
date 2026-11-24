@@ -26,7 +26,6 @@ use serde_json::Value;
 use service::Unchecked;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
 type Res<T> = Result<T, String>;
@@ -358,7 +357,7 @@ pub(crate) fn add() -> Res<String> {
     airband_io::files::write_atomic(&tmp.join(row("account_file")), row("account_seed")).map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
-    let status = Command::new(&program).args(sign_in_args().ok_or_else(|| format!("airband does not know how {} is signed in to.", tool()))?).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
+    let status = airband_io::child::command(&program).args(sign_in_args().ok_or_else(|| format!("airband does not know how {} is signed in to.", tool()))?).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
     let result = (|| -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());

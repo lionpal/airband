@@ -48,7 +48,7 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
         }
         Deliver::Command { argv } => {
             let (program, args) = argv.split_first().ok_or("its delivery command is empty")?;
-            let mut child = tokio::process::Command::new(program)
+            let mut child = tokio::process::Command::from(airband_io::child::command(program))
                 .args(args)
                 .env("AIRBAND_AGENT_ID", agent)
                 .stdin(Stdio::piped())
@@ -68,7 +68,7 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
             // a newline typed into a terminal would send the message early
             let line = words.split_whitespace().collect::<Vec<_>>().join(" ");
             for args in row.runs(pane, &line) {
-                let out = tokio::process::Command::new(&row.program).args(&args).output().await.map_err(|e| format!("cannot run {}: {e}", row.program))?;
+                let out = tokio::process::Command::from(airband_io::child::command(&row.program)).args(&args).output().await.map_err(|e| format!("cannot run {}: {e}", row.program))?;
                 // what it wrote on failing is its own, and can hold his words: he is told it failed, never its text
                 if !out.status.success() {
                     return Err(format!("{} stopped with an error ({})", row.program, out.status));

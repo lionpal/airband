@@ -20,7 +20,7 @@ fn plist_path() -> PathBuf {
 /// when it leads to this very binary.
 fn packaged_exe(installer: &airband_core::catalog::Installer, real: &Path) -> Option<PathBuf> {
     let (program, args) = installer.lasting.split_first()?;
-    let out = std::process::Command::new(program).args(args).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
+    let out = airband_io::child::command(program).args(args).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
     let lasting = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim_end_matches('\n'));
     Some(in_lasting(installer, &lasting, real))
 }
@@ -67,7 +67,6 @@ fn xml_text(text: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
     let log = config::dir().join("airband.log");
     // the tower finds the coding tools where his terminal does: by the PATH it is installed from, never one
     // written here
@@ -90,10 +89,10 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     airband_io::files::make_folder(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
     airband_io::files::write_atomic(&plist_path(), plist).map_err(|e| e.to_string())?;
     let uid = unsafe { libc::getuid() };
-    Command::new(crate::platform::LAUNCHCTL).args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
+    airband_io::child::command(crate::platform::LAUNCHCTL).args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
     // stopping the old one takes a moment, and starting before it has gone fails ("Input/output error"): this left
     // the tower down for some minutes once. Try again until it takes.
-    let start = || Command::new(crate::platform::LAUNCHCTL).args(["bootstrap", &format!("gui/{uid}"), &plist_path().display().to_string()]).output().map_err(|e| e.to_string());
+    let start = || airband_io::child::command(crate::platform::LAUNCHCTL).args(["bootstrap", &format!("gui/{uid}"), &plist_path().display().to_string()]).output().map_err(|e| e.to_string());
     let mut out = start()?;
     for _ in 0..8 {
         if out.status.success() {
@@ -122,8 +121,8 @@ pub(crate) fn uninstall() -> Result<(), String> {
         let uid = unsafe { libc::getuid() };
         let service = format!("gui/{uid}/{LABEL}");
         // one not running cannot be stopped, and that is no error: whether it is still loaded after is the fact
-        std::process::Command::new(crate::platform::LAUNCHCTL).args(["bootout", &service]).output().map_err(|e| format!("could not run launchctl: {e}"))?;
-        let loaded = std::process::Command::new(crate::platform::LAUNCHCTL).args(["print", &service]).output().is_ok_and(|o| o.status.success());
+        airband_io::child::command(crate::platform::LAUNCHCTL).args(["bootout", &service]).output().map_err(|e| format!("could not run launchctl: {e}"))?;
+        let loaded = airband_io::child::command(crate::platform::LAUNCHCTL).args(["print", &service]).output().is_ok_and(|o| o.status.success());
         stopped(loaded, airband_io::files::remove(&plist_path()))?;
     }
     println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");

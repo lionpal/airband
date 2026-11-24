@@ -193,7 +193,7 @@ mod file {
             #[cfg(not(target_os = "macos"))]
             if cfg!(windows) {
                 // the value alone, as PowerShell's Get-ItemPropertyValue gives it, not read out of a table
-                std::process::Command::new("powershell")
+                airband_io::child::command("powershell")
                     .args(["-NoProfile", "-NonInteractive", "-Command", r"Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid"])
                     .output()
                     .ok()

@@ -289,7 +289,7 @@ pub(super) async fn launch_by(app: &Arc<App>, place: &Place, idea: &Idea, by: Op
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
     // A launcher hands the agent off and ends: its ending is what says how it went, waited for as long as it
     // takes. Never cut short on a clock while it goes on, which could start a second agent when he asks again.
-    let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output();
+    let run = tokio::process::Command::from(airband_io::child::command(program)).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output();
     match run.await {
         Ok(out) if out.status.success() => {
             log(format!("launched by {named}{with}, with a task of {} characters", task.chars().count()));

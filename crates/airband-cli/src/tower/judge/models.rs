@@ -184,11 +184,11 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
     let (program, args) = argv.split_first().ok_or_else(|| Failed(Trouble::NotSet, "the command that reads is empty".into()))?;
     // on Windows a coding tool's command is often a .cmd shim, which only the shell can start
     let mut cmd = if cfg!(windows) {
-        let mut c = tokio::process::Command::new("cmd");
+        let mut c = tokio::process::Command::from(airband_io::child::command("cmd"));
         c.arg("/C").arg(program);
         c
     } else {
-        tokio::process::Command::new(program)
+        tokio::process::Command::from(airband_io::child::command(program))
     };
     let mut child = cmd
         .args(args)

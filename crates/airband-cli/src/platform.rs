@@ -26,7 +26,7 @@ pub(crate) const MAC_NAME: &str = "dev.airband.tower";
 /// When process `pid` started, in seconds since 1970 (UTC), as the system says: what tells it from a later
 /// process given the same number. None when there is no such process.
 pub(crate) fn started(pid: u32) -> Option<u64> {
-    let out = std::process::Command::new(PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
+    let out = airband_io::child::command(PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
     lstart(&String::from_utf8_lossy(&out.stdout))
 }
 

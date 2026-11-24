@@ -72,7 +72,7 @@ impl Procs for SystemProcs {
     #[cfg(unix)]
     fn start_apart(&self, run: Run) -> Result<(), String> {
         use std::os::unix::process::CommandExt;
-        let mut cmd = std::process::Command::new(&run.program);
+        let mut cmd = airband_io::child::command(&run.program);
         cmd.args(&run.args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         for k in &run.unset {
             cmd.env_remove(k);

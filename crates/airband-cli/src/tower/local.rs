@@ -11,7 +11,7 @@
 //! time: about as much as the model's download.
 use super::*;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::sync::OnceLock;
 
 /// Where the server listens: ten ports up from the tower's own, on the loopback address only. Set once, as the
@@ -86,7 +86,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     }
     let packed = dir().join(&archive.file);
     airband_io::files::write_atomic(&packed, &bytes).map_err(|e| e.to_string())?;
-    let unpacked = Command::new(crate::platform::TAR).arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
+    let unpacked = airband_io::child::command(crate::platform::TAR).arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
     airband_io::files::remove(&packed).ok();
     if !unpacked.success() || !program.is_file() {
         return Err("the program that runs the model could not be unpacked".into());
@@ -182,7 +182,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             // went: a model left running by itself would hold gigabytes of memory for nobody. The same shell
             // ends it when it is told to stop.
             const KEEPER: &str = "trap 'kill \"$c\" \"$w\" 2>/dev/null' TERM INT; \"$@\" & c=$!; ( while kill -0 \"$AIRBAND_TOWER_PID\" 2>/dev/null; do sleep 2; done; kill \"$c\" 2>/dev/null ) & w=$!; wait \"$c\"";
-            let child = Command::new(crate::platform::SH)
+            let child = airband_io::child::command(crate::platform::SH)
                 .args(["-c", KEEPER, "sh"])
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
@@ -225,25 +225,13 @@ mod tests {
 
     #[test]
     fn a_port_is_free_only_when_nothing_listens_there() {
-        // Asked in a run of this test alone. On macOS a new socket is kept from programs started after it only
-        // once it is made, so a program another thread starts meanwhile can be handed it, and holds its port for
-        // as long as it runs; the other tests of this run start programs all the time.
-        const ALONE: &str = "AIRBAND_TEST_PORT_ALONE";
-        let Some(ran) = std::env::var_os(ALONE) else {
-            let ran = std::env::temp_dir().join(format!("airband-port-alone-{}", crate::config::random_hex(6)));
-            let name = format!("{}::a_port_is_free_only_when_nothing_listens_there", module_path!().split_once("::").unwrap().1);
-            let out = std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact", &name, "--test-threads=1", "--nocapture"]).env(ALONE, &ran).output().unwrap();
-            assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-            // and it was run there, never filtered out
-            assert!(std::fs::remove_file(&ran).is_ok(), "the run alone did not run it");
-            return;
-        };
+        // run beside tests that start programs all the time: none of them is handed the socket and keeps its
+        // port held (airband_io::child)
         let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = held.local_addr().unwrap().port();
         assert!(!port_free(port));
         drop(held);
         assert!(port_free(port));
-        std::fs::write(ran, "").unwrap();
     }
 
     #[test]

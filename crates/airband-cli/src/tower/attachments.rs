@@ -151,7 +151,7 @@ fn frames(video: &Path) -> tokio::sync::watch::Receiver<bool> {
         // each program its rows name is tried in turn; the first that runs and succeeds is the one that did it
         let ran = airband_io::files::make_folder(&out).is_ok()
             && airband_core::catalog::frames_programs().iter().any(|f| {
-                std::process::Command::new(&f.program)
+                airband_io::child::command(&f.program)
                     .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
