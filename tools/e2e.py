@@ -131,6 +131,27 @@ def interactive():
         else:
             check(INTERACTIVE[3], False, pane()[-1500:])
             check(INTERACTIVE[4], False)
+        # he answers at the computer instead: the card says so at once, and a late answer from the phone does nothing
+        tell("Now use the Bash tool to run exactly this command and nothing else: touch made-there.txt")
+        card = card_for("made-there")
+        if card:
+            for _ in range(60):
+                if "Do you want to proceed" in pane(): break
+                time.sleep(0.5)
+            subprocess.run(["tmux", "send-keys", "-t", session, "1"])
+            time.sleep(0.5)
+            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"])
+            closed = None
+            for _ in range(40):
+                closed = next((m for m in feed()["messages"] if m["id"] == card["id"] and not m.get("options")), None)
+                if closed: break
+                time.sleep(0.25)
+            check(INTERACTIVE[5], closed and closed["text"] == "Wants to run `touch made-there.txt`. Settled at the keyboard." and os.path.exists(os.path.join(proj, "made-there.txt")), closed or pane()[-1500:])
+            late = said("Deny", re=card["id"], act={"kind": "verdict", "allow": False})
+            check(INTERACTIVE[6], late.get("request_over") is True and late["say"] == "That request is no longer waiting. Nothing was allowed.", late)
+        else:
+            check(INTERACTIVE[5], False, pane()[-1500:])
+            check(INTERACTIVE[6], False)
     finally:
         subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
         if os.path.exists(login):
@@ -701,7 +722,8 @@ Send it as written, or do you want changes?""")
     else:
         skip(["Claude Code's permission prompt arrives as a question", "it says exactly what will run", "after Allow from the radio, Claude ran it"], "run with --claude")
     INTERACTIVE = ["in an interactive session, the prompt reaches the phone with the command", "Allow from the phone runs it", "the tool's own nudge is not a second card",
-                   "Deny from the phone stops it", "and the terminal's prompt goes away with it"]
+                   "Deny from the phone stops it", "and the terminal's prompt goes away with it",
+                   "answered at the computer instead, the card says so within seconds", "and a late answer from the phone is refused, as that"]
     if "--claude" in sys.argv and shutil.which("tmux"):
         print("A real interactive Claude Code session asks permission")
         interactive()

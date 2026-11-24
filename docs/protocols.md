@@ -67,7 +67,7 @@ the question to him on the radio.
 |---|---|---|
 | `POST /v1/agent/permission` | `{ schema, agent, what, detail, question }` → `PermissionState` | `what` finishes the words "wants to …" and is shown to him exactly as given: "run \`npm run deploy\`". `detail` is the whole request, for the more-info page. `question`, `{ text, choices }`, is set when the agent is asking him something through its harness's own asking tool: it is shown as that question with its choices, and whatever he answers is the reply. |
 | `GET /v1/agent/permission/{id}?wait=<s>` | → `PermissionState` | Held open up to `wait` seconds (25 at most) or until he answers. |
-| `DELETE /v1/agent/permission/{id}` | | The harness has stopped waiting. The card closes. |
+| `DELETE /v1/agent/permission/{id}?why=<unanswered\|settled-there>` | | The harness has stopped waiting: no answer came in time and it asks at its keyboard (`unanswered`, the default), or the tool says the request was settled there (`settled-there`). The card closes and says which. |
 
 `PermissionState` is `{ id, state, message, wait_seconds }`:
 
@@ -140,7 +140,7 @@ ids of files sent with `POST attachment`. `others` are the agents on his screen 
 has, each `{ id, callsign, group, team, badge, said, ago }`. `to` is the agents he picked on his screen, by id;
 `act` is what a button did (see "What he says"); `answers` is the id of the `question` it answers.
 
-A `Reply` is `{ say, done, listen, ask, elsewhere, question, undelivered }`. `done` says that what he asked was done whole and
+A `Reply` is `{ say, done, listen, ask, elsewhere, question, undelivered, request_over }`. `done` says that what he asked was done whole and
 `say` only confirms it: a radio with a screen already shows his words in the chat, so it shows `say` only when
 `done` is not set. `say` is spoken back and `listen` asks for the
 microphone again. `ask` lists the agents his words could be for when the tower could not tell. `elsewhere` is the id of one
@@ -150,6 +150,8 @@ that his words did not reach everyone they were for: `{ "why": "missed", "missed
 `no_way_in`, `gone` or `failed` for each agent that did not get them, or `{ "why": "nobody_running" }`,
 `{ "why": "files" }`, `{ "why": "team_gone" }`. A radio keeps such words in the chat as not delivered until he
 sends them again (under a new id: an id the tower has answered is answered the same way again) or lets them go.
+`request_over` says his words answered a request for leave that had already ended: nothing was allowed or refused,
+and `say` tells him so.
 
 Chat mode and the rest:
 

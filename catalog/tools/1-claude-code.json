@@ -246,6 +246,7 @@
     "hooks_file": "settings.json",
     "sessions": "sessions",
     "projects": "projects",
+    "subagent_transcript": "subagents/agent-{agent}.jsonl",
     "session_kind": "interactive",
     "session_entry": "cli"
   }

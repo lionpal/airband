@@ -96,8 +96,9 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
             Leave::Nobody | Leave::Gone => return Answer::Unanswered,
         }
     }
-    // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an
-    // answer that no longer does anything
-    here.call::<at::PermissionWithdraw>(Some(&asked.id), &Nothing {}, None).ok();
+    // he did not answer, or it was settled at the tool: take the question back at once, saying which, so the feed
+    // does not offer an answer that no longer does anything
+    let why = if still.is_some_and(|still| !still()) { wire::Withdrawn::SettledThere } else { wire::Withdrawn::Unanswered };
+    here.call::<at::PermissionWithdraw>(Some(&asked.id), &wire::WithdrawQuery { why }, None).ok();
     Answer::Unanswered
 }

@@ -104,7 +104,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
 /// plain yes allows it; if his words do not settle it, nothing is decided. `None` when this was not about leave.
 async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance) -> Option<Reply> {
     let re = said.re.as_deref();
-    let over = || say("That request is no longer waiting. Nothing was allowed.".into());
+    let over = || Reply { request_over: true, ..say("That request is no longer waiting. Nothing was allowed.".into()) };
     let verdict = match permit::asked_leave(app, re) {
         permit::Leave::No => None,
         // an answer to a request that is over answers nothing, and is not passed to the agent as if it did

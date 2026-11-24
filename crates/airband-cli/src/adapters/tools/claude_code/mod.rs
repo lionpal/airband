@@ -75,6 +75,85 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     crate::adapters::hooks::leave(agent_of(hook)?, tool, what, input, crate::adapters::hooks::AT_KEYBOARD, question)
 }
 
+/// Is the prompt this PermissionRequest hook is for still waiting? Claude Code shows its own prompt while the
+/// hook waits, and it does not stop the hook when the prompt is settled there (answered at its keyboard, or
+/// refused by Claude Code itself). What it does is write the call's result into the transcript of the agent
+/// that made the call: the main one, or a subagent's of its own. The call is the last one there with this tool
+/// and this input; once a result for it is written, the prompt is over. Nothing when there is no transcript.
+fn still_asking(hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
+    let (tool, input) = crate::adapters::hooks::permission_hook(hook)?;
+    let main = std::path::PathBuf::from(text(hook, "transcript_path")?);
+    let path = match text(hook, "agent_id") {
+        Some(agent) if file_safe(&agent) => main.with_extension("").join(crate::adapters::row_says(HARNESS, "subagent_transcript").replace("{agent}", &agent)),
+        Some(_) => return None,
+        None => main,
+    };
+    // The call is written down about when the hook starts, sometimes just after. At the first look it is the
+    // last call with this tool and this input that has no result yet; when there is none, it is the next such
+    // call written. After that only what is new is read, until its result is.
+    let (tool, input) = (tool.to_string(), input.clone());
+    let seen = std::sync::Mutex::new(Calls::default());
+    Some(Box::new(move || {
+        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+        let (lines, end) = transcript_from(&path, seen.read);
+        for (_, line) in &lines {
+            for c in line["message"]["content"].as_array().into_iter().flatten() {
+                let id = || c["id"].as_str().map(String::from);
+                match c["type"].as_str() {
+                    Some("tool_use") if c["name"] == tool.as_str() && c["input"] == input => {
+                        if seen.looked && seen.call.is_none() {
+                            seen.call = id();
+                        }
+                        seen.open.extend(id());
+                    }
+                    Some("tool_result") => {
+                        if seen.call.as_deref().is_some_and(|call| c["tool_use_id"] == call) {
+                            return false;
+                        }
+                        seen.open.retain(|open| c["tool_use_id"] != open.as_str());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !seen.looked {
+            seen.call = seen.open.last().cloned();
+            seen.looked = true;
+        }
+        seen.read = end;
+        true
+    }))
+}
+
+/// What has been read of a transcript while a prompt waits.
+#[derive(Default)]
+struct Calls {
+    /// How far it has been read.
+    read: u64,
+    /// The first look is over.
+    looked: bool,
+    /// Calls with this tool and input that have no result yet.
+    open: Vec<String>,
+    /// The call the prompt is for, once it is known.
+    call: Option<String>,
+}
+
+/// A transcript's lines from byte `from` on, each as JSON with where it starts, and where the file ended. A line
+/// that is not JSON (one still being written) is left out.
+fn transcript_from(path: &std::path::Path, from: u64) -> (Vec<(u64, Value)>, u64) {
+    let Ok(bytes) = airband_io::files::read_part(path, from, u64::MAX) else { return (Vec::new(), from) };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut start = from;
+    let mut lines = Vec::new();
+    for line in text.split_inclusive('\n') {
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim_end()) {
+            lines.push((start, v));
+        }
+        start += line.len() as u64;
+    }
+    (lines, start)
+}
+
 /// Which part of Claude Code's this tool call is, as its row has it.
 fn role(hook: &Value) -> Option<String> {
     crate::adapters::hooks::tool_use(HARNESS, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
@@ -207,6 +286,9 @@ impl crate::adapters::Harness for ClaudeCode {
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
+    }
+    fn still_asking(&self, hook: &Value) -> Option<Box<dyn Fn() -> bool>> {
+        still_asking(hook)
     }
     fn accounts(&self) -> Option<&'static crate::adapters::AccountBook> {
         Some(&ACCOUNTS)
@@ -401,6 +483,52 @@ mod tests {
         let quoted = json!({ "type": "user", "message": { "content": "<command-name>/remote-control</command-name> <command-args>shop 9</command-args> \"commandRun\"" } });
         assert_eq!(remote_control_line(quoted.to_string().as_bytes()), None);
     }
+    #[test]
+    fn a_prompt_settled_at_the_keyboard_is_seen_in_the_transcript_of_the_agent_that_asked() {
+        let dir = std::env::temp_dir().join(format!("airband-still-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(dir.join("s1/subagents")).unwrap();
+        let main = dir.join("s1.jsonl");
+        let input = json!({ "command": "touch made", "description": "Make a file" });
+        let used = |id: &str, input: &Value| json!({ "message": { "content": [{ "type": "tool_use", "id": id, "name": "Bash", "input": input }] } }).to_string() + "\n";
+        let result = |id: &str| json!({ "message": { "content": [{ "type": "tool_result", "tool_use_id": id, "is_error": true }] } }).to_string() + "\n";
+        let append = |path: &std::path::Path, line: String| {
+            let had = airband_io::files::read_text(path).unwrap().unwrap_or_default();
+            airband_io::files::write_atomic(path, had + &line).unwrap();
+        };
+        // an earlier call with the same input, settled long ago: the request is for the last one
+        append(&main, used("t0", &input));
+        append(&main, result("t0"));
+        append(&main, used("t1", &input));
+        let hook = json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": input, "transcript_path": main });
+        let still = still_asking(&hook).expect("the call is found");
+        assert!(still(), "nothing settled it yet");
+        // another call's result settles nothing
+        append(&main, result("t9"));
+        assert!(still());
+        // refused at the keyboard (or by the tool itself): its result is written, and the prompt is over
+        append(&main, result("t1"));
+        assert!(!still());
+        // a subagent's call is in its own transcript, by its id
+        let sub = dir.join("s1/subagents/agent-a7.jsonl");
+        append(&sub, used("t2", &input));
+        let mut from_sub = hook.clone();
+        from_sub["agent_id"] = json!("a7");
+        let still = still_asking(&from_sub).unwrap();
+        assert!(still());
+        append(&sub, result("t2"));
+        assert!(!still());
+        // a call written down only after the hook started is the one asked about; one settled before it is not
+        let ls = json!({ "command": "ls" });
+        append(&main, used("t3", &ls));
+        append(&main, result("t3"));
+        let still = still_asking(&json!({ "session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": ls, "transcript_path": main })).unwrap();
+        assert!(still(), "the settled one is not this prompt");
+        append(&main, used("t4", &ls));
+        append(&main, result("t4"));
+        assert!(!still(), "written and settled between two looks");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn a_permission_prompt_becomes_a_request_that_says_exactly_what_will_happen() {
         let ask = |tool: &str, input: Value| permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": tool, "tool_input": input })).unwrap().what;

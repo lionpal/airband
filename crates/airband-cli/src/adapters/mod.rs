@@ -55,6 +55,12 @@ pub(crate) trait Harness: Sync {
     fn permission(&self, _notification: &Value) -> Option<PermissionAsk> {
         None
     }
+    /// For a harness that also shows its prompt itself while the hook waits: whether that prompt is still
+    /// waiting, asked every few seconds, from what the tool itself writes down. Nothing where the tool says
+    /// nothing of it; then the request stands until he answers or the time runs out.
+    fn still_asking(&self, _notification: &Value) -> Option<Box<dyn Fn() -> bool>> {
+        None
+    }
     /// For a tool held through the Agent Client Protocol whose requests for leave say what will be done in a
     /// way of its own (its own tool names, its own fields): the request as he is asked it. The protocol's own
     /// reading (`acp.rs`) is used for any other.
@@ -477,7 +483,8 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
     if let Some(mut request) = adapter.permission(&notification) {
         as_held(&mut request.agent);
-        if let Some((allow, reason)) = ask_him(&request) {
+        let still = adapter.still_asking(&notification);
+        if let Answer::Said(allow, reason) = ask_him_while(&request, still.as_deref()) {
             println!("{}", adapter.permission_answer(&request, allow, &reason));
         }
         // no answer in time, or nobody there: print nothing, and the harness asks in its own way

@@ -299,6 +299,9 @@ pub struct Reply {
     /// Boxed: most answers have none, and every answer is moved about whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undelivered: Option<Box<Undelivered>>,
+    /// It answered a request for leave that had ended already: nothing was allowed or refused, and `say` says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub request_over: bool,
 }
 
 /// Why words of his for agents were not delivered.

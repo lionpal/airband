@@ -325,7 +325,7 @@ mod tests {
         let mut inner = tower();
         let s = inner.sessions[0].clone();
         let what = format!("cd /x && {}", "echo step; ".repeat(40));
-        let request = permit::Request { what: Some(what.clone()), at_keyboard: false };
+        let request = permit::Request { what: Some(what.clone()), at_keyboard: false, settled: false };
         inner.permits.insert("p".into(), permit::Permit { agent_id: s.agent.id.clone(), entry: "c".into(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false });
         inner.record(Entry { short: request.line(), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some("p".into()), leave: Some(request), ..Entry::said("c".into(), &s, Some(Kind::NeedsYou), what) });
         let n = notice(&inner, inner.log.last().unwrap(), "mini");

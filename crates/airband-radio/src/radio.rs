@@ -446,6 +446,8 @@ impl Radio {
                     self.enqueue(Outgoing { stage: Stage::Left, ..out });
                     return AnswerOutcome::KeptForLater { why: if away { AWAY.into() } else { LinkError::Behind.said() } };
                 }
+                // an answer to a request for leave that had ended: it did nothing, and he is told so where he gave it
+                Ok(Sent::Answered(reply)) if reply.request_over => return AnswerOutcome::Refused { why: reply.say },
                 // his computer has it: that is the answer given, unless it says the agent did not get it. Then
                 // it is kept in the chat as not delivered, as anything of his is
                 Ok(Sent::Answered(reply)) if crate::outbox::keep_answered(&self.store, &*self.host, &self.senses.takes, out.clone(), &reply) => {

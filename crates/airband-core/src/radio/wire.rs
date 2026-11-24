@@ -197,6 +197,24 @@ pub struct AccountsQuery {
     pub fresh: bool,
 }
 
+/// `DELETE permission/{id}`: why the harness takes its request back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawQuery {
+    #[serde(default)]
+    pub why: Withdrawn,
+}
+
+/// Why a request for leave is taken back before he answered it from the phone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Withdrawn {
+    /// He did not answer in the time allowed: the tool asks at its own keyboard now.
+    #[default]
+    Unanswered,
+    /// The tool says the request is settled already: answered at its keyboard, or refused by the tool itself.
+    SettledThere,
+}
+
 /// `GET permission/{id}`: how many seconds to wait for his answer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WaitQuery {
@@ -263,7 +281,7 @@ pub mod at {
         Events: Post "/v1/agent/events", Nothing, AgentEvent => Done;
         Permission: Post "/v1/agent/permission", Nothing, PermissionAsk => PermissionState;
         PermissionAnswer: Get "/v1/agent/permission/{id}", WaitQuery, Nothing => PermissionState;
-        PermissionWithdraw: Delete "/v1/agent/permission/{id}", Nothing, Nothing => Done;
+        PermissionWithdraw: Delete "/v1/agent/permission/{id}", WithdrawQuery, Nothing => Done;
     }
 }
 

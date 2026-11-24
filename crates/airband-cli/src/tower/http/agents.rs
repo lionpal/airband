@@ -69,7 +69,7 @@ pub(super) async fn permission_state(State(app): State<Arc<App>>, Path(id): Path
     Ok(Json(permit::state(&app, &id, wait).await))
 }
 
-pub(super) async fn permission_withdraw(State(app): State<Arc<App>>, Path(id): Path<String>) -> Answer<at::PermissionWithdraw> {
-    permit::withdraw(&app, &id);
+pub(super) async fn permission_withdraw(State(app): State<Arc<App>>, Path(id): Path<String>, Ask(wire::WithdrawQuery { why }): Ask<at::PermissionWithdraw>) -> Answer<at::PermissionWithdraw> {
+    permit::withdraw(&app, &id, why);
     done()
 }

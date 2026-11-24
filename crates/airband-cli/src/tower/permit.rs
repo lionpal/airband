@@ -107,14 +107,14 @@ fn put(app: &Arc<App>, ask: &PermissionAsk) -> Result<PermissionState, NotAsked>
         }
         None => {
             log(format!("{}: asks permission ({} characters)", short_id(&session.agent.id), what.chars().count()));
-            let line = Request { what: Some(what.to_string()), at_keyboard: false }.line().unwrap_or_default();
+            let line = Request { what: Some(what.to_string()), at_keyboard: false, settled: false }.line().unwrap_or_default();
             let more = !ask.detail.trim().is_empty();
             let detail = if more { ask.detail.clone() } else { line.clone() };
             (line, vec![ALLOW.into(), DENY.into()], detail, more)
         }
     };
     // on a call it is read out like any other question
-    inner.record(Entry { short: Some(line), more, options, permit: Some(id.clone()), leave: ask.question.is_none().then(|| Request { what: Some(what.to_string()), at_keyboard: false }), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
+    inner.record(Entry { short: Some(line), more, options, permit: Some(id.clone()), leave: ask.question.is_none().then(|| Request { what: Some(what.to_string()), at_keyboard: false, settled: false }), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
@@ -151,11 +151,22 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
     }
 }
 
-/// The harness has stopped waiting and is asking in its own way. The question in the feed is no longer one he
-/// can answer from here.
-pub(super) fn withdraw(app: &App, id: &str) {
+/// The harness has stopped waiting: it asks in its own way, or the request was settled there. The question in
+/// the feed is no longer one he can answer from here, and says which.
+pub(super) fn withdraw(app: &App, id: &str, why: airband_core::radio::wire::Withdrawn) {
+    use airband_core::radio::wire::Withdrawn;
     let mut inner = app.change();
-    inner.close_permit(id, Ended::AtKeyboard);
+    if let Some(p) = inner.permits.get(id) {
+        let agent = p.agent_id.clone();
+        log(format!("{}: its request for leave is taken back: {}", short_id(&agent), match why {
+            Withdrawn::Unanswered => "no answer from the phone in time; it asks at the keyboard",
+            Withdrawn::SettledThere => "it was settled at the keyboard",
+        }));
+    }
+    inner.close_permit(id, match why {
+        Withdrawn::Unanswered => Ended::AtKeyboard,
+        Withdrawn::SettledThere => Ended::SettledThere,
+    });
     inner.tell();
 }
 
@@ -165,6 +176,8 @@ pub(super) enum Ended {
     Answered(bool, String),
     /// The harness stopped waiting for the phone and is asking at its keyboard.
     AtKeyboard,
+    /// The tool says it was settled at its keyboard: answered there, or refused by the tool itself.
+    SettledThere,
     /// The same agent asked something newer.
     Replaced,
     /// Nobody asks after it any more: it was answered at the keyboard, or the agent has gone.
@@ -176,6 +189,7 @@ pub(super) use airband_core::radio::{ALLOW, DENY};
 /// How the line of a request for leave ends while it waits, and what takes its place once it is over.
 const ASKS: &str = " Allow?";
 const MOVED: &str = " It is asking at the keyboard now.";
+const SETTLED: &str = " Settled at the keyboard.";
 
 /// A line that is, or was, a request for leave: what it asked to do, and whether it has gone back to the
 /// keyboard. The line's words are made from this, so its ending is never read back out of its text.
@@ -185,11 +199,14 @@ pub(super) struct Request {
     pub(super) what: Option<String>,
     /// The request is over and the agent asks at its own keyboard now.
     pub(super) at_keyboard: bool,
+    /// The request is over: it was settled at the tool's own keyboard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) settled: bool,
 }
 impl Request {
     /// The line he sees for it, when what it asked is known.
     pub(super) fn line(&self) -> Option<String> {
-        self.what.as_ref().map(|what| format!("Wants to {what}.{}", if self.at_keyboard { MOVED } else { ASKS }))
+        self.what.as_ref().map(|what| format!("Wants to {what}.{}", if self.settled { SETTLED } else if self.at_keyboard { MOVED } else { ASKS }))
     }
 }
 
@@ -274,7 +291,8 @@ impl Inner {
                     e.options.clear();
                 }
             }),
-            _ => self.close_line(&entry),
+            permit::Ended::SettledThere => self.close_line(&entry, true),
+            _ => self.close_line(&entry, false),
         }
         if let Some(s) = self.session(&agent_id) {
             s.waiting = matches!(ended, permit::Ended::AtKeyboard | permit::Ended::Replaced);
@@ -285,15 +303,16 @@ impl Inner {
     pub(super) fn close_requests_from_before(&mut self) {
         let open: Vec<String> = self.log.iter().filter(|e| e.leave.is_some() && !e.options.is_empty()).map(|e| e.id.clone()).collect();
         for id in open {
-            self.close_line(&id);
+            self.close_line(&id, false);
         }
     }
     /// The line of a request that is over.
-    pub(super) fn close_line(&mut self, entry: &str) {
+    pub(super) fn close_line(&mut self, entry: &str, settled: bool) {
         self.end_line(entry, Dropped::PermissionEnded, |e| {
             e.options.clear();
             if let Some(request) = e.leave.as_mut() {
                 request.at_keyboard = true;
+                request.settled = settled;
                 if let Some(line) = request.line() {
                     e.short = Some(line);
                 }
@@ -346,11 +365,17 @@ mod tests {
         // a notice of another kind is still shown
         super::super::intake::on_event(&app, nudge(false)).unwrap();
         assert_eq!(app.read().log.len(), lines + 1);
+        // settled at the tool's own keyboard: the card says so at once, and an answer to it now does nothing
+        let again = super::ask(&app, ask());
+        let card = app.read().log.iter().find(|e| e.permit.as_deref() == Some(again.id.as_str())).map(|e| e.id.clone()).unwrap();
+        super::withdraw(&app, &again.id, airband_core::radio::wire::Withdrawn::SettledThere);
+        let line = app.read().log.iter().find(|e| e.id == card).cloned().unwrap();
+        assert_eq!((line.short.as_deref(), line.options.is_empty()), (Some("Wants to run `ls`. Settled at the keyboard."), true));
+        assert!(super::super::logged::take().iter().any(|l| l.ends_with("a1: its request for leave is taken back: it was settled at the keyboard")));
+        assert!(matches!(super::asked_leave(&app, Some(&card)), Leave::Over));
+        let lines = app.read().log.len();
         // once nothing is waiting on his phone, the nudge is how he learns the keyboard wants him
-        let mut inner = app.change();
-        inner.close_permit(&asked.id, Ended::Replaced);
-        drop(inner);
         super::super::intake::on_event(&app, nudge(true)).unwrap();
-        assert_eq!(app.read().log.len(), lines + 2);
+        assert_eq!(app.read().log.len(), lines + 1);
     }
 }

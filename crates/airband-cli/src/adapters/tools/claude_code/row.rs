@@ -8,7 +8,7 @@ use serde_json::json;
 #[test]
 fn every_row_fact_this_code_asks_for_is_there() {
     // an empty answer would be a made-up value (an empty home is his home folder itself)
-    for fact in ["home", "home_env", "pid_env", "entry_env", "inbox_env", "inbox_token_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"] {
+    for fact in ["home", "home_env", "pid_env", "entry_env", "inbox_env", "inbox_token_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "account_seed", "account_email", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "subagent_transcript", "session_kind", "session_entry"] {
         assert!(!row_says(HARNESS, fact).is_empty(), "its row says nothing for {fact}");
     }
     // a sign-in is started by the arguments the row lists, none written in the code
