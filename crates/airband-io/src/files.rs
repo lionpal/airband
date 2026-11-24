@@ -252,7 +252,16 @@ pub fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 
 /// A lock on a file, held across every process on this computer until it is dropped.
 pub struct Lock {
-    _file: std::fs::File,
+    file: std::fs::File,
+}
+
+impl Drop for Lock {
+    /// Let go of it at once: Windows lets go of a lock on a handle closed with it still taken only when it gets
+    /// round to it, so it is never left to the closing.
+    fn drop(&mut self) {
+        // one that cannot be let go is let go with the handle, as the system closes it
+        self.file.unlock().ok();
+    }
 }
 
 /// Wait for the lock at `path` and hold it, making the file and its folder when they are not there. A lock that
@@ -264,7 +273,7 @@ pub fn lock(path: &Path) -> std::io::Result<Lock> {
     let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
     // the system's own lock on the open file (flock on Unix, LockFileEx on Windows): every process asks the same one
     file.lock()?;
-    Ok(Lock { _file: file })
+    Ok(Lock { file })
 }
 
 /// Whether another process holds a lock on the file at `path` right now (the system's own lock, as [`lock`]
@@ -317,7 +326,28 @@ mod tests {
         assert!(dir.join("z").is_dir());
     }
 
-    #[cfg(unix)]
+    // on every system the tower runs on: Windows locks by the handle (LockFileEx) as Unix does by the open file
+    // (flock), so two handles in one process stand for two processes
+    #[test]
+    fn a_lock_held_through_one_handle_keeps_another_out_until_it_is_let_go() {
+        let dir = folder();
+        let f = dir.join("held.lock");
+        let first = lock(&f).unwrap();
+        // a second handle on the same file: told it is held, and cannot take it while it is
+        let second = std::fs::OpenOptions::new().write(true).open(&f).unwrap();
+        assert_eq!(locked(&f).unwrap(), Some(true));
+        assert!(matches!(second.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+        drop(first);
+        // let go: the second takes it, and is then the one that holds it
+        assert_eq!(locked(&f).unwrap(), Some(false));
+        second.try_lock().unwrap();
+        assert_eq!(locked(&f).unwrap(), Some(true));
+        second.unlock().unwrap();
+        assert_eq!(locked(&f).unwrap(), Some(false));
+        drop(second);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_lock_held_elsewhere_is_seen_and_asking_takes_none_that_stays() {
         let dir = folder();
