@@ -18,7 +18,7 @@
 //! - `GET feed?…` [`wire::FeedQuery`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
 //!   one agent's.
 //! - `GET message/<id>?form=detail|full` → [`wire::MessageText`]: the fuller spoken version, or exactly what the agent wrote;
-//!   `part=asked` ([`Part::Asked`]): only the question in it, as he would be asked it on a call.
+//!   `part=asked` ([`Part::Asked`]): its line as a call reads it, who said it in front of the chat's words.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
 //! - Starting a new agent is `POST project` ([`NewProject`]), in a folder from `GET recent` or `POST folders`.
 use serde::{Deserialize, Serialize};
@@ -370,7 +370,7 @@ pub enum Form {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Part {
-    /// The question as he would be asked it on a call.
+    /// Its line as a call reads it: who said it, then the chat's words and nothing else.
     Asked,
 }
 

@@ -31,20 +31,24 @@ pub(super) async fn pump(app: &Arc<App>) {
         // a reminder is a matter of the call, which is not kept
         return remind(app, &mut inner, &radio);
     };
-    let callsign = inner.sender_name(next);
-    let kind = next.kind.unwrap_or(Kind::Unjudged);
-    let spoken_line = aloud_line(&inner, next);
-    // the line by its id and length: what agents say is never written in the log
-    log(format!("→ {}: ({kind:?}) line {} ({} characters)", radio_tag(&radio), next.id, spoken_line.chars().count()));
     let waiting = inner.unheard().count() as u32 - 1;
+    let t = transmission(&inner, next, next.kind.unwrap_or(Kind::Unjudged), waiting);
+    // the line by its id and length: what agents say is never written in the log
+    log(format!("→ {}: ({:?}) line {} ({} characters)", radio_tag(&radio), t.kind, t.id, t.say.chars().count()));
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
-    transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), agent: said_by(next), callsign, kind, say: spoken_line, waiting });
+    transmit(app, &mut inner, &radio, t);
 }
 
 /// What is read out for a line: who said it, then the line in the very words the chat shows and its
-/// notification says. Nothing else is added and nothing is said in their place.
+/// notification says. Nothing else is added and nothing is said in their place. A line read again as a
+/// reminder, and a question read to him before he answers it, are read in these words too.
 pub(super) fn aloud_line(inner: &Inner, e: &Entry) -> String {
     format!("{}. {}", airband_core::prose::capital(&inner.sender_name(e)), e.line())
+}
+
+/// A line as a radio is handed it to read out: in its [`aloud_line`] words, whether it is news or a reminder.
+pub(super) fn transmission(inner: &Inner, e: &Entry, kind: Kind, waiting: u32) -> Transmission {
+    Transmission { id: e.id.clone(), agent: said_by(e), callsign: inner.sender_name(e), kind, say: aloud_line(inner, e), waiting }
 }
 
 /// Who said a line, as a transmission names it: the agent's id, or the empty id the radio protocol gives
@@ -99,19 +103,19 @@ fn remind_after(times_offered: u32) -> Duration {
 
 /// Nothing new to say on the call. If someone has been waiting on him long enough, say so again.
 fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
+    let Some(e) = reminder(inner, radio) else { return };
+    let t = transmission(inner, &e, Kind::NeedsYou, 0);
+    log(format!("→ {}: (reminder) line {} ({} characters)", radio_tag(radio), t.id, t.say.chars().count()));
+    transmit(app, inner, radio, t);
+}
+
+/// The open question this radio's call is owed a reminder of now, if any.
+pub(super) fn reminder(inner: &mut Inner, radio: &str) -> Option<Entry> {
     let open = inner.open_ids();
     // reminders are only owed for what is still open; the rest is forgotten, so this never grows
     inner.offered.retain(|id, _| open.contains(id));
     // only what was asked since he joined: turning listening on does not play back the afternoon. What was
     // asked before is in the chat, still marked as waiting on him.
-    let Some(began) = inner.calls.get(radio).map(|c| c.began) else { return };
-    let due = inner.log.iter().find(|e| e.at >= began && open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned();
-    let Some(e) = due else { return };
-    let first = !inner.offered.contains_key(&e.id);
-    let say = e.line();
-    let from = inner.sender_name(&e);
-    log(format!("→ {}: ({}) line {} ({} characters)", radio_tag(radio), if first { "waiting" } else { "reminder" }, e.id, say.chars().count()));
-    let spoken_line = if first { format!("{} is waiting. {say}", airband_core::prose::capital(&from)) } else { format!("Still waiting: {from}. {say}") };
-    transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: said_by(&e), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
+    let began = inner.calls.get(radio)?.began;
+    inner.log.iter().find(|e| e.at >= began && open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned()
 }
-

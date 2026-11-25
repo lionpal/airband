@@ -264,7 +264,8 @@ final class PhonePushTests: XCTestCase {
     /// report's notification is taken down under the tag it was shown under, with nothing in its place. Opened
     /// from the question's notification, the app follows the chat to it and shows it, in the words the
     /// notification had; turned on, reading aloud reads those words, with only who said it in front, and never
-    /// the report it took the place of.
+    /// the report it took the place of. A question heard and not answered is read again as a reminder in its
+    /// notification's words, and read before he answers it in them too.
     func testWhatANotificationSaysIsTheChatsLineUntilItIsTakenDown() throws {
         let tower = try Tower()
         let pairing = try tower.pair()
@@ -344,6 +345,24 @@ final class PhonePushTests: XCTestCase {
         XCTAssertFalse(handed.contains { $0.id == reportLine }, "nothing superseded is read")
         // the callsign is the agent's name as it is said ("shop five" for "shop 5"); the words after it are the chat's
         XCTAssertEqual(read.say, read.callsign.prefix(1).uppercased() + read.callsign.dropFirst() + ". " + asked.body)
+
+        // a question asked while reading aloud is on, heard and not answered: its notification, its line in the
+        // chat, the reminder it is read again as, and the reading of it before he answers all say the same
+        // words, the readings with only who said it in front
+        let pushedBefore = try tower.pushes().count
+        let reminded = try tower.reminded("remind-question")
+        XCTAssertEqual(reminded.again.id, reminded.first.id)
+        let woke = try XCTUnwrap(tower.next(after: pushedBefore, to: address, within: 60, shown) { if case .opened(let n) = opening($0, pairing) { n.message == reminded.first.id } else { false } }, "the question woke the phone")
+        let (remindShown, _) = try deliver(woke)
+        let to = remindShown.userInfo
+        phone.desk.openMessage(station: try XCTUnwrap(to["station"] as? String), message: reminded.first.id, rev: try XCTUnwrap((to["rev"] as? NSNumber)?.uint64Value), room: to["room"] as? String ?? "", agent: to["agent"] as? String ?? "")
+        let remindView = try phone.until("the question is in the chat", seconds: 60) { v in v.opening?.message == reminded.first.id && v.opening?.state == .here ? v : nil }
+        let remindLine = try XCTUnwrap(remindView.feed.first { $0.id == reminded.first.id })
+        XCTAssertEqual(remindLine.text, remindShown.body, "the chat says what the notification said")
+        let callsign = reminded.first.callsign.prefix(1).uppercased() + reminded.first.callsign.dropFirst() + ". "
+        XCTAssertEqual(reminded.first.say, callsign + remindShown.body)
+        XCTAssertEqual(reminded.again.say, reminded.first.say, "the reminder in the very same words")
+        XCTAssertEqual(reminded.asked, reminded.first.say, "read before he answers it in the very same words")
     }
 
     /// Each registered set of buttons, by its name: the ids of its buttons in order.
@@ -450,6 +469,17 @@ struct Tower {
     /// line, each heard; then off again. What was handed, in order.
     func aloud(line: String) throws -> [Transmitted] {
         try JSONDecoder().decode([Transmitted].self, from: call("GET", "aloud?line=" + line))
+    }
+
+    /// A question asked while a radio of the computer's own reads aloud: the transmission it was first handed,
+    /// the reminder it was read again as once heard and not answered, and the question as it is read to him
+    /// before he answers it.
+    struct Reminded: Decodable {
+        let first, again: Transmitted
+        let asked: String
+    }
+    func reminded(_ kind: String) throws -> Reminded {
+        try JSONDecoder().decode(Reminded.self, from: call("GET", "reminded/" + kind))
     }
 
     /// What the relay handed the push service, in order.

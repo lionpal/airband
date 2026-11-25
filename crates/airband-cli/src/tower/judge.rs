@@ -265,19 +265,22 @@ pub(super) async fn progress(model: &dyn Model, name: &str, steps: &[String]) ->
 /// `Some(false)` for anything that is not one (a no, a condition, another instruction); `None` when his words
 /// do not settle it, or no model answered: then nothing is decided and he is asked for a yes or a no.
 ///
-/// The model sees his words only. The request is text the asking agent wrote, and nothing an agent writes is
-/// put beside the one question whose answer lets a command run.
+/// Asked only of words he said in reply to a request that still waits (`re` names its line), and the model is
+/// told so: what "it" or "that" in them stands for is what was asked. It sees his words only. The request is
+/// text the asking agent wrote, and nothing an agent writes is put beside the one question whose answer lets a
+/// command run.
 pub(super) async fn consent(model: &dyn Model, name: &str, said: &str) -> Option<bool> {
     let prompt = format!(
         "A coding agent asked {name} for permission to do one thing on his computer. He was shown exactly what, \
-         and answered in his own words.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
+         and answered it in his own words, in reply to that request itself: his words are said to it, and \
+         \"it\", \"that\" or \"this\" in them is what was asked.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
          Reply with one line of JSON and nothing else, {{\"verdict\": one of \"allow\", \"refuse\", \"unclear\"}}:\n\
          - allow: he plainly says yes to exactly what was asked, with no condition and no change.\n\
          - refuse: he says no, or tells it what to do instead or first, or attaches a condition or a change \
          (\"run it on staging first\", \"not that folder\", \"only the tests\", \"yes but skip the migration\"). An \
          instruction of his own is a refusal of what was asked: it goes back to the agent as the reason.\n\
          - unclear: only when his words give the agent nothing to go on: he hands the choice back (\"whatever you \
-         think\"), asks a question, or is talking about something else.\n\
+         think\"), asks a question, or speaks of some other matter and not of what was asked.\n\
          When in doubt between allow and anything else, it is not allow.",
         said = airband_core::prose::tail(said, 1000)
     );

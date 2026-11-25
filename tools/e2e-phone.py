@@ -29,7 +29,9 @@ shown for a report, a question, a request for leave, a request for leave too lon
 pairing on the phone can open. And a notification's life: a report pushed, then a question from the same agent
 that takes its place, which takes the report's notification down (under the same tag); opened from the
 question's notification, the app follows the chat to it and shows it in the words the notification had, and
-the reading-aloud queue reads those same words, with only who said it in front.
+the reading-aloud queue reads those same words, with only who said it in front. A question asked while reading
+aloud is on, heard and not answered, is read again as a reminder in those same words, and read to him before he
+answers it in them too.
 """
 import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, wave
 import wire
@@ -42,6 +44,8 @@ TARGET = os.path.abspath(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "
 BIN, RELAY = os.path.join(TARGET, "release", "airband"), os.path.join(TARGET, "release", "airband-relay")
 RELAY_PORT, TOWER_PORT, CONTROL_PORT, APNS_PORT = wire.free_port(), wire.free_port(), wire.free_port(), wire.free_port()
 APP = "dev.airband.app"
+# how long after he heard an unanswered question it is read again (ten minutes in use)
+REMIND_SECONDS = 2
 # this computer's name as the phone is to show it: with a space, so how the link carries it is tried too
 COMPUTER = "Sim Desk"
 # the simulator this run makes for itself, of this kind (any iPhone the newest iOS runtime here supports)
@@ -59,7 +63,7 @@ for d in (os.path.join(home, ".airband"), data, project):
 json.dump({"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": COMPUTER, "relay": f"http://127.0.0.1:{RELAY_PORT}",
            "summarizer": {"kind": "none"}, "lan": False, "permission_wait": 600}, open(os.path.join(home, ".airband", "config.json"), "w"))
 # through the relay only, as in tools/e2e-relay.py: the phone is given no address of the tower's own
-tower_env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_NO_PRIVATE_NETWORK="1")
+tower_env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_NO_PRIVATE_NETWORK="1", AIRBAND_REMIND_SECONDS=str(REMIND_SECONDS))
 # a signing key made for this run alone, and the stand-in push service on this machine
 push_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
 relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data, APNS_KEY=push_key, APNS_KEY_ID="E2EKEY0001", APNS_TEAM_ID="E2ETEAM001",
@@ -161,7 +165,9 @@ ASKS = {"report": ("a1", ["said", "The checker passes on all twelve units."]), "
         "permission": ("p1", ["permission", "run `npm run deploy`"]), "long-permission": ("p2", ["permission", f"run `{LONG}`"]),
         "brief-permission": ("p3", ["--within", "8", "permission", "run `make release`"]),
         # an agent of its own for a notification's life: a report, then a question that takes its place
-        "news-report": ("n1", ["said", "The lifecycle report is ready."]), "news-question": ("n1", ["asked", "Ship the lifecycle fix now?"])}
+        "news-report": ("n1", ["said", "The lifecycle report is ready."]), "news-question": ("n1", ["asked", "Ship the lifecycle fix now?"]),
+        # asked while reading aloud is on, heard and not answered: read again as a reminder
+        "remind-question": ("n2", ["asked", "Tag the release as nine point five, or wait for the store review?"])}
 
 
 def tower_call(method, path, body=None, presence=None):
@@ -194,6 +200,39 @@ def aloud(line):
     return handed
 
 
+def reminded(key):
+    """Turn reading aloud on, on a radio of the computer's own; have the agent ask this question; hear it and not
+    answer it; and take it again when it is read as a reminder. Then reading aloud is off again. The transmission
+    first handed, the reminder, and the question as it is read to him before he answers it (`part=asked`)."""
+    on = {"on_call": True, "showing_chat": False}
+    def until_handed(line):
+        for _ in range(12):
+            t = tower_call("GET", "/v1/radio/next", presence=on)
+            if t and t["id"] == line:
+                return t
+            if t:
+                tower_call("POST", "/v1/radio/heard", {"id": t["id"]}, presence=on)
+                tower_call("POST", "/v1/radio/ready", {}, presence=on)
+        raise RuntimeError(f"line {line} was never handed")
+    try:
+        # on the call before it is asked: only what is asked since he joined is owed a reminder
+        tower_call("POST", "/v1/radio/presence", on, presence=on)
+        agent, words = ASKS[key]
+        subprocess.run([BIN, "report", "--id", agent, "--harness", "script", "--cwd", project, *words], env=tower_env, capture_output=True, timeout=120, check=True)
+        line = next(m["id"] for m in reversed(tower_call("GET", "/v1/radio/feed?since=0", presence=on)["messages"]) if m.get("agent") == agent and m.get("kind") == "needs-you")
+        first = until_handed(line)
+        tower_call("POST", "/v1/radio/heard", {"id": line}, presence=on)
+        tower_call("POST", "/v1/radio/ready", {}, presence=on)
+        time.sleep(REMIND_SECONDS + 0.5)
+        again = until_handed(line)
+        tower_call("POST", "/v1/radio/heard", {"id": line}, presence=on)
+        tower_call("POST", "/v1/radio/ready", {}, presence=on)
+        asked = tower_call("GET", f"/v1/radio/message/{line}?form=spoken&part=asked", presence=on)["text"]
+    finally:
+        tower_call("POST", "/v1/radio/presence", {"on_call": False, "showing_chat": False})
+    return {"first": first, "again": again, "asked": asked}
+
+
 class Control(http.server.BaseHTTPRequestHandler):
     """What the test asks of the computer's side."""
     def log_message(self, *args):
@@ -214,6 +253,8 @@ class Control(http.server.BaseHTTPRequestHandler):
             return self.answer({"wakeable": "can be woken with a notification" in logged()})
         if self.path == "/heard":
             return self.answer([json.loads(l) for l in open(heard)] if os.path.exists(heard) else [])
+        if self.path.startswith("/reminded/") and self.path[10:] in ASKS:
+            return self.answer(reminded(self.path[10:]))
         if self.path.startswith("/aloud?"):
             return self.answer(aloud(dict(urllib.parse.parse_qsl(self.path.split("?", 1)[1]))["line"]))
         if self.path == "/listening":

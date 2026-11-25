@@ -173,8 +173,8 @@ extension RadioModel {
         }
     }
 
-    /// Read one message aloud, by its id: who said it, its short form, and the answers it offers. Whatever
-    /// was being read is left off.
+    /// Read one message aloud, by its id, as a call reads it: who said it, then its line in the chat's words.
+    /// Whatever was being read is left off.
     func readAloud(_ message: String) {
         stopReading()
         reading = message

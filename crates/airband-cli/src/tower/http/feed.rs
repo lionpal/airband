@@ -112,20 +112,16 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
     }
 }
 
-/// One message: its whole words, as read aloud (`form=spoken`, or `part=asked` for the question as he would be
-/// asked it), as written (`form=full`), or in more detail than its short version.
+/// One message: its whole words, as read aloud (`form=spoken`, or `part=asked` for its line as a call reads it),
+/// as written (`form=full`), or in more detail than its short version.
 pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Ask(q): Ask<at::Message>) -> Answer<at::Message> {
     // a very long one is read as far as a few minutes go
     if q.form == Some(airband_core::radio::Form::Spoken) {
-        // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
-        // the answers it offers, for a radio that reads it to him before he answers
+        // `part=asked` is the question as he would be asked it on a call, for a radio that reads it to him
+        // before he answers: in the words a call reads it in, which are the chat's and its notification's
         let inner = app.read();
         let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.part {
-            Some(airband_core::radio::Part::Asked) => {
-                let short = spoken(&e.line());
-                let choices = if e.options.is_empty() { String::new() } else { format!(" You can say {}, or answer in your own words.", either(&e.options)) };
-                format!("{}. {short}{choices}", inner.sender_name(e))
-            }
+            Some(airband_core::radio::Part::Asked) => super::super::pump::aloud_line(&inner, e),
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
             None => airband_core::prose::clip(&spoken(&e.full), 3000),
         });
@@ -158,4 +154,29 @@ pub(super) async fn reads(State(app): State<Arc<App>>, Sent(wanted): Sent<at::Re
 
 pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Status> {
     Json(Status::of(&app))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A question read to him before he answers it is read in the words a call reads it in: the chat's line
+    /// with only who asks in front, and no answers or words of its own after.
+    #[tokio::test]
+    async fn a_question_read_before_he_answers_is_its_chat_line_as_a_call_reads_it() {
+        let app = super::super::tests::app_with("asked", serde_json::json!({}));
+        let line = {
+            let mut inner = app.change();
+            let _ = inner.check_in(&airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") });
+            let s = inner.sessions[0].clone();
+            inner.record(Entry { short: Some("Rewrite the two easy questions, or leave them?".into()), options: vec!["Rewrite".into(), "Leave them".into()], aloud: Aloud::Waiting, ..Entry::said("q".into(), &s, Some(Kind::NeedsYou), "long".into()) });
+            let e = inner.log.last().unwrap().clone();
+            (super::super::super::pump::transmission(&inner, &e, Kind::NeedsYou, 0).say, inner.message(&e).text, inner.sender_name(&e))
+        };
+        let query = wire::MessageQuery { form: Some(airband_core::radio::Form::Spoken), part: Some(airband_core::radio::Part::Asked) };
+        let Ok(Json(asked)) = message(State(app.clone()), Path("q".into()), Ask(query)).await else { panic!("not read") };
+        let (read, chat, from) = line;
+        assert_eq!(asked.text, read, "what a call reads");
+        assert_eq!(asked.text, format!("{}. {chat}", airband_core::prose::capital(&from)), "the chat's line, who asks in front");
+    }
 }
