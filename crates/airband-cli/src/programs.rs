@@ -165,6 +165,7 @@ fn system_path() -> OsString {
 }
 
 /// His login shell, as this computer's record of his account has it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only the Mac's install sets the tower's PATH yet
 #[cfg(unix)]
 pub(crate) fn login_shell() -> Result<PathBuf, String> {
     // SAFETY: getpwuid returns this process's user's record or null, and it is read at once
@@ -183,6 +184,7 @@ pub(crate) fn login_shell() -> Result<PathBuf, String> {
 }
 
 /// How long his shell has to start and say its PATH: some startup files take a few seconds.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only the Mac's install sets the tower's PATH yet
 const SHELL_SAYS_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The PATH his login shell sets up, as a new terminal of his has it: the shell started as a login shell and an
@@ -192,6 +194,7 @@ const SHELL_SAYS_WITHIN: std::time::Duration = std::time::Duration::from_secs(30
 /// What his startup files print is no part of it: the PATH is printed between two markers made new for this
 /// run, which no startup file can print, and each is printed in two parts, so a startup file that echoes the
 /// commands it runs does not print it either. Standard input is empty and what goes to standard error is not read.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only the Mac's install sets the tower's PATH yet
 #[cfg(unix)]
 pub(crate) fn login_path(shell: &Path, home: &Path) -> Result<OsString, String> {
     use std::io::Read;
@@ -244,6 +247,7 @@ pub(crate) fn login_path(shell: &Path, home: &Path) -> Result<OsString, String> 
 }
 
 /// What stands between the first `open` and the first `close` after it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only the Mac's install sets the tower's PATH yet
 fn framed(got: &[u8], open: &str, close: &str) -> Option<Vec<u8>> {
     let at = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).position(|w| w == needle);
     let start = at(got, open.as_bytes())? + open.len();
@@ -252,6 +256,7 @@ fn framed(got: &[u8], open: &str, close: &str) -> Option<Vec<u8>> {
 }
 
 /// Why `airband install` stops: what his login shell cannot find, by name, and what each is for.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only the Mac's install sets the tower's PATH yet
 pub(crate) fn refusal(shell: &Path, unfound: &[Program]) -> String {
     let list: Vec<String> = unfound.iter().map(|p| format!("  {}", p.words())).collect();
     format!(
