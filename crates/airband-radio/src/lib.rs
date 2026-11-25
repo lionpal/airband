@@ -64,11 +64,11 @@ mod voice;
 mod voices;
 
 use call::*;
-pub use choices::{Choice, ChoiceJob, ChoicePlace, ChoiceState, ContactFrom, ContactNote};
+pub use choices::{Choice, ChoiceJob, ChoicePlace, ChoiceState, ContactFrom, ContactNote, Readying, ReadyStep, readying_shown};
 pub use desk::*;
 pub use airband_core::prose;
 use airband_io::http as net;
-pub use models::{Transfers, VoiceChoice};
+pub use models::{Transfers, VoiceChoice, model_steps};
 pub use mouth::VoiceSample;
 pub use services::{CodingTool, ServiceAsk, coding_tools};
 pub use shared::*;

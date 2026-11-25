@@ -28,10 +28,12 @@ use std::collections::{BTreeMap, HashMap};
 mod contact;
 mod desk;
 mod list;
+mod readying;
 mod saved;
 mod timings;
 pub(crate) use timings::{Did, Timings};
 pub use contact::{ContactFrom, ContactNote};
+pub use readying::{Readying, ReadyStep, readying_shown};
 pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
@@ -131,6 +133,8 @@ pub struct Choice {
     pub voices: Vec<VoiceChoice>,
     /// Which of those speaks now, by name.
     pub voice: String,
+    /// A model on its way to this device or being got ready, and how far it has got: what its card shows.
+    pub readying: Option<Readying>,
     /// On the card of the one chosen, the words of the one button that gets it ready, when it is not: a
     /// download with its size, an update, or another try at getting it ready. Choosing it again does it.
     pub action: Option<String>,
@@ -257,7 +261,8 @@ impl Chooser {
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
                 None => crate::ears::Own::Cannot(Cannot::ModelNotRun(Sense::Listening)),
-                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(Cannot::NotDownloaded { sense: Sense::Listening, model: m.name.clone() }),
+                // on its way here: what he says meanwhile is kept, and heard once it is here and ready
+                Some(m) if !crate::models::fetched(&self.dir, &m) && !self.on_its_way(ChoiceJob::Ears, &m) => crate::ears::Own::Cannot(Cannot::NotDownloaded { sense: Sense::Listening, model: m.name.clone() }),
                 Some(m) => crate::ears::Own::Model(self.held(&m)),
             },
             ChoicePlace::Service => {
@@ -298,11 +303,11 @@ impl Chooser {
         }));
     }
 
-    fn work(&self, job: ChoiceJob, id: &str, label: impl Into<String>, fetching: bool) {
+    pub(crate) fn work(&self, job: ChoiceJob, id: &str, label: impl Into<String>, fetching: bool) {
         self.working.lock().unwrap_or_else(|e| e.into_inner()).insert(job, Work { id: id.into(), label: label.into(), fetching });
     }
     /// That job's work is over.
-    fn rest(&self, job: ChoiceJob) {
+    pub(crate) fn rest(&self, job: ChoiceJob) {
         self.working.lock().unwrap_or_else(|e| e.into_inner()).remove(&job);
     }
     /// What is being done for this job, in words, and how far along a download is.
@@ -318,7 +323,11 @@ impl Chooser {
                     (w.id, "Waiting for the other download".into(), None)
                 }
             }
-            false => (w.id, w.label, None),
+            // getting it ready: how many of its steps the engine has done, once it has said how many there are
+            false => match self.readying_for(job).map(|(_, r)| r.step) {
+                Some(ReadyStep::Preparing { done, of }) if of > 0 => (w.id, format!("{} \u{b7} {done} of {of}", w.label), Some(done as f64 / of as f64)),
+                _ => (w.id, w.label, None),
+            },
         })
     }
     /// The job's work is over if it is still getting this model ready (nothing he started since).
@@ -328,16 +337,13 @@ impl Chooser {
             working.remove(&job);
         }
     }
-    /// What is being done for any job, in the order a first run asks about them.
-    pub(crate) fn any_work(&self) -> Option<(String, String, Option<f64>)> {
-        [ChoiceJob::Voice, ChoiceJob::Ears, ChoiceJob::Reads].into_iter().find_map(|job| self.at_work(job))
-    }
 
     fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses, paired: &[StationId]) -> Vec<Choice> {
         let saved = self.saved();
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
             here: &|m| (crate::models::fetched(&self.dir, m), crate::models::current(&self.dir, m)),
+            prepared: &|m| crate::models::prepared(&self.dir, m, &self.device.os_build),
             unready: &|m| self.unready.lock().unwrap_or_else(|e| e.into_inner()).get(&m.kind).cloned(),
             has_key: &|id| kept_key(host, id).is_some(),
             failed: match job {
@@ -346,6 +352,7 @@ impl Chooser {
                 ChoiceJob::Reads => None,
             },
             work: self.at_work(job),
+            readying: self.readying_for(job),
             paired,
             cannot: crate::models::usual_row(&self.device, job.job()).and_then(|(m, why)| why.map(|why| (m, why))),
         };
@@ -382,11 +389,15 @@ impl Chooser {
             return Ok(());
         }
         held.set_ready(false);
+        // what the engine said of an earlier try is not this one's
+        let folder = crate::models::folder(&self.dir, m);
+        crate::models::steps_over(&folder);
         self.work(job, &m.kind, m.told(crate::models::field::PREPARE), false);
         host.changed();
         let began = std::time::Instant::now();
         let went = self.run_once(&held, host);
         let ms = began.elapsed().as_millis() as u64;
+        crate::models::steps_over(&folder);
         let mut unready = self.unready.lock().unwrap_or_else(|e| e.into_inner());
         match &went {
             Ok(()) => {
@@ -509,7 +520,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, unready: &|_| None, has_key, failed: None, work: None, paired: &[], cannot: None }
+        Facts { models: crate::models::models(&phone()).collect(), here, prepared: &|_| true, unready: &|_| None, has_key, failed: None, work: None, readying: None, paired: &[], cannot: None }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {
@@ -944,7 +955,7 @@ mod ready_tests {
         let Some(m) = crate::models::models(&device).find(|m| m.job == Job::Ears) else { return };
         let saved = Saved { ears: Some(Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }), ..Saved::default() };
         let card = |here: &dyn Fn(&Model) -> (bool, bool), unready: &dyn Fn(&Model) -> Option<String>, failed: Option<String>, work: Option<(String, String, Option<f64>)>| {
-            let facts = Facts { models: vec![m.clone()], here, unready, has_key: &|_| false, failed, work, paired: &[], cannot: None };
+            let facts = Facts { models: vec![m.clone()], here, prepared: &|_| true, unready, has_key: &|_| false, failed, work, readying: None, paired: &[], cannot: None };
             list(ChoiceJob::Ears, &saved, &facts).into_iter().find(|c| c.id == m.kind).unwrap()
         };
         let size = list::megabytes(&m);

@@ -30,7 +30,7 @@ public func phononLiveOpen(_ units: Int32, _ folder: UnsafePointer<CChar>) -> In
     var o = NeuralEngineListening.onPhone
     o.computeUnits = units.computeUnits
     o.functions = manifest.functions_s.filter { $0 <= 15 }
-    listening = NeuralEngineListening(options: o)
+    listening = NeuralEngineListening(options: o) { _, _, _ in }
     return 0
 }
 

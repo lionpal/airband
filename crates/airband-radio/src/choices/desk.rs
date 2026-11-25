@@ -159,10 +159,14 @@ impl Desk {
                 Pick { place: ChoicePlace::Phone, voice: before.filter(|b| b.place == ChoicePlace::Phone && b.id == id).map(|b| b.voice).unwrap_or_default(), id, offer: String::new(), set: BTreeMap::new() }
             }
         };
-        done(chooser.change(|s| match job {
+        let went = done(chooser.change(|s| match job {
             ChoiceJob::Ears => s.ears = Some(pick),
             _ => s.voice = Some(pick),
-        }))
+        }));
+        if job == ChoiceJob::Ears {
+            crate::desk::hear_held_back(&self.shared);
+        }
+        went
     }
 
     /// A short clip of one of a voice model's voices, for him to hear before choosing it: fetched from where
@@ -216,18 +220,24 @@ impl Desk {
     pub fn finish_choices(&self) -> Result<(), RadioError> {
         let chooser = &self.shared.chooser;
         let host = &*self.shared.host;
-        let mut went = Ok(());
-        for job in [ChoiceJob::Voice, ChoiceJob::Ears] {
-            let Some(pick) = chooser.saved().pick(job).filter(|p| p.place == ChoicePlace::Phone) else { continue };
-            let Some(m) = chooser.model(&pick.id) else { continue };
-            went = chooser.make_ready(job, &m, host);
-            chooser.rest(job);
-            if went.is_err() {
-                break;
-            }
+        let todo: Vec<(ChoiceJob, Arc<Model>)> = [ChoiceJob::Voice, ChoiceJob::Ears].into_iter().filter_map(|job| Some((job, chooser.model(&chooser.saved().pick(job).filter(|p| p.place == ChoicePlace::Phone)?.id)?))).collect();
+        // each is on its way from now, the second waiting its turn: the microphone opens meanwhile, and what he
+        // says is kept to be heard once the listening model is ready
+        for (job, m) in todo.iter().filter(|(_, m)| !crate::models::current(&chooser.dir, m)) {
+            chooser.work(*job, &m.kind, String::new(), true);
         }
         chooser.apply(host, &self.shared.senses);
         host.changed();
+        let mut went = Ok(());
+        for (job, m) in &todo {
+            if went.is_ok() {
+                went = chooser.make_ready(*job, m, host);
+            }
+            chooser.rest(*job);
+        }
+        chooser.apply(host, &self.shared.senses);
+        host.changed();
+        crate::desk::hear_held_back(&self.shared);
         went
     }
 
@@ -239,6 +249,14 @@ impl Desk {
         let todo = chooser.queue_chosen();
         self.shared.host.changed();
         chooser.prepare_chosen(todo, &*self.shared.host, &self.shared.senses);
+        crate::desk::hear_held_back(&self.shared);
+    }
+
+    /// The listening model he chose is getting ready, and how far it has got: for the ring around the
+    /// microphone and a line beside it. Nothing when it is ready, or is not a model on this phone. Cheap: asked
+    /// a few times a second while there is something to show.
+    pub fn mic_readying(&self) -> Option<Readying> {
+        self.shared.chooser.mic_readying()
     }
 
     /// Whether a model chosen for this phone is not ready on this build of the system: the host asks for
@@ -257,12 +275,6 @@ impl Desk {
         let megabytes = crate::models::megabytes(owed.iter().map(|(_, m)| m.files.iter().map(|f| f.1).sum::<u64>()).sum());
         let what: Vec<&str> = owed.iter().map(|(job, _)| if *job == ChoiceJob::Voice { "the voice" } else { "speech recognition" }).collect();
         Some(DownloadAsk { megabytes, title: format!("Download {}?", what.join(" and ")), button: format!("Download ({megabytes}\u{a0}MB)") })
-    }
-
-    /// What is being done about a choice right now, if anything, and how far along it is: for a first run's
-    /// progress bar.
-    pub fn choice_work(&self) -> Option<ChoiceState> {
-        self.shared.chooser.any_work().map(|w| ChoiceState::Working { label: w.1, fraction: w.2 })
     }
 
     /// The coding tools he uses, by id.

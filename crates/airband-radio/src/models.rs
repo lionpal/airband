@@ -11,6 +11,7 @@
 #![expect(clippy::disallowed_methods, reason = "lists the versions of a model kept on this device, by when each was made whole")]
 use super::*;
 use crate::engines::HostDevice;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub(crate) use airband_core::catalog::PhoneModel as Model;
@@ -100,6 +101,33 @@ pub(crate) fn prepared(dir: &str, m: &Model, os_build: &str) -> bool {
 /// Say that work is done for the version in use, on this build of the system.
 pub(crate) fn mark_prepared(dir: &str, m: &Model, os_build: &str) -> bool {
     usable(dir, m).is_some_and(|f| airband_io::files::write_atomic(&f.join(READY), os_build).is_ok())
+}
+
+/// How many of its steps a host's engine has done getting the model in each folder ready, and how many there
+/// are, as the engine last said ([`model_steps`]). By the folder as the engine is given it.
+static STEPS: Mutex<BTreeMap<String, (u32, u32)>> = Mutex::new(BTreeMap::new());
+
+/// A host's engine, getting the model in `folder` ready, has done `done` of its `of` steps (for a Core ML model,
+/// each encoder compiled for this phone). Said once it knows how many there are (with `done` 0) and as each
+/// ends. Only what the engine has done: nothing is guessed between two of them.
+#[uniffi::export]
+pub fn model_steps(folder: String, done: u32, of: u32) {
+    STEPS.lock().unwrap_or_else(|e| e.into_inner()).insert(folder, (done.min(of), of));
+}
+/// How many of its steps the engine has done getting the model in `folder` ready, and of how many; nothing
+/// before it has said.
+pub(crate) fn steps_in(folder: &Path) -> Option<(u32, u32)> {
+    STEPS.lock().unwrap_or_else(|e| e.into_inner()).get(&folder.display().to_string()).copied()
+}
+/// What the engine said of the model in `folder` is over: it is being got ready afresh, or it is ready.
+pub(crate) fn steps_over(folder: &Path) {
+    STEPS.lock().unwrap_or_else(|e| e.into_inner()).remove(&folder.display().to_string());
+}
+
+/// How long getting the model ready takes the first time at most, as measured on a phone, in minutes, when its
+/// row says ([`field::PREPARE_MINUTES`]).
+pub(crate) fn prepare_minutes(m: &Model) -> Option<u64> {
+    m.with.get(field::PREPARE_MINUTES).and_then(|n| n.as_u64()).filter(|n| *n > 0)
 }
 
 /// One of the voices a voice model can speak in.

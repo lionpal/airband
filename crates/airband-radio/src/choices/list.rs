@@ -8,6 +8,8 @@ pub(super) struct Facts<'a> {
     pub(super) models: Vec<Arc<Model>>,
     /// For a model's kind: is it on this device, and is that the version the catalogue names?
     pub(super) here: &'a dyn Fn(&Model) -> (bool, bool),
+    /// For a model: the work this device does with it before first use is done, or there is none.
+    pub(super) prepared: &'a dyn Fn(&Model) -> bool,
     /// Why this device could not get a model ready the last time it tried, if it could not.
     pub(super) unready: &'a dyn Fn(&Model) -> Option<String>,
     /// Is a key kept on this device for this provider?
@@ -15,6 +17,8 @@ pub(super) struct Facts<'a> {
     /// Why what is chosen for this job did not work the last time, if it did not.
     pub(super) failed: Option<String>,
     pub(super) work: Option<(String, String, Option<f64>)>,
+    /// The model being got ready for this job, and how far it has got.
+    pub(super) readying: Option<(Arc<Model>, Readying)>,
     /// The computers paired now, by id.
     pub(super) paired: &'a [StationId],
     /// The model this job starts with, when this device cannot run it, and why.
@@ -23,6 +27,19 @@ pub(super) struct Facts<'a> {
 
 pub(super) fn megabytes(m: &Model) -> u32 {
     crate::models::megabytes(m.files.iter().map(|f| f.1).sum::<u64>())
+}
+
+/// The line under a model's name: where it runs, its download while it is not here, and, before he picks one
+/// that the phone gets ready before first use, how long that takes the first time.
+fn model_line(m: &Model, fetched: bool, prepared: bool) -> String {
+    let mut line = "Runs on this phone".to_string();
+    if !fetched {
+        line += &format!(". {}\u{a0}MB download", megabytes(m));
+    }
+    if let Some(minutes) = crate::models::prepare_minutes(m).filter(|_| !prepared) {
+        line += &format!(". Takes up to {minutes} minutes to get ready the first time");
+    }
+    line
 }
 
 /// The words of the button on the chosen card that gets it ready, for how it stands. The card shows the
@@ -73,6 +90,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         asks: s.asks,
         voices: s.voices,
         voice,
+        readying: None,
         action: None,
     };
     if job == ChoiceJob::Reads {
@@ -137,7 +155,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             provider: m.kind.clone(),
             offer: String::new(),
             title: m.name.clone(),
-            line: if fetched { "Runs on this phone".into() } else { format!("Runs on this phone. {size}\u{a0}MB download") },
+            line: model_line(m, fetched, (facts.prepared)(m)),
             free: true,
             more: false,
             chosen,
@@ -150,6 +168,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, the voice the row names as its usual one
             voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
+            readying: facts.readying.as_ref().filter(|(r, _)| r.kind == m.kind).map(|(_, r)| r.clone()),
             action,
             // what it has heard so far is read again while he talks
             live: job == ChoiceJob::Ears,
@@ -176,6 +195,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             asks: Vec::new(),
             voices: Vec::new(),
             voice: String::new(),
+            readying: None,
             action: None,
             live: false,
         });

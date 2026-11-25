@@ -100,7 +100,7 @@ pub(crate) struct Chosen {
 }
 
 impl Chosen {
-    fn using(&self) -> Option<Own> {
+    pub(crate) fn using(&self) -> Option<Own> {
         self.using.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
@@ -335,8 +335,12 @@ impl Ears {
     /// What listened did not hear him: he is told why, once, with the tone the host makes for anything that
     /// went wrong. The recording waits in the chat.
     fn tell_unheard(&self, host: &dyn RadioHost, heard: &Listened) {
-        if let Listened::Unheard { why, .. } = heard {
-            host.told(format!("{} {KEPT}", why.told()));
+        match heard {
+            // he was told as he opened the microphone, and the chat says it beside his recording: it is heard
+            // by itself once the model is ready, with nothing for him to do
+            Listened::Unheard { why: Unheard::NotReady { .. }, .. } => {}
+            Listened::Unheard { why, .. } => host.told(format!("{} {KEPT}", why.told())),
+            _ => {}
         }
     }
 

@@ -23,17 +23,7 @@ impl Desk {
             }
             Again::Hear { aim } => {
                 let shared = self.shared.clone();
-                thread::spawn(move || {
-                    let side = Side { shared: shared.clone() };
-                    let heard = crate::ears::Ears::new(shared.senses.clone()).hear_again(&side, &id);
-                    match heard {
-                        Listened::Said { text, take } => {
-                            let _kept = deliver(&shared, text, None, aim.re, aim.room, aim.agent, take);
-                        }
-                        Listened::Nothing | Listened::Cannot | Listened::Unheard { .. } => {}
-                    }
-                    shared.host.changed();
-                });
+                thread::spawn(move || hear_and_send(&shared, &id, aim));
             }
             Again::Nothing => {}
         }
@@ -44,6 +34,38 @@ impl Desk {
     pub fn discard_take(&self, id: String) {
         self.shared.senses.takes.discard(&id);
         self.shared.host.changed();
+    }
+}
+
+/// Hear a take again from its recording, by what he has chosen to listen with now, and send what was heard as
+/// he aimed it. Blocks while it is heard.
+fn hear_and_send(shared: &Arc<Shared>, id: &str, aim: crate::takes::Aim) {
+    let side = Side { shared: shared.clone() };
+    let heard = crate::ears::Ears::new(shared.senses.clone()).hear_again(&side, id);
+    match heard {
+        Listened::Said { text, take } => {
+            let _kept = deliver(shared, text, None, aim.re, aim.room, aim.agent, take);
+        }
+        Listened::Nothing | Listened::Cannot | Listened::Unheard { .. } => {}
+    }
+    shared.host.changed();
+}
+
+/// The listening model he chose is ready: what he said while it was getting ready (kept, and not heard, for
+/// that reason alone) is heard now by it, one after another, and sent as he aimed it. Nothing while what
+/// listens is anything else, or not ready. Blocks while they are heard.
+pub(crate) fn hear_held_back(shared: &Arc<Shared>) {
+    use crate::takes::{Stage, Unheard};
+    if !matches!(shared.senses.ears.using(), Some(crate::ears::Own::Model(held)) if held.ready()) {
+        return;
+    }
+    for take in shared.senses.takes.all() {
+        if !matches!(take.stage, Stage::Unheard { why: Unheard::NotReady { .. } }) {
+            continue;
+        }
+        if let Again::Hear { aim } = shared.senses.takes.again(&take.id, false) {
+            hear_and_send(shared, &take.id, aim);
+        }
     }
 }
 

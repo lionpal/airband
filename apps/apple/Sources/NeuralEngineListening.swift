@@ -34,8 +34,13 @@ final class NeuralEngineListening: @unchecked Sendable {
         return o
     }
 
-    init(options: Transcriber.Options) {
+    /// Told, as a model is got ready, how many of its encoders are loaded (by the folder it is in): once it is
+    /// known how many there are, then as each is done. The app tells the core; a tool on a Mac, nobody.
+    private let steps: (String, Int, Int) -> Void
+
+    init(options: Transcriber.Options, steps: @escaping (_ folder: String, _ done: Int, _ of: Int) -> Void) {
         self.options = options
+        self.steps = steps
     }
 
     /// One model, run one thing at a time.
@@ -78,17 +83,25 @@ final class NeuralEngineListening: @unchecked Sendable {
     }
 
     private func load(_ folder: String) throws -> Transcriber {
+        // no encoder is loaded by the init: each is loaded below, one at a time, so the core can be told as each
+        // is done (the first time, Core ML compiles each for this phone's Neural Engine, minutes apiece)
+        var options = self.options
+        options.eagerFunctions = []
         let model = try Transcriber(bundle: URL(fileURLWithPath: folder), options: options)
-        // the encoders the init did not load (it loads one): a recording of any length runs on one ready now
-        try model.preloadAllFunctions()
-        // An encoder's first run takes a second or two more than any after it (tools/phonon-live.sh measured
-        // 1.1 to 1.8 s on a Mac's Neural Engine, once for each: his first words, and again as he passed 5 and
-        // 10 s). Each is run once here, while the model is got ready or loaded at launch, on a quiet tone just
-        // shorter than it (silence is skipped without running anything).
-        for seconds in model.functionSeconds {
+        let encoders = model.functionSeconds
+        steps(folder, 0, encoders.count)
+        // An encoder is loaded by its first run, which also takes a second or two more than any after it
+        // (tools/phonon-live.sh measured 1.1 to 1.8 s on a Mac's Neural Engine, once for each: his first words,
+        // and again as he passed 5 and 10 s). Each is run once here, while the model is got ready or loaded at
+        // launch, on a quiet tone just shorter than it, which the smallest encoder that holds it runs (silence
+        // is skipped without running anything).
+        for (i, seconds) in encoders.enumerated() {
             let tone = (0..<Int((seconds - 0.5) * 16000)).map { Float(sin(Double($0) * 0.07)) * 0.01 }
             _ = try model.transcribe(tone)
+            steps(folder, i + 1, encoders.count)
         }
+        // any encoder no tone above landed on: a recording of any length runs on one ready now
+        try model.preloadAllFunctions()
         return model
     }
 }

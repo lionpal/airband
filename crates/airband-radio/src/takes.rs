@@ -76,7 +76,7 @@ impl Unheard {
         match self {
             Unheard::Unreachable => "Couldn\u{2019}t reach the listening service.".into(),
             Unheard::Service { why } | Unheard::Model { why } => why.clone(),
-            Unheard::NotReady { model } => format!("{model} isn\u{2019}t ready yet."),
+            Unheard::NotReady { model } => format!("Waiting for {model} to get ready. Your words will show up then."),
             Unheard::Dropped => "The line to the listening service dropped.".into(),
             Unheard::TimedOut => "The listening service took too long to answer.".into(),
             Unheard::NoWords => "No words came back.".into(),

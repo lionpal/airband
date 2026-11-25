@@ -3,6 +3,8 @@
 pub(crate) const USUAL: &str = "usual";
 /// A model row: what the device does once before first use, in words for him.
 pub(crate) const PREPARE: &str = "prepare";
+/// A model row: the longest that work takes the first time, as measured on a phone, in minutes.
+pub(crate) const PREPARE_MINUTES: &str = "prepare_minutes";
 /// A model row: the lowest system it runs on, for each kind of device.
 pub(crate) const MIN_OS: &str = "min_os";
 /// A voice: the rate of its sound.

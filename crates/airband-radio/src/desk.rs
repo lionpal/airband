@@ -27,6 +27,7 @@ pub use slash::{CommandOffer, CommandsView};
 mod talk;
 mod station_host;
 mod takes;
+pub(crate) use takes::hear_held_back;
 mod tell;
 #[cfg(test)]
 mod tests;
@@ -424,6 +425,8 @@ impl Desk {
             if let Some(shared) = shared.upgrade() {
                 shared.chooser.load_chosen(&*shared.host, &shared.senses);
                 shared.chooser.prepare_chosen(todo, &*shared.host, &shared.senses);
+                // what he said while it was getting ready, before the app last closed, is heard now
+                hear_held_back(&shared);
             }
         });
         desk

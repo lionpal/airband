@@ -275,10 +275,11 @@ fn a_model_not_ready_yet_is_not_run_and_what_he_said_waits_with_why() {
     let Listened::Unheard { take, why } = ears.hear_by(&mic, super::Mic::Model(held.clone()), true, Aim::default()) else { panic!("not kept as unheard") };
     assert_eq!(why, Unheard::NotReady { model: "Tiny".into() });
     assert_eq!(*mic.asked.lock().unwrap(), 0, "the engine was asked while it was not ready");
-    // all of it is kept, with the reason the chat shows beside it, and he is told once
+    // all of it is kept, with the reason the chat shows beside it. He was told as he opened the microphone
+    // (`Readying::talking`), and is not told again: nothing went wrong, and it is heard by itself once ready
     assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why: why.clone() }), Some(sound.len())));
-    assert_eq!(*mic.told.lock().unwrap(), 1);
-    assert_eq!(why.told(), "Tiny isn\u{2019}t ready yet.");
+    assert_eq!(*mic.told.lock().unwrap(), 0);
+    assert_eq!(why.told(), "Waiting for Tiny to get ready. Your words will show up then.");
     // once it has been got ready, the take is heard again by it
     held.set_ready(true);
     ears.takes().again(&take, false);

@@ -12,15 +12,12 @@ struct OnboardingView: View {
     // development only: `-airband.devStep 2` opens on that step, for a screenshot
     @State private var step = Dev.number("devStep")
     @State private var scanning = false
-    @State private var finishing = false
-    @State private var working: (label: String, fraction: Double?)?
     /// What runs on this phone and is not on it yet, asked about once before it is downloaded.
     @State private var downloads: DownloadAsk?
     @State private var wrong: String?
     @State private var copied = false
     /// The keyboard is up.
     @State private var typing = false
-    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     /// He asked for the pairing with no relay.
     // (development only: `-airband.devNoRelay YES` opens with it asked for, for a screenshot)
@@ -60,13 +57,6 @@ struct OnboardingView: View {
             .scrollIndicators(.hidden)
             .environment(\.reveal) { id in withAnimation(.snappy(duration: 0.25)) { page.scrollTo(id, anchor: .top) } }
             }
-            if let working {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let fraction = working.fraction { ProgressView(value: fraction).tint(Palette.ink) } else { ProgressView().controlSize(.small) }
-                    Text(working.label).font(.system(size: 14)).foregroundStyle(Palette.soft)
-                }
-                .padding(.bottom, 12)
-            }
             if let wrong { Text(wrong).font(.footnote).foregroundStyle(.red).padding(.bottom, 10) }
             if !typing {
             Button(action: next) {
@@ -75,13 +65,13 @@ struct OnboardingView: View {
                     Text(step == last ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
                 }
                 .foregroundStyle(Palette.ground).frame(maxWidth: .infinity, minHeight: 56)
-                .background(finishing || unchosen ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
+                .background(unchosen ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
             }
-            .buttonStyle(.plain).disabled(finishing || unchosen)
+            .buttonStyle(.plain).disabled(unchosen)
             HStack {
-                if step > 0 && !finishing { Button("Back") { withAnimation(.snappy(duration: 0.2)) { step -= 1 } } }
+                if step > 0 { Button("Back") { withAnimation(.snappy(duration: 0.2)) { step -= 1 } } }
                 Spacer()
-                if step == last && !finishing {
+                if step == last {
                     Button("Paste a link instead") {
                         wrong = model.pairPasted()
                     }
@@ -99,7 +89,6 @@ struct OnboardingView: View {
         .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
         // paired, by the scan or by a link: fetch what he chose and finish
         .onChange(of: model.paired) { _, paired in if paired && step == last { finish() } }
-        .onReceive(tick) { _ in if finishing { working = model.choiceWork() } }
         .confirmationDialog(downloads?.title ?? "", isPresented: Binding(get: { downloads != nil }, set: { if !$0 { downloads = nil } }), titleVisibility: .visible) {
             Button(downloads?.button ?? "") { fetch() }
             // not now: each card in Settings offers its download
@@ -168,13 +157,13 @@ struct OnboardingView: View {
         if let ask = model.desk.downloadsWanted() { downloads = ask } else { fetch() }
     }
 
-    /// Fetch the models he chose that run on this phone, one after another, get them ready, then close.
+    /// Close, and fetch the models he chose that run on this phone, one after another, and get them ready, while
+    /// he uses the app: getting the listening model ready takes up to 15 minutes the first time, and the
+    /// microphone shows how far it has got. What goes wrong is told where he is then.
     private func fetch() {
-        finishing = true
-        model.finishChoices { problem in
-            (finishing, working) = (false, nil)
-            close(problem)
-        }
+        let model = self.model
+        model.finishChoices { problem in if let problem { model.problem = problem } }
+        close(nil)
     }
 
     /// A download that failed or was put off does not keep him out: what he chose stays chosen and its card
