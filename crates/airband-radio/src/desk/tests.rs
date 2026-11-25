@@ -525,18 +525,7 @@ fn a_tapped_answer_kept_for_later_is_still_what_the_button_stood_for() {
 
 /// A computer on this machine that answers every request with 200 and `body`. Its port.
 fn tower_answering(body: &'static str) -> u16 {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            let mut buf = [0u8; 65536];
-            let _ = stream.read(&mut buf);
-            let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
-        }
-    });
-    port
+    tower_saying(200, body)
 }
 fn temp_dir(what: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("airband-{what}-{}", random_hex(4)));
@@ -861,18 +850,42 @@ fn a_question_he_opens_the_microphone_for_still_waits_until_his_words_go() {
 
 /// A computer on this machine that answers every request with `status` and `body`. Its port.
 fn tower_saying(status: u16, body: &'static str) -> u16 {
-    use std::io::{Read, Write};
+    use std::io::Write;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let mut buf = [0u8; 65536];
-            let _ = stream.read(&mut buf);
+            whole_request(&mut stream);
             let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
         }
     });
     port
+}
+/// The request on this connection read to its end: its head, then as many bytes of body as its
+/// `content-length` says. A connection closed with some of a request still unread is reset, and on Windows the
+/// reset throws away the answer written before it, so the answer is only written once all of it is read.
+fn whole_request(stream: &mut std::net::TcpStream) {
+    use std::io::Read;
+    let mut got = Vec::new();
+    let mut buf = [0u8; 65536];
+    let head_end = loop {
+        if let Some(at) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+            break at + 4;
+        }
+        match stream.read(&mut buf) {
+            Ok(n @ 1..) => got.extend_from_slice(&buf[..n]),
+            _ => return,
+        }
+    };
+    let head = String::from_utf8_lossy(&got[..head_end]).into_owned();
+    let length = head.lines().filter_map(|l| l.split_once(':')).find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.trim().parse::<usize>().ok()).unwrap_or(0);
+    while got.len() < head_end + length {
+        match stream.read(&mut buf) {
+            Ok(n @ 1..) => got.extend_from_slice(&buf[..n]),
+            _ => return,
+        }
+    }
 }
 fn radio_at(port: u16) -> Arc<Radio> {
     let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac"), String::new(), Arc::new(Quiet)).unwrap();
