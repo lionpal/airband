@@ -108,6 +108,19 @@ impl ChannelStore for Dyn {
     async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         self.put_new(&self.waitlist, "email", json!({ "email": s(email), "joined_at": n(airband_core::clock::now_secs()) })).await
     }
+    async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String> {
+        let ask = json!({ "TableName": self.waitlist, "Key": { "email": s(email) }, "UpdateExpression": "SET #at = :at, #how = :how", "ConditionExpression": "attribute_exists(#e)",
+            "ExpressionAttributeNames": { "#at": "invited_at", "#how": "invite", "#e": "email" }, "ExpressionAttributeValues": { ":at": n(at), ":how": s(how.name()) } });
+        match self.db.call(dynamo::Op::UpdateItem, ask).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.condition() => Err("that address is not on the waiting list".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
+        let ask = json!({ "TableName": self.waitlist, "ConsistentRead": true, "FilterExpression": "attribute_not_exists(#at)", "ProjectionExpression": "#e", "ExpressionAttributeNames": { "#at": "invited_at", "#e": "email" } });
+        Ok(self.db.all(dynamo::Op::Scan, ask).await?.iter().filter_map(|item| dynamo::text(item, "email")).collect())
+    }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel's item becomes a closed one, with nothing of its tower's in it: never opened again
         self.db.call(dynamo::Op::PutItem, json!({ "TableName": self.channels, "Item": { "channel": s(channel), "closed": n(airband_core::clock::now_secs()) } })).await.map_err(|e| e.to_string())?;

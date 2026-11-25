@@ -98,6 +98,7 @@ impl ChannelStore for Pg {
         db.batch_execute(
             "create table if not exists relay_channels (channel text primary key, pull_hash text not null, radio_hash text not null, created_at timestamptz not null default now());
              create table if not exists waitlist (email text primary key, joined_at timestamptz not null default now());
+             alter table waitlist add column if not exists invite text, add column if not exists invited_at timestamptz;
              create table if not exists relay_closed (channel text primary key, closed_at timestamptz not null default now());
              create table if not exists relay_held (seq bigserial primary key, channel text not null, id text not null, sealed bytea not null, held_at timestamptz not null default now(), unique (channel, id))",
         )
@@ -109,6 +110,17 @@ impl ChannelStore for Pg {
     async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         let db = self.connect(&self.name).await?;
         db.execute("insert into waitlist (email) values ($1) on conflict (email) do nothing", &[&email]).await.map(|_| ()).map_err(|e| e.to_string())
+    }
+    async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String> {
+        let db = self.connect(&self.name).await?;
+        let at = at as f64;
+        let changed = db.execute("update waitlist set invite = $2, invited_at = to_timestamp($3) where email = $1", &[&email, &how.name(), &at]).await.map_err(|e| e.to_string())?;
+        if changed == 1 { Ok(()) } else { Err("that address is not on the waiting list".into()) }
+    }
+    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
+        let db = self.connect(&self.name).await?;
+        let rows = db.query("select email from waitlist where invited_at is null order by joined_at", &[]).await.map_err(|e| e.to_string())?;
+        Ok(rows.iter().map(|r| r.get(0)).collect())
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel and what was kept for it, together or not at all

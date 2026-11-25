@@ -112,11 +112,20 @@ fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8>
     mac(&mac(&mac(&day, region.as_bytes()), service.as_bytes()), b"aws4_request")
 }
 
+/// An AWS service the relay signs requests to: its name in the signature and the JSON its API speaks.
+#[derive(Clone, Copy)]
+struct Service {
+    name: &'static str,
+    content_type: &'static str,
+}
+const DYNAMODB: Service = Service { name: "dynamodb", content_type: "application/x-amz-json-1.0" };
+const SECRETS: Service = Service { name: "secretsmanager", content_type: "application/x-amz-json-1.1" };
+
 /// The headers that sign one request: `authorization` and those it covers besides `host`.
-fn signed(creds: &Creds, region: &str, host: &str, target: &str, body: &[u8], secs: u64) -> Vec<(&'static str, String)> {
+fn signed(creds: &Creds, service: Service, region: &str, host: &str, target: &str, body: &[u8], secs: u64) -> Vec<(&'static str, String)> {
     let when = airband_core::clock::compact(secs);
     let date = &when[..8];
-    let mut headers = vec![("content-type", "application/x-amz-json-1.0".to_string()), ("host", host.to_string()), ("x-amz-date", when.clone())];
+    let mut headers = vec![("content-type", service.content_type.to_string()), ("host", host.to_string()), ("x-amz-date", when.clone())];
     if let Some(token) = &creds.token {
         headers.push(("x-amz-security-token", token.clone()));
     }
@@ -124,9 +133,9 @@ fn signed(creds: &Creds, region: &str, host: &str, target: &str, body: &[u8], se
     let names = headers.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(";");
     let listed: String = headers.iter().map(|(n, v)| format!("{n}:{v}\n")).collect();
     let request = format!("POST\n/\n\n{listed}\n{names}\n{}", sha256(body));
-    let scope = format!("{date}/{region}/dynamodb/aws4_request");
+    let scope = format!("{date}/{region}/{}/aws4_request", service.name);
     let to_sign = format!("AWS4-HMAC-SHA256\n{when}\n{scope}\n{}", sha256(request.as_bytes()));
-    let signature = hex(&mac(&signing_key(&creds.secret, date, region, "dynamodb"), to_sign.as_bytes()));
+    let signature = hex(&mac(&signing_key(&creds.secret, date, region, service.name), to_sign.as_bytes()));
     headers.push(("authorization", format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={names}, Signature={signature}", creds.key)));
     headers.retain(|(n, _)| *n != "host");
     headers
@@ -200,7 +209,7 @@ impl Dynamo {
             let creds = self.creds().await?;
             let secs = airband_core::clock::now_secs();
             let mut req = self.http.post(format!("https://{host}/")).body(bytes.clone());
-            for (name, value) in signed(&creds, &self.region, &host, &format!("DynamoDB_20120810.{}", operation.name()), &bytes, secs) {
+            for (name, value) in signed(&creds, DYNAMODB, &self.region, &host, &format!("DynamoDB_20120810.{}", operation.name()), &bytes, secs) {
                 req = req.header(name, value);
             }
             let res = match req.send().await {
@@ -228,6 +237,58 @@ impl Dynamo {
             last = Failed { kind, message, reasons };
         }
         Err(last)
+    }
+}
+
+/// What Secrets Manager said when asked for a secret's value, read from its answer.
+fn secret_from(status: u16, answer: &[u8]) -> Result<Option<String>, Failed> {
+    #[derive(serde::Deserialize, Default)]
+    struct Answer {
+        #[serde(rename = "SecretString")]
+        secret: Option<String>,
+        #[serde(rename = "__type")]
+        kind: Option<String>,
+        #[serde(alias = "Message")]
+        message: Option<String>,
+    }
+    let read: Answer = serde_json::from_slice(answer).unwrap_or_default();
+    let kind = read.kind.as_deref().and_then(|t| t.rsplit('#').next()).unwrap_or("Unknown").to_string();
+    match (status, kind.as_str(), read.secret) {
+        (200, _, Some(secret)) => Ok(Some(secret)),
+        (200, _, None) => Err(Failed { kind: "NoSecretString".into(), message: "the secret has no text value".into(), reasons: Vec::new() }),
+        // there is no secret by that name (or it was deleted): an answer, not a fault
+        (_, "ResourceNotFoundException", _) => Ok(None),
+        _ => Err(Failed { kind, message: read.message.unwrap_or_default(), reasons: Vec::new() }),
+    }
+}
+
+impl Dynamo {
+    /// The text of one secret in AWS Secrets Manager, in this client's region, with the same keys the tables are
+    /// reached with. Nothing when there is no secret by that name. Asked once; the caller asks again later.
+    pub(crate) async fn secret(&self, id: &str) -> Result<Option<String>, Failed> {
+        #[derive(serde::Serialize)]
+        struct Ask<'a> {
+            #[serde(rename = "SecretId")]
+            id: &'a str,
+        }
+        let host = format!("secretsmanager.{}.amazonaws.com", self.region);
+        let bytes = serde_json::to_vec(&Ask { id }).expect("JSON can be written");
+        let creds = self.creds().await?;
+        let mut req = self.http.post(format!("https://{host}/")).body(bytes.clone());
+        for (name, value) in signed(&creds, SECRETS, &self.region, &host, "secretsmanager.GetSecretValue", &bytes, airband_core::clock::now_secs()) {
+            req = req.header(name, value);
+        }
+        let res = req.send().await.map_err(|e| Failed { kind: "Unreachable".into(), message: e.without_url().to_string(), reasons: Vec::new() })?;
+        let status = res.status().as_u16();
+        let answer = res.bytes().await.map_err(|e| Failed { kind: "Unreachable".into(), message: e.without_url().to_string(), reasons: Vec::new() })?;
+        let read = secret_from(status, &answer);
+        // the keys were replaced under us: ask for them again next time
+        if let Err(Failed { kind, .. }) = &read
+            && matches!(kind.as_str(), "ExpiredTokenException" | "UnrecognizedClientException")
+        {
+            *self.creds.lock().await = None;
+        }
+        read
     }
 }
 
@@ -308,6 +369,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_secret_is_its_text_and_one_that_is_not_there_is_nothing() {
+        assert_eq!(secret_from(200, br#"{"Name":"x","SecretString":"{\"a\":1}"}"#).unwrap(), Some("{\"a\":1}".into()));
+        assert_eq!(secret_from(400, br#"{"__type":"ResourceNotFoundException","Message":"Secrets Manager can't find the specified secret."}"#).unwrap(), None);
+        let refused = secret_from(400, br#"{"__type":"AccessDeniedException","Message":"no"}"#).unwrap_err();
+        assert_eq!(refused.kind, "AccessDeniedException");
+        assert_eq!(secret_from(200, br#"{"SecretBinary":"AAAA"}"#).unwrap_err().kind, "NoSecretString");
+        assert_eq!(secret_from(502, b"<html>").unwrap_err().kind, "Unknown");
+    }
+    #[test]
+    fn a_secrets_request_is_signed_for_that_service() {
+        let creds = Creds { key: "AKIDEXAMPLE".into(), secret: "secret".into(), token: None };
+        let headers = signed(&creds, SECRETS, "us-east-2", "secretsmanager.us-east-2.amazonaws.com", "secretsmanager.GetSecretValue", b"{}", 1_440_938_160);
+        assert!(headers.iter().any(|(n, v)| *n == "content-type" && v == "application/x-amz-json-1.1"));
+        assert!(headers.iter().find(|(n, _)| *n == "authorization").unwrap().1.contains("/20150830/us-east-2/secretsmanager/aws4_request"));
+    }
+
+    #[test]
     fn the_signing_key_is_the_one_amazon_publishes_for_its_example() {
         // from "Examples of how to derive a signing key for Signature Version 4" in the AWS documentation
         let key = signing_key("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20120215", "us-east-1", "iam");
@@ -316,12 +394,12 @@ mod tests {
     #[test]
     fn a_request_is_signed_over_its_headers_and_body_and_the_session_token_when_there_is_one() {
         let creds = Creds { key: "AKIDEXAMPLE".into(), secret: "secret".into(), token: None };
-        let plain = signed(&creds, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{}", 1_440_938_160);
+        let plain = signed(&creds, DYNAMODB, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{}", 1_440_938_160);
         let auth = &plain.iter().find(|(n, _)| *n == "authorization").unwrap().1;
         assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-2/dynamodb/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target, Signature="));
-        let other = signed(&creds, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{ }", 1_440_938_160);
+        let other = signed(&creds, DYNAMODB, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{ }", 1_440_938_160);
         assert_ne!(auth, &other.iter().find(|(n, _)| *n == "authorization").unwrap().1);
-        let with = signed(&Creds { token: Some("session".into()), ..creds }, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{}", 1_440_938_160);
+        let with = signed(&Creds { token: Some("session".into()), ..creds }, DYNAMODB, "us-east-2", "dynamodb.us-east-2.amazonaws.com", "DynamoDB_20120810.GetItem", b"{}", 1_440_938_160);
         assert!(with.iter().any(|(n, v)| *n == "x-amz-security-token" && v == "session"));
         assert!(with.iter().find(|(n, _)| *n == "authorization").unwrap().1.contains("SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-amz-target,"));
     }

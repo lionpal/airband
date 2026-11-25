@@ -339,7 +339,9 @@ refresh token changes each time it is used, so airband has to be the only keeper
 
 `site/index.html` is the whole of airband.dev: one static page (`AirbandSite` in `infra/cdk.mjs`), deployed by
 its own workflow. Its waiting-list form posts an email address to the relay (`POST /v1/waitlist`), which takes
-it from the homepage's origin only and limits how many it takes.
+it from the homepage's origin only and limits how many it takes, keeps it, and asks App Store Connect to add it
+as a tester to the app's external TestFlight group, so Apple emails the invite (`testflight.rs`). The answer
+says whether the invite went out; one that did not is sent later by `scripts/testflight-invite-waiting.sh`.
 
 ## What is kept
 
