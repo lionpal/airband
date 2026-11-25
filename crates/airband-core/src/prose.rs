@@ -335,6 +335,40 @@ pub fn clip(text: &str, most: usize) -> String {
     format!("{}\u{2026}", text.chars().take(most.saturating_sub(1)).collect::<String>().trim_end())
 }
 
+/// At most `most` characters of a text, cut cleanly where it does not fit: after its last whole sentence that
+/// does, else after its last whole word, with "…" to say there is more. Only a text with no space in that
+/// much of it is cut inside a word. The whole text when it fits.
+pub fn cut(text: &str, most: usize) -> String {
+    if text.chars().count() <= most {
+        return text.to_string();
+    }
+    // room for the mark after it, and the space before it
+    let room: String = text.chars().take(most.saturating_sub(2)).collect();
+    let ends = |i: usize, c: char| text[i + c.len_utf8()..].starts_with(char::is_whitespace);
+    if let Some(end) = room.char_indices().filter(|&(i, c)| matches!(c, '.' | '?' | '!') && ends(i, c)).map(|(i, c)| i + c.len_utf8()).last() {
+        return format!("{} \u{2026}", &room[..end]);
+    }
+    match room.char_indices().filter(|(_, c)| c.is_whitespace()).map(|(i, _)| i).last() {
+        Some(space) if !room[..space].trim_end().is_empty() => format!("{}\u{2026}", room[..space].trim_end()),
+        _ => format!("{}\u{2026}", room.trim_end()),
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    #[test]
+    fn a_text_too_long_is_cut_after_a_whole_sentence_else_a_whole_word() {
+        use super::cut;
+        assert_eq!(cut("Short enough.", 40), "Short enough.");
+        assert_eq!(cut("The build passed. The deploy is waiting on you to approve it.", 30), "The build passed. \u{2026}");
+        assert_eq!(cut("The deploy is waiting on you to approve it.", 20), "The deploy is\u{2026}");
+        assert_eq!(cut(&"x".repeat(50), 10), format!("{}\u{2026}", "x".repeat(8)));
+        for (text, most) in [("é tout à fait. Ça marche très bien aujourd'hui.", 20), ("a b c d e f g h i j k", 7)] {
+            assert!(cut(text, most).chars().count() <= most, "{text}");
+        }
+    }
+}
+
 /// The last `max_chars` characters of a text: what a model is shown of something too long to show whole.
 pub fn tail(text: &str, max_chars: usize) -> String {
     let n = text.chars().count();

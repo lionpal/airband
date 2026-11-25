@@ -28,8 +28,8 @@ pub struct PushRequest {
     /// newest under it, and the phone's system keeps a notification under it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<String>,
-    /// It takes down an earlier one under the same tag: nothing to hear, and nothing to show when the phone
-    /// opens it.
+    /// Nothing to hear: it takes down an earlier one under the same tag, or quietly takes its place in newer
+    /// words (what the phone opens says which).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quiet: bool,
     /// Not worth delivering after this, in seconds since 1970: what it asks will be over by then.

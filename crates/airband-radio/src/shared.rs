@@ -197,6 +197,8 @@ pub enum NoticeHow {
     OutOfTime,
     /// It took down what was shown for `message`, which was no longer news, for this reason.
     Withdrawn { message: String, why: airband_core::radio::Withdrawn },
+    /// Newer words for `message`, whose notification he had already put away: nothing shown.
+    NotReplaced { message: String },
 }
 
 impl NoticeShown {
@@ -217,6 +219,7 @@ impl NoticeShown {
             NoticeHow::Plain { why } => format!("{when} a notification shown without its words: {why}"),
             NoticeHow::OutOfTime => format!("{when} a notification shown without its words: the phone ran out of time to open it"),
             NoticeHow::Withdrawn { message, why } => format!("{when} notification {message} taken down: {}", withdrawn(*why)),
+            NoticeHow::NotReplaced { message } => format!("{when} notification {message} not shown again in its newer words: it had been put away"),
         }
     }
 }

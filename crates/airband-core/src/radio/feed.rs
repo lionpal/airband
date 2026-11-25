@@ -91,6 +91,12 @@ pub struct Notice {
     /// worth nothing, and is not kept for a phone that is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<u64>,
+    /// It is the line's notification again, in the words the line has now (its summary, made after he was
+    /// first woken with the message as written), and takes the place of the one shown under the same tag:
+    /// quietly, with no sound, no banner and the screen left dark, and not at all once he has put that one
+    /// away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replacing: bool,
 }
 
 /// What a sealed notification does on the phone. There is one notification per line, kept by the phone's

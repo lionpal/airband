@@ -326,7 +326,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let keys = Keys::derive(&laptop).unwrap();
     let seal_as = |p: &Pushed| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(p).unwrap()));
     let seal = |n: &Notice| seal_as(&Pushed::Show { notice: n.clone() });
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false, holding: false, rev: 7, until: None };
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false, holding: false, rev: 7, until: None, replacing: false };
     let open = |links: Vec<String>, sealed: String, colours: HashMap<String, u8>| match open_notice(links, Some(sealed), colours) {
         NoticeOpening::Opened { notice } => Ok(notice),
         NoticeOpening::Plain { why } => Err(why),
@@ -360,6 +360,13 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     assert_eq!(got.level, NoticeLevel::Active);
     let report = open(vec![link(&laptop)], seal(&Notice { kind: Some(Kind::Report), options: Vec::new(), ..question.clone() }), Default::default()).unwrap();
     assert_eq!(report.level, NoticeLevel::Active);
+    // newer words for one already shown take its place quietly, even for a request that holds an agent: he
+    // was woken for it once
+    assert!(!got.replacing);
+    for quiet in [Notice { replacing: true, ..question.clone() }, Notice { replacing: true, holding: true, permission: true, ..question.clone() }] {
+        let again = open(vec![link(&laptop)], seal(&quiet), Default::default()).unwrap();
+        assert_eq!((again.level, again.replacing, again.tag.clone()), (NoticeLevel::Passive, true, got.tag.clone()));
+    }
     // kept under the line's tag, which the tower gave the push service too; with the line's change count, for
     // the app to follow the chat to before it shows it
     assert_eq!((got.tag.clone(), got.rev), (keys.notice_tag("m1"), 7));
