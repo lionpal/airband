@@ -276,7 +276,24 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             full = full.filter { shown.contains($0.key) }
         }
         refreshChoices()
+        refreshReadying()
         syncBanners()
+    }
+
+    /// Ask the core again how far the listening model has got. Cheap; asked a few times a second while it is
+    /// getting ready.
+    func refreshReadying() {
+        #if DEBUG
+        // development only: `-airband.devReadying download|compiling|talking` shows the microphone at that step
+        // (talking: opened at it), for a screenshot
+        if let dev = Dev.text("devReadying") {
+            micReadying = readyingShown(step: dev == "download" ? .downloading(got: 141_000_000, of: 345_000_000) : .preparing(done: 1, of: 3))
+            if dev == "talking" { micOpen = true }
+            return
+        }
+        #endif
+        let now = desk.micReadying()
+        if now != micReadying { micReadying = now }
     }
 
     /// Open the microphone for him to talk, unless it is open already; with a question, about that question.
@@ -371,7 +388,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     private(set) var engines: [String: (String, ChoiceJob, Data) -> Data?] = [:]
 
     /// The listening model this app runs itself.
-    let ownListening = NeuralEngineListening(options: NeuralEngineListening.onPhone)
+    let ownListening = NeuralEngineListening(options: NeuralEngineListening.onPhone) { folder, done, of in modelSteps(folder: folder, done: UInt32(done), of: UInt32(of)) }
+
+    /// The listening model he chose is getting ready, and how far it has got, as the core last said: the ring
+    /// around the microphone and the line above it. Nil once it is ready.
+    @Published var micReadying: Readying?
 
 }
 

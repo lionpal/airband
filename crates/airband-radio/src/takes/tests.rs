@@ -25,7 +25,7 @@ pub(crate) fn speech(seconds: usize) -> Vec<u8> {
 }
 
 /// A take recorded with this sound, ended with what the listening made of it.
-fn recorded(takes: &Takes, sound: &[u8], got: Got) -> (String, Listened) {
+pub(crate) fn recorded(takes: &Takes, sound: &[u8], got: Got) -> (String, Listened) {
     let mut rec = takes.begin(Aim { re: Some("q1".into()), ..Aim::default() });
     for piece in sound.chunks(3200) {
         assert!(rec.keep(piece).is_none());

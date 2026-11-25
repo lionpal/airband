@@ -35,7 +35,8 @@ extension FeedView {
         case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"
         case .speaking(_, let callsign): return callsign ?? "airband"
-        default: return nil
+        // the listening model he chose is getting ready: how far it has got
+        default: return model.micReadying?.line
         }
     }
 
@@ -144,6 +145,12 @@ extension FeedView {
                     .frosted(RoundedRectangle(cornerRadius: 16), strength: 0.8).padding(.horizontal, 8).frame(maxWidth: .infinity)
             }
             .accessibilityHidden(true)
+        } else if model.hearing.isEmpty, model.micOpen, let readying = model.micReadying {
+            // talking before the listening model is ready: what he says is kept, and heard once it is
+            Text(readying.talking).font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.soft)
+                .lineLimit(2).multilineTextAlignment(.center)
+                .padding(.horizontal, 14).padding(.vertical, 5)
+                .frosted(RoundedRectangle(cornerRadius: 16), strength: 0.8).padding(.horizontal, 8).frame(maxWidth: .infinity)
         } else if model.hearing.isEmpty {
             HStack(spacing: 6) {
                 // whoever it will go to, with its badge, when that is settled
@@ -214,14 +221,28 @@ extension FeedView {
             Spacer(minLength: 0)
             Button { showQuick = false; Task { await model.talk() } } label: {
                 ZStack {
-                    Circle().fill(Palette.signal.opacity(model.listening ? 0.25 : 0)).frame(width: 104, height: 104)
-                    Circle().fill(model.listening ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
+                    if let readying = model.micReadying {
+                        // the listening model he chose is getting ready: how far, around the microphone
+                        MicRing(readying: readying).frame(width: 102, height: 102)
+                    } else {
+                        Circle().fill(Palette.signal.opacity(model.listening ? 0.25 : 0)).frame(width: 104, height: 104)
+                    }
+                    // not ready yet: the microphone still opens, and looks it
+                    let waiting = model.micReadying != nil && !model.listening
+                    Circle().fill(model.listening ? Palette.signal : waiting ? Palette.raised : Palette.ink).frame(width: 88, height: 88)
                     // open, it is the send button: nothing goes until he taps it
-                    Image(systemName: model.listening ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
+                    Image(systemName: model.listening ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(waiting ? Palette.soft : Palette.ground)
                 }
                 .frame(width: 96, height: 112)
             }
-            .buttonStyle(.plain).accessibilityLabel(model.listening ? "Send what you said" : "Talk")
+            .buttonStyle(.plain).accessibilityLabel(model.listening ? "Send what you said" : model.micReadying.map { "Talk. \($0.line)" } ?? "Talk")
+            // while it is getting ready, how far it has got is asked again a few times a second
+            .task(id: model.micReadying == nil) {
+                while !Task.isCancelled, model.micReadying != nil {
+                    model.refreshReadying()
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+            }
                                 Spacer(minLength: 0)
             HStack(spacing: 8) {
             if model.listening {
@@ -283,5 +304,28 @@ extension FeedView {
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 26))
         .padding(.horizontal, 8)
         .transition(.scale(scale: 0.92, anchor: .bottomLeading).combined(with: .opacity))
+    }
+}
+
+/// Around the microphone while the listening model he chose is getting ready, from the core's facts only: what
+/// is done, filled; the step under way that has nothing to measure it by (a wait, or Core ML compiling one
+/// encoder), shown over its span as under way, never as filling. Gone once it is ready.
+struct MicRing: View {
+    let readying: Readying
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Palette.raised, lineWidth: 5)
+            if readying.stepEnds > readying.done {
+                Circle().trim(from: readying.done, to: readying.stepEnds)
+                    .stroke(Palette.signal.opacity(pulse ? 0.5 : 0.15), style: StrokeStyle(lineWidth: 5))
+                    .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: pulse)
+            }
+            Circle().trim(from: 0, to: readying.done).stroke(Palette.signal, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+        }
+        .rotationEffect(.degrees(-90))
+        .onAppear { pulse = true }
+        .accessibilityHidden(true)
     }
 }

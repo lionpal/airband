@@ -45,12 +45,6 @@ extension RadioModel {
         work(done) { try self.desk.finishChoices() }
     }
 
-    /// What the core is doing about a choice right now, and how far along it is.
-    func choiceWork() -> (label: String, fraction: Double?)? {
-        if case .working(let label, let fraction)? = desk.choiceWork() { return (label, fraction) }
-        return nil
-    }
-
     /// Play a short clip of a voice. It is fetched from where the model is kept, so it works before the model
     /// is on the phone. A second tap on the same one stops it.
     func preview(_ choice: VoiceChoice) {

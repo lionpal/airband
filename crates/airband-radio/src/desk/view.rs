@@ -325,6 +325,8 @@ fn takes_shown(state: &State, takes: &crate::takes::Takes) -> Vec<DeskTake> {
         .into_iter()
         .filter_map(|t| {
             let line = match &t.stage {
+                // heard by itself once the model is ready: nothing went wrong
+                Stage::Unheard { why: why @ crate::takes::Unheard::NotReady { .. } } => why.told(),
                 Stage::Unheard { why } => format!("Not heard. {}", why.told()),
                 Stage::Hearing { .. } => "Listening again.".into(),
                 Stage::Unsent { .. } => NOT_SENT.into(),

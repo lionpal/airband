@@ -169,6 +169,12 @@ through the host (`run_model`): the core records, has the recording so far read 
 to show his words as he talks (each reading starts on all he has said by then, never queued behind another),
 and has all of it read once more when he stops. `tools/phonon-live.sh` measures that on a Mac's Neural Engine
 or GPU: the app's own listening file under the core's own listening, fed a recording as fast as it was spoken.
+Getting it ready the first time (Core ML compiling each of its three encoders for the phone) takes up to 15
+minutes, which its row says (`prepare_minutes`) and its card says before he picks it. Nothing waits for it: the
+first run closes as the downloads start, and the microphone opens all along. While it is on its way and getting
+ready, `Desk::mic_readying` says how far from facts alone (the download's bytes, then each encoder the host's
+engine says is done, `model_steps`); a step with no measure of its own is shown as under way, never as filling.
+What he says meanwhile is kept, and heard by the model once it is ready (`desk::hear_held_back`).
 
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).

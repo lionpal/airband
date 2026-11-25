@@ -30,7 +30,7 @@ final class ListeningEndToEndTests: XCTestCase {
         }
         var sawPreparing = false
         while done.wait(timeout: .now() + 0.2) == .timedOut {
-            if case .working(let label, _) = phone.desk.choices(job: .ears).first(where: { $0.id == model.id })?.state, label == "Getting it ready" { sawPreparing = true }
+            if case .preparing? = phone.desk.choices(job: .ears).first(where: { $0.id == model.id })?.readying?.step { sawPreparing = true }
         }
         try XCTUnwrap(chose).get()
         XCTAssertTrue(sawPreparing, "Settings never said it was being got ready")
@@ -134,7 +134,7 @@ final class Speaking: DeskHost, @unchecked Sendable {
     private var changes = 0
     private let speech: Data
     private var secrets: [String: String] = [:]
-    let listening = NeuralEngineListening()
+    let listening = NeuralEngineListening(options: NeuralEngineListening.onPhone) { folder, done, of in modelSteps(folder: folder, done: UInt32(done), of: UInt32(of)) }
 
     init(speech: Data) {
         self.speech = speech

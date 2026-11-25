@@ -1398,3 +1398,91 @@ fn the_box_offers_the_commands_of_the_agent_it_is_for_that_run_from_here_narrowe
     assert_eq!(desk.commands_title(None), airband_core::commands::NEUTRAL);
     assert_eq!(desk.commands_title(Some("shop 1".into())), tool.commands.term);
 }
+
+/// A phone whose engine for its listening model gives back "ship it" for anything, and says nothing of steps.
+struct Readied;
+impl DeskHost for Readied {
+    fn secret(&self, _: String) -> Option<String> {
+        None
+    }
+    fn keep_secret(&self, _: String, _: Option<String>) {}
+    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+    fn record_start(&self, _: u32) -> bool {
+        false
+    }
+    fn record_read(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn record_stop(&self) {}
+    fn changed(&self) {}
+    fn status(&self, _: RadioStatus) {}
+    fn note(&self, _: String) {}
+    fn hearing(&self, _: String) {}
+    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+    fn watching(&self) -> bool {
+        false
+    }
+    fn device(&self) -> HostDevice {
+        HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0, os_build: "test".into() }
+    }
+    fn run_model(&self, _: String, _: String, job: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+        (job == ChoiceJob::Ears).then(|| b"ship it".to_vec())
+    }
+}
+
+#[test]
+fn while_listening_gets_ready_the_ring_follows_facts_and_what_he_says_is_heard_once_it_is() {
+    use crate::choices::{Readying, ReadyStep};
+    use crate::ears::Got;
+    use crate::takes::{Stage, Takes, Unheard};
+    let dir = crate::takes::tests::Folder::new();
+    let at = dir.path();
+    let host: Arc<dyn DeskHost> = Arc::new(Readied);
+    let chooser = crate::choices::Chooser::open(&at, host.device());
+    let (takes, _) = Takes::open(&at);
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), moved: Condvar::new(), host: host.clone(), chooser, senses: Arc::new(Senses { takes, ..Senses::default() }), key_test: crate::keys::pretend, dial: None }), data_dir: at.clone() };
+    let chooser = &desk.shared.chooser;
+    let m = crate::models::usual(&host.device(), airband_core::providers::Job::Ears).expect("a listening model this phone gets ready");
+    let card = || desk.choices(ChoiceJob::Ears).into_iter().find(|c| c.id == m.kind).unwrap();
+    // before he picks it, its card says how long getting it ready takes the first time
+    assert!(card().line.ends_with(". Takes up to 15 minutes to get ready the first time"), "{}", card().line);
+    // chosen and not here, nothing on its way: no ring, and the microphone stays shut with why
+    chooser.apply(&*host, &desk.shared.senses);
+    assert_eq!(desk.mic_readying(), None);
+    assert!(desk.cannot_listen().is_some());
+    // on its way (a first run's download, waiting its turn): the ring says so, and the microphone opens
+    chooser.work(ChoiceJob::Ears, &m.kind, "", true);
+    chooser.apply(&*host, &desk.shared.senses);
+    assert_eq!(desk.mic_readying().map(|r| r.step), Some(ReadyStep::WaitingTurn));
+    assert_eq!(desk.cannot_listen(), None);
+    // what he says meanwhile is kept, unheard for that reason alone, and the chat says it will show up
+    let (id, _) = crate::takes::tests::recorded(&desk.shared.senses.takes, &crate::takes::tests::speech(2), Got::Failed(Unheard::NotReady { model: m.name.clone() }));
+    assert_eq!(desk.view().takes.iter().find(|t| t.id == id).map(|t| t.line.clone()), Some(format!("Waiting for {} to get ready. Your words will show up then.", m.name)));
+    // its files are here (as the download leaves them), and its engine is getting it ready
+    let folder = crate::models::version_folder(&at, &m);
+    for (to, size, _) in &m.files {
+        let p = folder.join(to);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::File::create(&p).unwrap().set_len(*size).unwrap();
+    }
+    std::fs::write(folder.join(crate::models::WHOLE), "").unwrap();
+    chooser.rest(ChoiceJob::Ears);
+    chooser.work(ChoiceJob::Ears, &m.kind, "Getting it ready", false);
+    // the engine has not said how many steps: its whole part is under way, nothing more is done
+    let r = desk.mic_readying().unwrap();
+    assert_eq!((r.step, r.step_ends), (ReadyStep::Preparing { done: 0, of: 0 }, 1.0));
+    // one of three encoders done, as the engine says: that much filled, the next under way
+    crate::models::model_steps(folder.display().to_string(), 1, 3);
+    let r: Readying = desk.mic_readying().unwrap();
+    assert_eq!(r.step, ReadyStep::Preparing { done: 1, of: 3 });
+    assert!(r.done > 0.2 && r.step_ends > r.done && r.step_ends < 1.0, "{r:?}");
+    assert!(matches!(card().state, ChoiceState::Working { fraction: Some(f), .. } if (f - 1.0 / 3.0).abs() < 1e-9));
+    // ready: the ring is gone, what he said is heard by it with nothing for him to do, and the card says
+    // nothing more of how long it takes
+    chooser.rest(ChoiceJob::Ears);
+    desk.prepare_models();
+    assert_eq!(desk.mic_readying(), None);
+    assert_eq!(crate::models::steps_in(&folder), None);
+    assert_eq!(desk.shared.senses.takes.all().into_iter().find(|t| t.id == id).map(|t| t.stage), Some(Stage::Unsent { text: "ship it".into() }));
+    assert_eq!(card().line, "Runs on this phone");
+}
