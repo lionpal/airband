@@ -103,8 +103,10 @@ NeuralEngineListening.swift, with the phone's encoders (5, 10 and 15 s), under t
 two spoken recordings (7 s and 24 s) as fast as they were spoken. On the Neural Engine his words first show
 half a second in, then every half second, at most a third of a second behind him, and what he said is had 0.1
 to 0.4 s after he stops; the final words were the whole sentence both times. Getting it ready the first time
-took 5 to 12 minutes; once compiled, 3.5 s. On the GPU the first load took about an hour (Core ML unpacks the
-model's weights on one CPU core), so the GPU is no quicker way to have it ready. Not on a phone: the times
+took 5 to 12 minutes; once compiled, 3.5 s. On the GPU (`.cpuAndGPU`) loading the three encoders took about an hour
+(Core ML unpacks the model's weights on one CPU core), and then its first run stopped the process in Metal
+(MPSGraph: `failed assertion shape.count = 0 != strides.count = 3`): on a Mac's GPU it does not run at all, and
+is no quicker way to have it ready. The app runs it on the Neural Engine only. Not on a phone: the times
 there are not measured.
 
 ## Not recorded here as run
