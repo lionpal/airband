@@ -656,7 +656,8 @@ try:
           and "the other thing" in received("page")[len(before):], received("page")[len(before):])
     check("the computer has no voice and no ears: it makes no speech, hands out no listening pass and takes no recording", http("GET", "/v1/radio/speech/x")[0] == 404 and http("GET", "/v1/radio/ears")[0] == 404 and http("POST", "/v1/radio/hear", {"clip": "c", "data": "", "samples": 0, "last": True})[0] in (404, 405) and "listens" not in feed())
     asked = http("GET", f"/v1/radio/message/{q['id']}?form=spoken&part=asked")[1] or {}
-    check("a question can be read out as it was asked: who asks, its short form, and its answers", asked.get("text", "").startswith("orders refunds. ") and all(o in asked["text"] for o in q["options"]) and "in your own words" in asked["text"], asked)
+    now = next((m for m in feed()["messages"] if m["id"] == q["id"]), {})
+    check("a question read out before he answers is its chat line with only who asks in front, as a call reads it", asked.get("text") == "Orders refunds. " + now.get("text", "?"), (asked, now.get("text")))
     check("a tag for a team reaches every agent in it", say("@catalog commit what you have") in ("Sent to catalog part page and catalog import.", "Sent to catalog import and catalog part page."))
     check("a quick message sends the whole instruction and shows its label", say("Send me a picture of the result.", label="Screenshot", re=p["id"]) == "Sent to catalog part page."
           and "picture of the result" in received("page") and message(feed(), "you", "Screenshot") is not None)

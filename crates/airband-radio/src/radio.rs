@@ -163,8 +163,8 @@ impl Radio {
         self.link.is_direct()
     }
 
-    /// Read a question to him as he would be asked it on a call: who is asking, its short form, and the
-    /// answers it offers, in the voice he chose on this device. Blocks until it has been heard or
+    /// Read a question to him as a call reads it: who is asking, then its line in the chat's words, in the
+    /// voice he chose on this device. Blocks until it has been heard or
     /// [`Radio::hush`] is called. False when it was not read: he is told why.
     pub(crate) fn read_question(&self, id: &str) -> bool {
         let part = Some(airband_core::radio::Part::Asked);

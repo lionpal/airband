@@ -156,7 +156,7 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let cut = m.permission && m.text.chars().count() > MOST;
     // an agent waits on his answer to it: a request for leave or a question through its tool, not yet over
     let held = e.permit.as_ref().and_then(|id| inner.permits.get(id)).filter(|p| p.decided.is_none());
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission, cut, holding: held.is_some(), rev: m.rev, until: held.and_then(|p| p.until) }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options }, permission: m.permission, cut, holding: held.is_some(), rev: m.rev, until: held.and_then(|p| p.until) }
 }
 
 /// Lines that stopped being news: each phone woken for one is sent what takes its notification down, all but a
@@ -627,6 +627,42 @@ mod tests {
         assert_eq!(note.text, inner.message(&e).text, "the chat's line");
         assert_eq!(note.rev, e.rev, "with the change count the chat has it at");
         assert_eq!(super::super::pump::aloud_line(&inner, &e), format!("{}. {}", airband_core::prose::capital(&inner.sender_name(&e)), note.text));
+    }
+
+    /// A question and its answers, a request for leave, and a question read again as a reminder: the
+    /// notification, the chat and the reading say the same words, the reading with only who said it in front,
+    /// and the answers the notification offers are the chat's.
+    #[test]
+    fn a_question_its_answers_and_its_reminder_say_the_chats_words() {
+        use super::super::pump::{aloud_line, reminder, transmission};
+        let mut inner = tower();
+        let s = inner.sessions[0].clone();
+        let callsign = |inner: &Inner, e: &Entry| format!("{}. ", airband_core::prose::capital(&inner.sender_name(e)));
+        inner.record(Entry { short: Some("Rewrite the two easy questions, or leave them?".into()), options: vec!["Rewrite".into(), "Leave them".into()], aloud: Aloud::Waiting, ..Entry::said("q".into(), &s, Some(Kind::NeedsYou), "long".into()) });
+        let q = inner.log.last().unwrap().clone();
+        let (note, chat) = (notice(&inner, &q, "mini"), inner.message(&q));
+        assert_eq!((&note.text, &note.options), (&chat.text, &chat.options), "the chat's words and answers");
+        let read = transmission(&inner, &q, Kind::NeedsYou, 0);
+        assert_eq!(read.say, callsign(&inner, &q) + &note.text, "read with who said it in front and nothing after");
+        assert_eq!(read.say, aloud_line(&inner, &q));
+        // heard on a call, and not answered: the reminder is the same transmission, word for word
+        crate::adapters::test_env::set("AIRBAND_REMIND_SECONDS", "0");
+        inner.call("car");
+        inner.offered.insert(q.id.clone(), (1, Instant::now()));
+        let again = reminder(&mut inner, "car").expect("a reminder is owed");
+        assert_eq!(again.id, q.id);
+        assert_eq!(transmission(&inner, &again, Kind::NeedsYou, 0).say, read.say);
+        // a request for leave: the notification, the chat and the reading say the same, and its answers are
+        // the notification's own buttons, never words read out
+        let request = permit::Request::waiting("run `ls`");
+        inner.permits.insert("p".into(), permit::Permit { agent_id: s.agent.id.clone(), entry: "c".into(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false, until: None });
+        inner.record(Entry { short: request.line(), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some("p".into()), leave: Some(request), aloud: Aloud::Waiting, ..Entry::said("c".into(), &s, Some(Kind::NeedsYou), "run `ls`".into()) });
+        let c = inner.log.last().unwrap().clone();
+        let (note, chat) = (notice(&inner, &c, "mini"), inner.message(&c));
+        assert!(note.permission && note.options.is_empty());
+        assert_eq!(note.text, chat.text);
+        assert_eq!(transmission(&inner, &c, Kind::NeedsYou, 0).say, callsign(&inner, &c) + &note.text);
+        crate::adapters::test_env::clear();
     }
 
     /// A line that stops being news has its notification taken down on each phone woken for it, but the one
