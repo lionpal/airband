@@ -91,7 +91,12 @@ pub(super) struct Woken {
 impl Wake {
     /// The addresses kept, each under its radio's channel.
     pub(super) fn load(store: &Store) -> Result<Wake, String> {
-        Ok(Wake { targets: Mutex::new(store.push_targets()?), shown: Mutex::new(store.notified()?), ..Wake::default() })
+        Ok(Wake {
+            targets: Mutex::new(store.push_targets()?),
+            shown: Mutex::new(store.notified()?),
+            #[cfg(test)]
+            asked: Mutex::default(),
+        })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
