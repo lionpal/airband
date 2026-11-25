@@ -270,6 +270,7 @@ pub(crate) fn refusal(shell: &Path, unfound: &[Program]) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn home(name: &str) -> PathBuf {
         let home = std::env::temp_dir().join(format!("airband-programs-{name}-{}-{}", std::process::id(), config::random_hex(4)));
         airband_io::files::make_folder(&home).unwrap();
@@ -277,6 +278,7 @@ mod tests {
     }
 
     /// The launchers that come with airband, as the settings have them once read.
+    #[cfg(unix)]
     fn built_launchers() -> std::collections::BTreeMap<String, config::Launcher> {
         airband_core::catalog::built().tools.iter().flat_map(|t| t.launchers.iter()).map(|l| (l.name.clone(), l.clone())).collect()
     }
