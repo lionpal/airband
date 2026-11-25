@@ -27,6 +27,16 @@ enum Opening {
             return hand(UNNotificationContent(), .withdrawn(message: message, why: why))
         case .opened(let opened): note = opened
         }
+        guard note.replacing else { return show(request, note, hand) }
+        // newer words for one already shown: in its place, quietly, and nothing at all once he has put it away
+        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+            guard delivered.contains(where: { $0.request.identifier == note.tag }) else { return hand(UNNotificationContent(), .notReplaced(message: note.message)) }
+            show(request, note, hand)
+        }
+    }
+
+    /// Show an opened notification: its sender, words, badge and buttons, at the level the core gave it.
+    private static func show(_ request: UNNotificationRequest, _ note: OpenedNotice, _ hand: @escaping (UNNotificationContent, NoticeHow) -> Void) {
         // a notification's content always copies as one that can be changed
         let content = request.content.mutableCopy() as! UNMutableNotificationContent
         content.title = note.title
@@ -40,6 +50,10 @@ enum Opening {
         switch note.level {
         case .timeSensitive: content.interruptionLevel = .timeSensitive
         case .active: content.interruptionLevel = .active
+        // in place of one he was woken for already: no sound, no banner, screen left dark
+        case .passive:
+            content.interruptionLevel = .passive
+            content.sound = nil
         }
         let picture = badgeImage(note.badge, colour: note.colour)
         let opened = NoticeHow.opened(message: note.message, buttons: note.buttons, permission: note.permission)

@@ -71,6 +71,11 @@ impl Judged {
     fn as_written(item: &Item, kind: Kind) -> Judged {
         Judged { kind, say: spoken(&item.full), cut: false, options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
     }
+    /// The message as written, read by no model: no model answered (or has yet to). Nothing is guessed from
+    /// the words: it is marked as read by no model unless its harness said what it is.
+    pub(super) fn unread(item: &Item) -> Judged {
+        Judged::as_written(item, item.kind.unwrap_or(Kind::Unjudged))
+    }
 }
 
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
@@ -81,20 +86,24 @@ pub(super) async fn prepare(settings: &Settings, item: &Item) -> Judged {
 
 /// The same, asking `model`, with these settings.
 async fn prepare_by(model: &dyn Model, cfg: &Config, item: &Item) -> Judged {
+    summarize_by(model, cfg, item).await.unwrap_or_else(|| Judged::unread(item))
+}
+
+/// What the model made of a message, asking `model` with these settings; a harness's notice is its own words.
+/// Nothing when no model answered (said in the log): then he gets the message as written ([`Judged::unread`]).
+pub(super) async fn summarize_by(model: &dyn Model, cfg: &Config, item: &Item) -> Option<Judged> {
     if item.notice {
-        return Judged::as_written(item, Kind::NeedsYou);
+        return Some(Judged::as_written(item, Kind::NeedsYou));
     }
     let parsed = ask_json::<Answer>(model, reading(cfg, item), Some(answer_shape())).await;
     match parsed {
-        // a kind the model made up does not read, and is no verdict: he gets the message as written, below
-        Ok(o) if !o.say.trim().is_empty() => judged(item, o),
+        // a kind the model made up does not read, and is no verdict: he gets the message as written
+        Ok(o) if !o.say.trim().is_empty() => Some(judged(item, o)),
         other => {
-            // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
-            // marked as read by no model unless its harness said what it is.
             if let Err(e) = other {
                 log(format!("no summary, giving him the message as written: {e}"));
             }
-            Judged::as_written(item, item.kind.unwrap_or(Kind::Unjudged))
+            None
         }
     }
 }

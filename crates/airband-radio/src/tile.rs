@@ -209,7 +209,7 @@ mod tests {
         crate::NoticeOpening::Opened { notice: crate::OpenedNotice {
             station: "c".into(), message: message.into(), title: format!("{agent} 1"), subtitle: String::new(), body: body.into(), badge: "S1".into(), colour: Some(1),
             room: String::new(), agent: agent.into(), question, options: Vec::new(), permission: false, buttons: crate::NoticeButtonSet::Reply, thread: String::new(),
-            level: crate::NoticeLevel::Active, tag: String::new(), rev: 1,
+            level: crate::NoticeLevel::Active, tag: String::new(), rev: 1, replacing: false,
         } }
     }
     fn withdrawn(message: &str) -> crate::NoticeOpening {

@@ -40,6 +40,10 @@ pub struct OpenedNotice {
     /// The message's change count when it was sent: opened from here, the app follows the chat at least this
     /// far before it shows the message ([`Desk::open_message`]).
     pub rev: u64,
+    /// It is the message's notification again in newer words (its summary, made after he was woken with the
+    /// message as written): it takes the place of the one kept under `tag`, at [`NoticeLevel::Passive`], and
+    /// the host shows nothing for it when that one is no longer there (he has put it away).
+    pub replacing: bool,
 }
 
 /// How hard a notification breaks in on him, as the host's system has it.
@@ -50,12 +54,19 @@ pub enum NoticeLevel {
     TimeSensitive,
     /// A report, a question that holds nothing up: shown and sounded as the system usually does.
     Active,
+    /// Newer words for a notification already shown: put in its place with no sound, no banner, and the screen
+    /// left dark. He was woken for it once.
+    Passive,
 }
 
 impl NoticeLevel {
     /// The level for a notification, from what the tower says it is.
     pub(super) fn of(n: &airband_core::radio::Notice) -> NoticeLevel {
-        if n.holding { NoticeLevel::TimeSensitive } else { NoticeLevel::Active }
+        match (n.replacing, n.holding) {
+            (true, _) => NoticeLevel::Passive,
+            (false, true) => NoticeLevel::TimeSensitive,
+            (false, false) => NoticeLevel::Active,
+        }
     }
 }
 /// What a button under a question stood for.
@@ -194,6 +205,7 @@ fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections:
         level,
         tag,
         rev: n.rev,
+        replacing: n.replacing,
     } })
 }
 

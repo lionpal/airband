@@ -15,6 +15,11 @@
 //! or he has it on screen on another device) each phone woken for it is sent a sealed notification under the
 //! same tag that takes it down. There is one way this happens for every line, whatever said it.
 //!
+//! A line whose summary was not made in time for its notification (`judge::NOTICE_DEADLINE`) wakes him with
+//! the message as written. When the summary comes, each phone still showing that notification is sent the
+//! line again in its new words, under the same tag, quietly: it takes the place of the one shown without a
+//! sound or a banner, and the phone shows nothing for it once he has put that one away (`Notice::replacing`).
+//!
 //! Nothing here knows which push service a phone uses: an address is a provider's name and a token, as the
 //! phone gave them. The log says when a notification was asked for and what came back, and never an address or
 //! a message's words.
@@ -58,6 +63,9 @@ pub(super) struct Wake {
     /// The radios woken for each line still news, by the line's id. Kept across a restart, so a line that stops
     /// being news after one still has its notification taken down.
     shown: Mutex<BTreeMap<String, Woken>>,
+    /// Every notification asked for, by radio, as the relay was handed it: what the tests look at.
+    #[cfg(test)]
+    pub(super) asked: Mutex<Vec<(String, PushRequest)>>,
 }
 
 /// The radios woken for one line.
@@ -72,12 +80,18 @@ pub(super) struct Woken {
     /// It stopped being news while that was being sent: taken down once it is.
     #[serde(skip)]
     ended: Option<Ending>,
+    /// The line's change count as its notification last showed it.
+    #[serde(default)]
+    pub(super) rev: u64,
+    /// The line has newer words than the notification on its way: sent again in them once that is sent.
+    #[serde(skip)]
+    changed: bool,
 }
 
 impl Wake {
     /// The addresses kept, each under its radio's channel.
     pub(super) fn load(store: &Store) -> Result<Wake, String> {
-        Ok(Wake { targets: Mutex::new(store.push_targets()?), shown: Mutex::new(store.notified()?) })
+        Ok(Wake { targets: Mutex::new(store.push_targets()?), shown: Mutex::new(store.notified()?), ..Wake::default() })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
@@ -156,13 +170,13 @@ fn may_ask(call: Option<&Call>, rev: u64) -> bool {
 pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let m = inner.message(e);
     const MOST: usize = 400;
-    let text = airband_core::prose::clip(&m.text, MOST);
+    let text = airband_core::prose::cut(&m.text, MOST);
     // A request for leave that does not fit is still a request for leave, shown by its opening: it offers no
     // Allow from the lock screen. He opens it, reads all of what would run, and answers there.
     let cut = m.permission && m.text.chars().count() > MOST;
     // an agent waits on his answer to it: a request for leave or a question through its tool, not yet over
     let held = e.permit.as_ref().and_then(|id| inner.permits.get(id)).filter(|p| p.decided.is_none());
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options }, permission: m.permission, cut, holding: held.is_some(), rev: m.rev, until: held.and_then(|p| p.until) }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options }, permission: m.permission, cut, holding: held.is_some(), rev: m.rev, until: held.and_then(|p| p.until), replacing: false }
 }
 
 /// Lines that stopped being news: each phone woken for one is sent what takes its notification down, all but a
@@ -295,7 +309,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
             // written down before it is sent, under the lock its line stops being news under: an ending that
             // comes while it is on its way finds it, and waits for it to be sent
             if !to.is_empty() {
-                shown(&app, &id, to.iter().map(|(r, _)| r.clone()).collect(), e.at);
+                shown(&app, &id, to.iter().map(|(r, _)| r.clone()).collect(), e.at, note.rev);
             }
             (note, to)
         };
@@ -307,17 +321,78 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
             let (app, pushed) = (app.clone(), pushed.clone());
             tokio::task::spawn_blocking(move || send(&app, &radio, &targets, pushed)).await.ok();
         }
-        // sent: kept as shown, and taken down now if its line stopped being news meanwhile
-        if let Some((w, ending)) = sent(&app, &id) {
-            take_down(&app, w, ending).await;
-        }
+        settle(&app, &id).await;
     });
 }
 
-/// A line's notification is on its way to these radios.
-fn shown(app: &App, id: &str, radios: Vec<String>, at: u64) {
+/// A line's short version was made after he was woken with the message as written: each phone still showing
+/// that notification is sent the line again in its new words, quietly, in its place. Nothing for a line
+/// never notified, one whose notification has been taken down or is on its way down, one he has on screen
+/// (`read_on`), or one no longer waiting to be heard: he is never woken for it again.
+pub(super) fn replace(app: &Arc<App>, inner: &Inner, id: &str) {
+    let Some(e) = inner.log.iter().find(|e| e.id == id) else { return };
+    {
+        let mut shown = app.push.shown.lock().unwrap();
+        let Some(w) = shown.get_mut(id).filter(|w| w.ended.is_none() && w.rev < e.rev) else { return };
+        if !e.aloud.unheard() {
+            return;
+        }
+        // one still on its way is sent again once it is there
+        if w.sending {
+            w.changed = true;
+            return;
+        }
+        w.sending = true;
+    }
+    let (app, id) = (app.clone(), id.to_string());
+    tokio::spawn(async move {
+        again(&app, &id).await;
+        settle(&app, &id).await;
+    });
+}
+
+/// Send the line's notification again, in the words it has now and quietly in place of the one shown, to the
+/// radios still showing it. Nothing once it is no longer waiting to be heard: what takes it down follows.
+async fn again(app: &Arc<App>, id: &str) {
+    let station = config::station(&app.cfg());
+    let to: Vec<(String, Vec<PushTarget>)>;
+    let note = {
+        let inner = app.read();
+        let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| e.aloud.unheard()) else { return };
+        let note = Notice { replacing: true, ..notice(&inner, e, &station) };
+        let radios = {
+            let mut shown = app.push.shown.lock().unwrap();
+            let Some(w) = shown.get_mut(id) else { return };
+            w.rev = note.rev;
+            w.radios.clone()
+        };
+        let targets = app.push.targets.lock().unwrap();
+        to = radios.into_iter().filter_map(|r| targets.get(&r).map(|t| (r, t.clone()))).collect();
+        note
+    };
+    let pushed = Pushed::Show { notice: note };
+    for (radio, targets) in to {
+        let (app, pushed) = (app.clone(), pushed.clone());
+        tokio::task::spawn_blocking(move || send(&app, &radio, &targets, pushed)).await.ok();
+    }
+}
+
+/// A line's notification has been sent: kept as shown; taken down now if its line stopped being news
+/// meanwhile; sent again in its newer words if it has them.
+async fn settle(app: &Arc<App>, id: &str) {
+    loop {
+        match sent(app, id) {
+            Sent::Kept => return,
+            Sent::Ended(w, ending) => return take_down(app, w, ending).await,
+            Sent::Changed => again(app, id).await,
+        }
+    }
+}
+
+/// A line's notification is on its way to these radios, showing the line at change count `rev`.
+fn shown(app: &App, id: &str, radios: Vec<String>, at: u64, rev: u64) {
     let mut shown = app.push.shown.lock().unwrap();
-    shown.insert(id.to_string(), Woken { radios, at, sending: true, ended: None });
+    shown.insert(id.to_string(), Woken { radios, at, sending: true, ended: None, rev, changed: false });
     let extra = shown.len().saturating_sub(SHOWN_MOST);
     if extra > 0 {
         let mut by_age: Vec<(u64, String)> = shown.iter().map(|(id, w)| (w.at, id.clone())).collect();
@@ -328,20 +403,33 @@ fn shown(app: &App, id: &str, radios: Vec<String>, at: u64) {
     }
 }
 
-/// A line's notification has been sent: it is kept as shown, or, if the line stopped being news meanwhile,
-/// handed back with how, to be taken down.
-fn sent(app: &App, id: &str) -> Option<(Woken, Ending)> {
+/// What follows a line's notification being sent.
+enum Sent {
+    /// It is kept as shown.
+    Kept,
+    /// The line stopped being news meanwhile: handed back with how, to be taken down.
+    Ended(Woken, Ending),
+    /// The line has newer words meanwhile: still on its way, to be sent again in them.
+    Changed,
+}
+
+/// A line's notification has been sent: what follows.
+fn sent(app: &App, id: &str) -> Sent {
     let mut shown = app.push.shown.lock().unwrap();
-    let ended = match shown.get_mut(id) {
-        Some(w) if w.ended.is_some() => shown.remove(id).and_then(|w| w.ended.clone().map(|e| (w, e))),
+    let next = match shown.get_mut(id) {
+        Some(w) if w.ended.is_some() => shown.remove(id).and_then(|w| w.ended.clone().map(|e| Sent::Ended(w, e))).unwrap_or(Sent::Kept),
+        Some(w) if w.changed => {
+            w.changed = false;
+            Sent::Changed
+        }
         Some(w) => {
             w.sending = false;
-            None
+            Sent::Kept
         }
-        None => None,
+        None => Sent::Kept,
     };
     app.store.save_notified(&shown);
-    ended
+    next
 }
 
 /// Seal one notification for one radio and ask the relay to pass it to each of that radio's addresses, under
@@ -353,9 +441,11 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], pushed: Pushed) {
     let Ok(keys) = Keys::derive(&pairing.secret) else { return };
     let what = match &pushed {
         Pushed::Withdraw { id, .. } => format!("line {id} (no longer news)"),
-        Pushed::Show { notice: n } => format!("line {} ({})", n.id, if n.permission { "permission" } else if n.kind == Some(Kind::NeedsYou) { "question" } else { "report" }),
+        Pushed::Show { notice: n } => format!("line {} ({}{})", n.id, if n.permission { "permission" } else if n.kind == Some(Kind::NeedsYou) { "question" } else { "report" }, if n.replacing { ", in newer words, quietly in place of the one shown" } else { "" }),
     };
     let Some(asks) = requests(&keys, pushed, targets) else { return log(format!("push: {what} is too long to send to {}", radio_tag(radio))) };
+    #[cfg(test)]
+    app.push.asked.lock().unwrap().extend(asks.iter().map(|a| (radio.to_string(), a.clone())));
     let client = airband_io::http::Client::new(Duration::from_secs(20));
     for (target, ask) in targets.iter().zip(asks) {
         let res = client.send(airband_io::http::Ask::post(keys.to(&relay, Route::Push)).header("authorization", keys.as_tower()).json(&ask));
@@ -402,15 +492,16 @@ fn requests(keys: &Keys, mut pushed: Pushed, targets: &[PushTarget]) -> Option<V
         if keep < 20 {
             return None;
         }
-        note.text = airband_core::prose::clip(&note.text, keep);
+        note.text = airband_core::prose::cut(&note.text, keep);
         // cut: never an Allow under part of a command, and still a request for leave
         note.cut |= note.permission;
     };
     let sealed = airband_core::encode::base64(&sealed);
     // every notification about a line is kept under its tag: what takes one down takes its place
     let replaces = Some(keys.notice_tag(pushed.line()));
+    // newer words in place of one shown are as quiet as what takes one down: he was woken for it once
     let (question, quiet, until) = match &pushed {
-        Pushed::Show { notice } => (notice.kind == Some(Kind::NeedsYou), false, notice.until),
+        Pushed::Show { notice } => (notice.kind == Some(Kind::NeedsYou), notice.replacing, notice.until),
         Pushed::Withdraw { .. } => (false, true, None),
     };
     Some(targets.iter().map(|t| PushRequest { provider: t.provider, to: t.token.clone(), sealed: sealed.clone(), question, replaces: replaces.clone(), quiet, until }).collect())
@@ -717,29 +808,29 @@ mod tests {
         // refused connection is tried again for seconds), so each pass is awaited to its end, never timed
         super::super::logged::take();
         // shown on both, then superseded: taken down on both
-        shown(&app, "a", vec![p.clone(), d.clone()], 1);
-        assert!(sent(&app, "a").is_none());
+        shown(&app, "a", vec![p.clone(), d.clone()], 1, 1);
+        assert!(matches!(sent(&app, "a"), Sent::Kept));
         app.change().ended.push(Ending { id: "a".into(), why: Withdrawn::NotRead { reason: airband_core::radio::NotRead::Superseded }, by: None });
         withdraw_now(&app).await;
         assert_eq!(taken_down("a"), [pt.clone(), dt.clone()], "taken down on each phone woken for it");
         // answered from the phone: taken down on the pad alone
-        shown(&app, "b", vec![p.clone(), d.clone()], 2);
+        shown(&app, "b", vec![p.clone(), d.clone()], 2, 2);
         sent(&app, "b");
         app.change().ended.push(Ending { id: "b".into(), why: Withdrawn::NotRead { reason: airband_core::radio::NotRead::Answered }, by: Some(p.clone()) });
         withdraw_now(&app).await;
         assert_eq!(taken_down("b"), std::slice::from_ref(&dt));
         // it stops being news while its notification is on its way: taken down once that is sent, not before
-        shown(&app, "c", vec![p.clone()], 3);
+        shown(&app, "c", vec![p.clone()], 3, 3);
         app.change().ended.push(Ending { id: "c".into(), why: Withdrawn::Heard, by: None });
         withdraw_now(&app).await;
         assert!(taken_down("c").is_empty(), "nothing to take down before it is there");
-        let (w, ending) = sent(&app, "c").expect("handed back to be taken down once sent");
+        let Sent::Ended(w, ending) = sent(&app, "c") else { panic!("handed back to be taken down once sent") };
         assert_eq!((w.radios, ending.why), (vec![p.clone()], Withdrawn::Heard));
         // on screen on the phone: the pad's is taken down, and the phone's own app has its own
         let mut inner = tower();
         news(&mut inner, "d", Kind::Report, "Done.");
         let rev = inner.log[0].rev;
-        shown(&app, "d", vec![p.clone(), d.clone()], 4);
+        shown(&app, "d", vec![p.clone(), d.clone()], 4, 4);
         sent(&app, "d");
         inner.call(&p).has = rev;
         read_on(&app, &mut inner, &p);
@@ -748,7 +839,7 @@ mod tests {
         // and on the one phone woken, on screen there: nothing to send anyone
         news(&mut inner, "e", Kind::Report, "Done again.");
         inner.ended.clear();
-        shown(&app, "e", vec![p.clone()], 5);
+        shown(&app, "e", vec![p.clone()], 5, 5);
         sent(&app, "e");
         inner.call(&p).has = inner.rev;
         read_on(&app, &mut inner, &p);
