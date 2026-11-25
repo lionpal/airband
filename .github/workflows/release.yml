@@ -14,13 +14,21 @@ name: Release
 # A file that is already published is never replaced, because the formula pins its checksum. To publish a
 # different build, release a new version.
 #
-# If GitHub has no macOS runner to give, run it with "skip macOS" ticked and publish the two Mac files by hand
-# from a Mac:  scripts/package.sh aarch64-apple-darwin x86_64-apple-darwin, then copy dist/* to
-# s3://<the site's bucket>/releases/<version>/ with the same cache-control as below.
+# Every release is eight files, two for each system (scripts/release-files.sh lists them), and latest.json is
+# written only once all eight are served from airband.dev and each matches its checksum
+# (scripts/check-release.sh --all). The tap updates its formula from latest.json, so it is never pointed at a
+# release with a file missing. In 0.9.5 the Mac's two binaries were published by hand and its two bottles were
+# not, latest.json was written all the same, and the tap's update failed for hours without anyone seeing it.
 #
-# 0.1.1 was published by hand in that way, all four systems, because Actions was not running jobs for this
-# account that day (a billing notice). The Linux binaries were built in a Debian 12 container. This workflow has
-# not yet run to the end.
+# If GitHub has no macOS runner to give, run it with "skip macOS" ticked: it publishes the Linux files and
+# stops before latest.json, naming the Mac files that are missing. Publish those from a Mac:
+#   scripts/package.sh aarch64-apple-darwin x86_64-apple-darwin
+#   BUCKET=<the site's bucket> scripts/publish-mac.sh
+# (all four of the Mac's files, each checksum first, with the same cache-control as here, then each checked as
+# served), then run this again with "skip macOS": it finds every file published and names the version.
+#
+# 0.1.1 was published by hand, all four systems, because Actions was not running jobs for this account that day
+# (a billing notice). The Linux binaries were built in a Debian 12 container.
 on:
   workflow_dispatch:
     inputs:
@@ -82,31 +90,24 @@ jobs:
         with: { pattern: 'dist-*', path: dist, merge-multiple: true }
       - uses: aws-actions/configure-aws-credentials@v4
         with: { role-to-assume: '${{ vars.AWS_DEPLOY_ROLE_ARN }}', aws-region: us-east-1 }
-      - name: Publish
+      - name: Publish what was built
         env: { BUCKET: '${{ secrets.RELEASES_BUCKET }}' }
         run: |
           version=$(scripts/version.sh)
           echo "version=$version" >> "$GITHUB_ENV"
           ls -l dist
-          for f in dist/*.tar.gz; do
-            name=$(basename "$f")
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://airband.dev/releases/$version/$name")
-            if [ "$code" = "200" ]; then echo "::notice::$name is already published and was left as it is"; continue; fi
-            # the checksum first, so the tarball is never there without it
-            aws s3 cp "$f.sha256" "s3://$BUCKET/releases/$version/$name.sha256" --content-type text/plain --cache-control 'public, max-age=300' --only-show-errors
-            aws s3 cp "$f" "s3://$BUCKET/releases/$version/$name" --content-type application/gzip --cache-control 'public, max-age=31536000, immutable' --only-show-errors
-            echo "published $name  $(cat "$f.sha256")"
-          done
+          built="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"
+          if [ "${{ needs.macos.result }}" = success ]; then built="$built aarch64-apple-darwin x86_64-apple-darwin"; fi
+          scripts/publish-release.sh $built
+      # latest.json names a version only once every file of it is served, the Mac's too when they were skipped
+      # here and published by hand: the tap updates from it and would fail on a file that is not there
+      - name: Check every file of the release is served and matches its checksum
+        run: scripts/check-release.sh --all
+      - name: Name it the latest
+        env: { BUCKET: '${{ secrets.RELEASES_BUCKET }}' }
+        run: |
           printf '{"version": "%s"}\n' "$version" > latest.json
           aws s3 cp latest.json "s3://$BUCKET/releases/latest.json" --content-type application/json --cache-control 'public, max-age=60' --only-show-errors
-      - name: Check each file downloads and matches its checksum
-        run: |
-          for f in dist/*.tar.gz; do
-            name=$(basename "$f")
-            want=$(curl -fsS "https://airband.dev/releases/$version/$name.sha256")
-            got=$(curl -fsS "https://airband.dev/releases/$version/$name" | sha256sum | cut -d' ' -f1)
-            echo "$name  $got"; [ "$got" = "$want" ]
-          done
           curl -fsS https://airband.dev/releases/latest.json
       - name: Tag the commit
         run: |

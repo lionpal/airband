@@ -91,6 +91,23 @@ The formula was installed on a second Mac (Apple silicon, no airband on it) with
 `airband --version` answered from Homebrew's folder. Not run: `airband install` from Homebrew's copy (its
 choice of Homebrew's path has a unit test only), `brew test`, the Intel Mac binary, and the Release workflow
 itself (0.1.1 was built and published by hand; the two Linux binaries printed their version in a container).
+The release's own scripts (`release-files.sh`, `publish-release.sh`, `check-release.sh`, `publish-mac.sh`)
+were not run against the bucket: `check-release.sh --all` was run against airband.dev (0.9.5's eight files all
+served and matching), and `publish-release.sh` was seen to stop, with nothing sent, when a file was missing
+from dist/.
+
+## The listening model on the phone, as he speaks
+
+Phonon 2.5 English was heard live on a Mac's Neural Engine and GPU by `tools/phonon-live.sh`: the app's own
+NeuralEngineListening.swift, with the phone's encoders (5, 10 and 15 s), under the core's own listening, fed
+two spoken recordings (7 s and 24 s) as fast as they were spoken. On the Neural Engine his words first show
+half a second in, then every half second, at most a third of a second behind him, and what he said is had 0.1
+to 0.4 s after he stops; the final words were the whole sentence both times. Getting it ready the first time
+took 5 to 12 minutes; once compiled, 3.5 s. On the GPU (`.cpuAndGPU`) loading the three encoders took about an hour
+(Core ML unpacks the model's weights on one CPU core), and then its first run stopped the process in Metal
+(MPSGraph: `failed assertion shape.count = 0 != strides.count = 3`): on a Mac's GPU it does not run at all, and
+is no quicker way to have it ready. The app runs it on the Neural Engine only. Not on a phone: the times
+there are not measured.
 
 ## Not recorded here as run
 

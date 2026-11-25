@@ -2,12 +2,13 @@
 # Build the `airband` command for one target and pack it for release:
 #   scripts/package.sh aarch64-apple-darwin [more targets…]
 # leaves two archives of the same binary in dist/, each with its checksum alone in a file of the same name
-# plus .sha256:
+# plus .sha256, named as scripts/release-files.sh names them:
 #   airband-<version>-<target>.tar.gz          the binary, LICENSE and NOTICE, for anyone to download
 #   airband-<version>.<tag>.bottle.tar.gz      the same laid out as a Homebrew bottle, which Homebrew installs
 #                                              without asking for a compiler or up-to-date developer tools
-# The version is the workspace's, in Cargo.toml. The Release workflow runs this; it can be run by hand on a Mac
-# when GitHub has no macOS runner to give (`rustup target add x86_64-apple-darwin` first).
+# The version is the workspace's, in Cargo.toml. The Release workflow runs this; when GitHub has no macOS
+# runner to give it is run by hand on a Mac (`rustup target add x86_64-apple-darwin` first), and
+# scripts/publish-mac.sh publishes what it made.
 set -eu
 cd "$(dirname "$0")/.."
 version=$(scripts/version.sh)
@@ -18,14 +19,10 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 export COPYFILE_DISABLE=1
 mkdir -p dist
 for target in "$@"; do
-  # Homebrew's name for the oldest system the binary runs on; a newer macOS takes the same bottle
-  case "$target" in
-    aarch64-apple-darwin) tag=arm64_big_sur ;;
-    x86_64-apple-darwin) tag=big_sur ;;
-    aarch64-unknown-linux-gnu) tag=arm64_linux ;;
-    x86_64-unknown-linux-gnu) tag=x86_64_linux ;;
-    *) echo "no Homebrew name is known for $target" >&2; exit 1 ;;
-  esac
+  # the two files a release has for it, by which each is: a system it is not released for stops here
+  files=$(scripts/release-files.sh "$target")
+  plain="dist/$(printf '%s\n' "$files" | awk '$2 == "binary" { print $3 }')"
+  bottle="dist/$(printf '%s\n' "$files" | awk '$2 == "bottle" { print $3 }')"
   cargo build --release --locked -p airband-cli --target "$target"
   # where cargo put it: CARGO_TARGET_DIR when set, never a copy an earlier build left in target/
   bin="${CARGO_TARGET_DIR:-target}/$target/release/airband"
@@ -54,8 +51,6 @@ for target in "$@"; do
   mkdir -p "$keg/bin"
   cp "$bin" "$keg/bin/"
   cp LICENSE NOTICE "$keg/"
-  plain="dist/airband-$version-$target.tar.gz"
-  bottle="dist/airband-$version.$tag.bottle.tar.gz"
   tar -czf "$plain" -C "$keg/bin" airband -C "$keg" LICENSE NOTICE
   tar -czf "$bottle" -C "$stage" airband
   rm -rf "$stage"
