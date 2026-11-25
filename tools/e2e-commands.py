@@ -17,8 +17,8 @@ every tool runs with this run's throwaway home as its home.
   Code reads when it has no keychain item of its own.
 - Codex (through codex-acp): its home in the throwaway home (CODEX_HOME), his login (`auth.json`) copied there.
 - OpenCode: its folders in the throwaway home (XDG_*), where the server `opencode acp` runs for itself keeps its
-  sessions. It runs on a free model, signed in to nothing. OpenCode 2.3.2 runs a command sent this way but never
-  says what came of it, so its project's command is checked to be listed as giving no answer, and is not sent.
+  sessions. It runs on a free model, signed in to nothing. Its protocol server ends the turn as it hands a command
+  on, so what came of it is read from OpenCode's own record of the session there, once that says it is over.
 - Antigravity CLI: on a Gemini API key in GEMINI_API_KEY (in the run's environment, never on a command line);
   without one its part is skipped, and said to be.
 Copied logins are deleted at the end, whatever happened. Nothing here touches his tower or his phone. A tool that
@@ -144,17 +144,17 @@ def start(tool, folder):
     check(f"{tool}: it is started and reports in, held", agent, (started, feed()["roster"]))
     return agent and agent["id"]
 
-def picked(tool, folder, kind, runs="here"):
-    """Its project's own one, listed by the tool and, when the tool says what came of it, picked from the list
-    with a name added, runs."""
+def picked(tool, folder, kind):
+    """Its project's own one, listed by the tool and, picked from the list with a name added, runs: what it
+    said comes back."""
     me = start(tool, folder)
     if not me: return
     # an agent held through the Agent Client Protocol lists them once its session is open
     items = until(lambda: (lambda all: all if any(n.endswith("greet") for n in all) else None)(listed(me)), 90) or listed(me)
     greet = next((c for n, c in items.items() if n.endswith("greet")), {})
-    check(f"{tool}: the project's own {kind} is listed as the tool lists it, with its kind and source, and " + ("runs from here" if runs == "here" else f"said to be {runs}"),
-          greet.get("kind") == kind and greet.get("source") == "project" and greet.get("runs") == runs, (sorted(items), greet))
-    if not greet or runs != "here": return
+    check(f"{tool}: the project's own {kind} is listed as the tool lists it, with its kind and source, and runs from here",
+          greet.get("kind") == kind and greet.get("source") == "project" and greet.get("runs") == "here", (sorted(items), greet))
+    if not greet: return
     # what the phone puts in the box when he picks it, and the name he adds
     reply = say(f"/{greet['name']} Ada", to=[me])
     ran = until(lambda: said_by(me, MARK), 240)
@@ -212,9 +212,9 @@ try:
     if not shutil.which("opencode"):
         skip("opencode", "OpenCode is not installed")
     else:
-        # OpenCode 2.3.2 runs it, but its protocol server ends the turn before it has and never says what
-        # came of it: listed, and said to give no answer (its row, `held_commands`)
-        picked("opencode", barn, "command", runs="no-answer")
+        # its protocol server ends the turn as it hands the command on: what came of it comes from its own
+        # record of the session, once that says the command is over
+        picked("opencode", barn, "command")
 
     print("Antigravity CLI, held, in a project with a skill of its own")
     if not shutil.which("agy"):

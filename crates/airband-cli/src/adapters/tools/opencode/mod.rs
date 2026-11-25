@@ -11,8 +11,14 @@
 //! - Its requests for leave are listed by the same server (`GET …/permission`) and answered there
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
+//!
+//! An agent the tower holds runs `opencode acp`. Its protocol server ends a turn that runs a command as it hands
+//! the command on, before it has run, and sends nothing of it after; so a held agent's turns are over when
+//! OpenCode's own record of the session says so (`record`).
 #![expect(clippy::disallowed_macros, reason = "the tool's own request bodies")]
 mod commands;
+#[cfg(unix)]
+mod record;
 use crate::adapters::Tower;
 use airband_io::http::Ask;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -77,8 +83,14 @@ fn newest_answer_at(session: &str) -> String {
 /// thought to itself on the way.
 fn newest_answer(messages: &Value) -> Option<String> {
     let said = messages["data"].as_array()?.first().filter(|m| m["type"] == "assistant")?;
-    let text: Vec<&str> = said["content"].as_array()?.iter().filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).map(str::trim).filter(|t| !t.is_empty()).collect();
+    let text = words(said);
     (!text.is_empty()).then(|| text.join("\n\n"))
+}
+
+/// What one of its answers wrote, part by part, without what it thought to itself on the way: as its server
+/// gives an answer, and as its record keeps one.
+fn words(answer: &Value) -> Vec<&str> {
+    answer["content"].as_array().into_iter().flatten().filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).map(str::trim).filter(|t| !t.is_empty()).collect()
 }
 
 /// A request for leave of OpenCode's, as he is asked it. `action` is what it wants to do in OpenCode's word
@@ -260,6 +272,10 @@ impl crate::adapters::Harness for OpenCode {
     }
     fn commands(&self, agent: &Agent, listed: Option<&[airband_core::commands::Listed]>) -> Option<crate::adapters::commands::Found> {
         commands::commands(agent, listed)
+    }
+    #[cfg(unix)]
+    fn acp_record(&self, session: &str) -> Option<Box<dyn crate::adapters::AcpRecord>> {
+        Some(Box::new(record::Record::of(session)))
     }
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)

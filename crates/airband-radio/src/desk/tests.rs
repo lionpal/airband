@@ -1391,11 +1391,6 @@ fn the_box_offers_the_commands_of_the_agent_it_is_for_that_run_from_here_narrowe
     desk.typing("/".into(), Some("shop 2".into()));
     let shut = view().unwrap();
     assert!(shut.items.is_empty() && shut.note.is_some());
-    // one whose tool runs them but never says what came of them says that instead, and offers none either
-    let quiet = airband_core::commands::Command { runs: airband_core::commands::Runs::NoAnswer, ..command("review", true) };
-    arrived(&mut desk.shared.state.lock().unwrap(), "shop 2", vec![quiet]);
-    let unanswered = view().unwrap();
-    assert!(unanswered.items.is_empty() && unanswered.note.is_some() && unanswered.note != shut.note);
     // words that would not go to one agent: a word for any tool's, and nothing to pick
     desk.typing("/".into(), None);
     let anyone = view().unwrap();

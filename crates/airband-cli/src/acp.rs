@@ -10,6 +10,11 @@
 //! tool sends, under the id the tower gave it. Its requests for leave are put to him. Every turn ends with a
 //! report: what it said, or that it stopped.
 //!
+//! A turn is over when the protocol's answer to its prompt comes, except for a tool whose protocol server can
+//! end a turn before what it was given has run, and which writes down itself when each turn is over and what
+//! it said (`adapters::AcpRecord`): its turns are over when that record says so. The record's files are watched,
+//! and the record read again each time one changes; his next words wait until then.
+//!
 //! What a session can be set to is the agent's to say. It lists its settings when the session opens
 //! (`configOptions`), each with the protocol's own word for what kind of setting it is (`category`): `model`
 //! is what it runs on and `thought_level` how hard it thinks. Those two lists go to the tower as they are
@@ -130,6 +135,8 @@ impl Opening<'_> {
                     }
                 }
                 Ok(Msg::Tell(tell)) => self.early.push_back(tell),
+                // nothing is watched while it opens
+                Ok(Msg::Changed) => {}
                 Ok(Msg::Gone) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(self.held.why("it ended before it had started")),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Err(self.held.why("it did not answer in two minutes")),
             }
@@ -195,11 +202,61 @@ fn never_reached(n: usize) -> String {
     if n == 1 { "It ended before your last message reached it.".into() } else { format!("It ended before your last {n} messages reached it.") }
 }
 
+/// The record a held agent's tool keeps of its session's turns, and the watch on its files that says when it
+/// may have moved on ([`Msg::Changed`]).
+struct Record {
+    of: Box<dyn adapters::AcpRecord>,
+    _watch: notify::RecommendedWatcher,
+}
+
+impl Record {
+    /// The record of this session, for a tool that keeps one its turns are read by. Nothing for any other tool,
+    /// and nothing when its files cannot be watched: then its turns are over when the protocol says.
+    fn of(held: &Held, me: &Agent, session: &str) -> Option<Record> {
+        use notify::Watcher;
+        let of = adapters::acp_record(&me.harness, session)?;
+        let tx = held.tx.clone();
+        let watched = notify::recommended_watcher(move |change: notify::Result<notify::Event>| {
+            if change.is_ok() {
+                tx.send(Msg::Changed).ok();
+            }
+        })
+        .and_then(|mut watch| of.files().iter().try_for_each(|file| watch.watch(file, notify::RecursiveMode::NonRecursive)).map(|()| watch));
+        match watched {
+            Ok(watch) => Some(Record { of, _watch: watch }),
+            Err(e) => {
+                eprintln!("airband: the record of {}'s turns cannot be watched ({e}); its turns end when its protocol says", me.harness);
+                None
+            }
+        }
+    }
+}
+
+/// A turn the protocol has ended that its tool's record does not yet say is over: where the record stood as it
+/// began, and how the protocol ended it.
+struct Ending {
+    mark: u64,
+    by_protocol: Event,
+}
+
+/// How a turn ended, once its tool's record says it is over: what the agent said through the protocol, or with
+/// nothing said there what its record says it wrote, or how the protocol ended it.
+fn ended(by_protocol: Event, recorded: String) -> Event {
+    match (by_protocol, recorded.trim()) {
+        (said @ Event::Said { .. }, _) => said,
+        (stopped, "") => stopped,
+        (_, text) => Event::Said { text: text.to_string(), kind: None, turn: None },
+    }
+}
+
 /// Drive the open session until it ends: one prompt at a time, what he says while it works waiting here in the
 /// order he said it.
 fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
     let (mut waiting, mut running, mut said, mut next_id) = (VecDeque::<(String, String)>::new(), None::<u64>, String::new(), 10u64);
     let mut early: VecDeque<Msg> = early.into_iter().map(Msg::Tell).collect();
+    let record = Record::of(held, me, session);
+    // where the record stood as the running turn began, and a turn ended by the protocol and not yet by the record
+    let (mut mark, mut ending) = (None::<u64>, None::<Ending>);
     loop {
         let msg = match early.pop_front() {
             Some(msg) => msg,
@@ -209,7 +266,7 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
         match msg {
             Msg::Tell(Tell::Say(text, receipt)) => waiting.push_back((text, receipt)),
             Msg::Tell(Tell::Stop) => {
-                if running.is_some() {
+                if running.is_some() || ending.is_some() {
                     send(held, json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": session } }));
                 }
             }
@@ -218,6 +275,8 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
                 // nothing said it stopped; neither is lost
                 if running.is_some() {
                     post(me, cut_short(&mut said));
+                } else if let Some(ending) = ending.take() {
+                    post(me, ending.by_protocol);
                 }
                 held.close_input();
                 break;
@@ -231,15 +290,21 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
                     // anything else it asks of its client is something this one said it does not do
                     (Some(_), request) if !request.is_null() => send(held, json!({ "jsonrpc": "2.0", "id": request, "error": { "code": -32601, "message": "not supported by this client" } })),
                     // the prompt has ended. What it wrote in that turn is what it said; with nothing written
-                    // it stopped, and when the turn failed the agent's own words say why.
+                    // it stopped, and when the turn failed the agent's own words say why. A tool that keeps a
+                    // record of its turns has ended this one when that record says so; one the protocol says
+                    // failed never got going there, and is over now.
                     (None, done) if done.as_u64().is_some() && done.as_u64() == running => {
                         running = None;
                         let text = std::mem::take(&mut said);
-                        post(me, match (text.trim(), v.get("error")) {
+                        let by_protocol = match (text.trim(), v.get("error")) {
                             ("", Some(e)) => Event::Stopped { why: Some(e["message"].as_str().unwrap_or("the agent gave no reason").to_string()) },
                             ("", None) => Event::Stopped { why: None },
                             (text, _) => Event::Said { text: text.to_string(), kind: None, turn: None },
-                        });
+                        };
+                        match mark.take().filter(|_| v.get("error").is_none()) {
+                            Some(mark) => ending = Some(Ending { mark, by_protocol }),
+                            None => post(me, by_protocol),
+                        }
                     }
                     _ => {}
                 }
@@ -248,15 +313,29 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
             Msg::Gone => {
                 if running.is_some() {
                     post(me, cut_short(&mut said));
+                } else if let Some(ending) = ending.take() {
+                    post(me, ending.by_protocol);
                 }
                 break;
             }
+            // read below, when a turn is waiting on the record
+            Msg::Changed => {}
+        }
+        // a turn the protocol has ended is over once its tool's record says it is
+        if let (Some(at), Some(record)) = (ending.as_ref().map(|e| e.mark), record.as_ref())
+            && let Some(recorded) = record.of.over(at)
+            && let Some(over) = ending.take()
+        {
+            post(me, ended(over.by_protocol, recorded));
         }
         if running.is_none()
+            && ending.is_none()
             && let Some((text, receipt)) = waiting.pop_front() {
                 next_id += 1;
                 running = Some(next_id);
                 said.clear();
+                // where its tool's record stands as the turn begins: the turn is read from after here
+                mark = record.as_ref().and_then(|r| r.of.mark());
                 send(held, json!({ "jsonrpc": "2.0", "id": next_id, "method": "session/prompt", "params": { "sessionId": session, "prompt": [{ "type": "text", "text": text }] } }));
                 // given to it as its turn: what that delivery carried is read
                 post(me, Event::Took { receipt });
@@ -388,6 +467,17 @@ mod tests {
             { "description": "no name: left out" }
         ]));
         assert_eq!(got.iter().map(|l| (l.name.as_str(), l.hint.as_deref())).collect::<Vec<_>>(), [("review-branch", Some("branch name")), ("compact", None), ("init", None)]);
+    }
+
+    #[test]
+    fn a_turn_its_record_says_is_over_says_what_the_agent_said_through_the_protocol_or_else_what_it_wrote_there() {
+        let said = |t: &str| Event::Said { text: t.into(), kind: None, turn: None };
+        // a command handed on: nothing came through the protocol, and the record has its answer
+        assert_eq!(ended(Event::Stopped { why: None }, " HELLO Ada ".into()), said("HELLO Ada"));
+        // a turn that said its words through the protocol says those
+        assert_eq!(ended(said("blue"), "blue".into()), said("blue"));
+        // one that wrote nothing anywhere stopped, as the protocol said
+        assert_eq!(ended(Event::Stopped { why: None }, String::new()), Event::Stopped { why: None });
     }
 
     #[test]
