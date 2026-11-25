@@ -15,21 +15,6 @@ fn radio_at(desk: &Desk, i: usize) -> Arc<Radio> {
 fn asking(id: &str) -> Reply {
     Reply { question: Some(airband_core::ids::QuestionId::new(id)), ..Reply::default() }
 }
-/// A computer on this machine that answers every request with `status` and `body`. Its port.
-fn tower_saying(status: u16, body: &'static str) -> u16 {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            let mut buf = [0u8; 65536];
-            let _ = stream.read(&mut buf);
-            let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
-        }
-    });
-    port
-}
 
 // The files he attached and the question his computer asked him are
 // his until he says something; asking the computer afresh (`reconnect`, or `wake` after 32 seconds) is not that.
