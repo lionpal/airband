@@ -8,11 +8,13 @@
 //!   PORT                     port to listen on (7474 when not set)
 //!   HOST                     address to listen on (0.0.0.0 when not set)
 //!   AIRBAND_RELAY_DATA       folder kept in when no database is set (./relay-data when not set): channels.json,
-//!                            waitlist.txt, and held/ with the messages kept for towers that are away
+//!                            waitlist.json, sessions.json, and held/ with the messages kept for towers that are away
 //!   DB_HOST and friends      keep all of it in Postgres instead (store.rs)
 //!   AIRBAND_RELAY_DYNAMO     keep all of it in Amazon DynamoDB instead: the tables' prefix (store.rs), with AWS_REGION
 //!   AIRBAND_TESTFLIGHT_SECRET  the App Store Connect key that TestFlight invites are sent with, by its name in
-//!                            AWS Secrets Manager (testflight.rs). Without it addresses are kept and not invited
+//!                            AWS Secrets Manager (testflight.rs). Without it the admin page cannot send invites
+//!   AIRBAND_ADMIN_SECRET     the admin page's allowlisted address and password, by its name in AWS Secrets
+//!                            Manager (admin.rs). Without it nobody can sign in
 //!   AIRBAND_RELAY_ADMISSION  if set, a tower must present this to open a channel; without it, anyone may,
 //!                            within limits (so many new channels from one address in a day, and in all in an hour)
 //!
@@ -33,14 +35,12 @@
 //!   POST   /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
 //!   POST   /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer (Bearer radio token)
 //!   POST   /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
-//!   POST   /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS); kept,
-//!                                       then invited to TestFlight. The answer's `invite` says what came of that
-//!                                       (waitlist.rs)
-//!   OPTIONS /v1/waitlist                the browser's question before that sign-up (CORS)
+//!   POST   /v1/waitlist                 the homepage's request for an invite: {"email": "…"} (airband.dev only, by
+//!                                       CORS); the address and the time are kept, and nothing is sent (waitlist.rs)
+//!   OPTIONS /v1/waitlist                the browser's question before that request (CORS)
+//!   GET    /admin and /admin/…          the admin page, for Charles alone: who asked, and the TestFlight invites he
+//!                                       chooses to send (admin.rs)
 //!   GET    /healthz
-//!
-//! `airband-relay invite-waiting`, with the same settings, sends the invite of every address on the list that has
-//! none on record, then stops (scripts/testflight-invite-waiting.sh runs it).
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
@@ -58,6 +58,7 @@ use tokio::sync::{Notify, oneshot};
 use airband_core::relay::{HELD_MOST, MAX_MESSAGE, NotPushed, PushAnswer, PushRequest, token_hash};
 use airband_core::encode::random_hex;
 
+mod admin;
 mod auth;
 mod dynamo;
 mod handlers;
@@ -87,20 +88,6 @@ fn invites_from_env() -> testflight::Invites {
     invites
 }
 
-/// `airband-relay invite-waiting`: the store and the key as the relay has them, and no server.
-async fn invite_waiting() {
-    let store = store::from_env().unwrap_or_else(|e| {
-        eprintln!("airband-relay: {e}");
-        std::process::exit(2);
-    });
-    println!("airband-relay: the waiting list is in {}", store.describe());
-    let relay = Relay::new(push::Push::default(), HashMap::new(), store, None, invites_from_env());
-    if let Err(e) = waitlist::invite_waiting(&relay).await {
-        eprintln!("airband-relay: {e}");
-        std::process::exit(1);
-    }
-}
-
 async fn relay_from_env() -> Arc<Relay> {
     let store = store::from_env().unwrap_or_else(|e| {
         eprintln!("airband-relay: {e}");
@@ -128,7 +115,12 @@ async fn relay_from_env() -> Arc<Relay> {
     let push = push::Push::from_env();
     println!("airband-relay: {}", push.describe());
     let invites = invites_from_env();
-    let relay = Arc::new(Relay::new(push, channels, store, admission, invites));
+    let admin = admin::Admin::from_env().unwrap_or_else(|e| {
+        eprintln!("airband-relay: {e}");
+        std::process::exit(2);
+    });
+    println!("airband-relay: {}", admin.describe());
+    let relay = Arc::new(Relay::new(push, channels, store, admission, invites).with_admin(admin));
     // what a tower never came back for is cleared at start and then every hour, not only at start
     let purging = relay.clone();
     tokio::spawn(async move {
@@ -151,6 +143,13 @@ fn routes(relay: Arc<Relay>) -> Router {
         .route(Route::Queue.pattern(), post(hold))
         .route(Route::Push.pattern(), post(wake_phone))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
+        .route("/admin", get(admin::page))
+        .route("/admin/admin.js", get(admin::script))
+        .route("/admin/admin.css", get(admin::style))
+        .route("/admin/sign-in", post(admin::sign_in))
+        .route("/admin/sign-out", post(admin::sign_out))
+        .route("/admin/requests", get(admin::requests))
+        .route("/admin/invites", post(admin::invites))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))
         .with_state(relay)
@@ -158,13 +157,9 @@ fn routes(relay: Arc<Relay>) -> Router {
 
 #[tokio::main]
 async fn main() {
-    match std::env::args().nth(1).as_deref() {
-        None => {}
-        Some("invite-waiting") => return invite_waiting().await,
-        Some(other) => {
-            eprintln!("airband-relay: no command \"{other}\" (the one there is: invite-waiting)");
-            std::process::exit(1);
-        }
+    if let Some(other) = std::env::args().nth(1) {
+        eprintln!("airband-relay: no command \"{other}\" (it takes none; its settings are in the environment)");
+        std::process::exit(1);
     }
     let port: u16 = match var("PORT") {
         None => 7474,

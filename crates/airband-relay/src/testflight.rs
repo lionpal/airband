@@ -1,12 +1,12 @@
-//! TestFlight invites: an address given on the homepage is added as a beta tester to the app's external group
-//! through the App Store Connect API, and Apple emails the invite. The relay holds a key for that API with the
-//! App Manager role, made for this alone, read from AWS Secrets Manager the first time an invite is asked for.
+//! TestFlight invites: an address Charles chooses on the admin page (admin.rs) is added as a beta tester to the
+//! app's external group through the App Store Connect API, and Apple emails the invite. The relay holds a key for
+//! that API with the App Manager role, made for this alone, read from AWS Secrets Manager the first time an invite
+//! is asked for.
 //!
 //!   AIRBAND_TESTFLIGHT_SECRET   the secret's name in Secrets Manager, in AWS_REGION. Its text is JSON:
 //!                               {"keyId": "…", "issuerId": "…", "key": "<the .p8 file's text>"}
 //!                               (scripts/testflight-invite-key.sh puts it there). Without this setting, or
-//!                               while the secret is not there, addresses are kept and no invite is sent, and
-//!                               the page is told so.
+//!                               while the secret is not there, no invite is sent, and the admin page is told so.
 //!
 //! What it asks of Apple, each answer read into its own type: the app by its bundle id, its group by name (both
 //! once, then kept), then `POST /v1/betaTesters` with the address and that group. A 409 is not taken on its word:

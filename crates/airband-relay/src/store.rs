@@ -1,7 +1,8 @@
 //! Where the relay remembers which channels exist: the channel's name, the hash of its tower's pull token, the
 //! hash of its radio's token. With the sealed messages kept for
 //! a tower that is away, that is all it ever stores about anyone's traffic. It also keeps the homepage's waiting
-//! list: email addresses people gave to be told when the app is ready, and nothing else about them. A folder
+//! list: email addresses people gave to ask for a TestFlight invite, when each was given and whether its invite
+//! was sent, and nothing else about them; and the admin page's sign-ins, by their hashes. A folder
 //! when run on a machine with a disk (folder.rs); a Postgres database (postgres.rs) or Amazon DynamoDB
 //! (dynamo_store.rs) when run somewhere without one. This file chooses one and hands each job to it.
 //!
@@ -15,8 +16,10 @@
 //!                                              its `expires` is put forward by each one kept
 //!                         k = "m#<ms>#<id>"    one per kept message, small, sorted as they arrived
 //!                         k = "i#<id>"         the sealed message itself, and `at`, the key of its place in line
-//!   <prefix>-waitlist   key `email`; `joined_at`; once its TestFlight invite has gone out, `invited_at` and
-//!                       `invite` (an [`Invited`]). An item without `invited_at` is one still to be invited.
+//!   <prefix>-waitlist   key `email`; `joined_at`; once Charles has sent its TestFlight invite from the admin
+//!                       page, `invited_at` and `invite` (an [`Invited`]). An item without them has had none.
+//!   <prefix>-sessions   key `hash`; time to live on `expires`. One per admin sign-in (admin.rs): the SHA-256 of
+//!                       the session cookie's token, never the token itself.
 //!
 //!   AWS_REGION   the region the tables are in. Who the relay is comes from the machine's role (dynamo.rs).
 //!
@@ -81,7 +84,7 @@ pub(crate) enum Added {
 }
 
 /// How an address on the waiting list came to have its TestFlight invite: the record kept once it has. An
-/// address with no such record has not had one, whatever the reason; `airband-relay invite-waiting` sends those.
+/// address with no such record has not had one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Invited {
@@ -97,6 +100,29 @@ impl Invited {
             Invited::AlreadyTester => "already_tester",
         }
     }
+}
+
+/// An address's TestFlight invite, once it has gone out: how, and when (seconds since 1970).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Invite {
+    pub(crate) how: Invited,
+    pub(crate) at: u64,
+}
+
+/// One address on the waiting list, as the admin page lists it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Request {
+    pub(crate) email: String,
+    /// When it was given, in seconds since 1970.
+    pub(crate) joined_at: u64,
+    /// Its invite, once one has gone out.
+    pub(crate) invite: Option<Invite>,
+}
+
+/// An [`Invited`] as a store keeps it in a text column: by its name, read back into the type. Anything else is
+/// an error, never taken for one or the other.
+fn invited_named(name: &str) -> Result<Invited, String> {
+    serde_json::from_value(Value::String(name.to_string())).map_err(|_| "an invite on record is of no known kind".to_string())
 }
 
 /// What came of keeping a message.
@@ -123,8 +149,14 @@ pub(crate) trait ChannelStore: Send + Sync {
     /// Record that an address on the waiting list has had its TestFlight invite, at `at` (seconds since 1970).
     /// An address not on the list is an error. Recorded again, the later record stands.
     async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String>;
-    /// Every address on the waiting list with no record of an invite, in no particular order.
-    async fn not_yet_invited(&self) -> Result<Vec<String>, String>;
+    /// Every address on the waiting list, with when it came and its invite if it has had one, in no particular order.
+    async fn waitlist(&self) -> Result<Vec<Request>, String>;
+    /// Remember an admin sign-in by its token's hash, until `expires` (seconds since 1970). Returns once it is kept.
+    async fn session_start(&self, hash: &str, expires: u64) -> Result<(), String>;
+    /// Is there a sign-in by this hash that has not run out at `now`?
+    async fn session_live(&self, hash: &str, now: u64) -> Result<bool, String>;
+    /// Forget a sign-in. One not there is already forgotten.
+    async fn session_end(&self, hash: &str) -> Result<(), String>;
     /// Close a channel: it and everything kept for it are forgotten, and it is remembered as closed, so a tower
     /// still running with that pairing cannot open it again.
     async fn remove(&self, channel: &str) -> Result<(), String>;
@@ -214,6 +246,16 @@ mod tests {
         assert!(!store.load().await.unwrap().contains_key(c));
         store.remove(c).await.unwrap();
         assert_eq!(store.held_next(c).await, Ok(None));
+        // an admin sign-in: kept until it runs out or is ended, and found by its hash alone
+        let hash = airband_core::encode::random_hex(32);
+        let now = airband_core::clock::now_secs();
+        assert_eq!(store.session_live(&hash, now).await, Ok(false));
+        store.session_start(&hash, now + 60).await.unwrap();
+        assert_eq!(store.session_live(&hash, now).await, Ok(true));
+        assert_eq!(store.session_live(&hash, now + 60).await, Ok(false));
+        store.session_end(&hash).await.unwrap();
+        store.session_end(&hash).await.unwrap(); // twice is once
+        assert_eq!(store.session_live(&hash, now).await, Ok(false));
     }
 
     #[tokio::test]
@@ -244,33 +286,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_folder_keeps_who_has_had_an_invite_and_who_is_still_waiting() {
+    async fn the_folder_keeps_each_address_once_with_when_it_came_and_its_invite() {
         let dir = std::env::temp_dir().join(format!("airband-relay-invites-{}", airband_core::encode::random_hex(6)));
         let store = folder(dir.clone());
-        assert_eq!(store.not_yet_invited().await, Ok(vec![]));
+        assert_eq!(store.waitlist().await, Ok(vec![]));
+        let before = airband_core::clock::now_secs();
         for e in ["a@example.com", "b@example.com", "c@example.com", "a@example.com"] {
             store.join_waitlist(e).await.unwrap();
         }
-        let waiting = |mut v: Vec<String>| {
-            v.sort();
+        let listed = |mut v: Vec<Request>| {
+            v.sort_by(|a, b| a.email.cmp(&b.email));
             v
         };
-        assert_eq!(waiting(store.not_yet_invited().await.unwrap()), ["a@example.com", "b@example.com", "c@example.com"]);
+        let all = listed(store.waitlist().await.unwrap());
+        assert_eq!(all.iter().map(|r| r.email.as_str()).collect::<Vec<_>>(), ["a@example.com", "b@example.com", "c@example.com"]);
+        assert!(all.iter().all(|r| r.joined_at >= before && r.invite.is_none()));
         store.invited("b@example.com", Invited::New, 100).await.unwrap();
         store.invited("c@example.com", Invited::AlreadyTester, 101).await.unwrap();
-        assert_eq!(store.not_yet_invited().await, Ok(vec!["a@example.com".to_string()]));
+        let all = listed(store.waitlist().await.unwrap());
+        assert_eq!(all.iter().map(|r| r.invite).collect::<Vec<_>>(), [None, Some(Invite { how: Invited::New, at: 100 }), Some(Invite { how: Invited::AlreadyTester, at: 101 })]);
+        // given again, an address keeps its first time and its invite
+        let first = all[1].joined_at;
+        store.join_waitlist("b@example.com").await.unwrap();
+        assert_eq!(listed(store.waitlist().await.unwrap())[1], Request { email: "b@example.com".into(), joined_at: first, invite: Some(Invite { how: Invited::New, at: 100 }) });
         // only an address on the list is recorded
         assert!(store.invited("nobody@example.com", Invited::New, 102).await.is_err());
-        // the record says how and when; the waiting list itself is as it was
-        let record: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("invited.json")).unwrap()).unwrap();
-        assert_eq!((record["b@example.com"]["how"].as_str(), record["b@example.com"]["at"].as_u64()), (Some("new"), Some(100)));
-        assert_eq!(record["c@example.com"]["how"].as_str(), Some("already_tester"));
-        assert_eq!(std::fs::read(dir.join("waitlist.txt")).unwrap(), b"a@example.com\nb@example.com\nc@example.com\n");
-        // a record that cannot be read is an error, never "nobody invited", and is left as it is
-        std::fs::write(dir.join("invited.json"), b"{half").unwrap();
-        assert!(store.not_yet_invited().await.is_err());
+        // only its owner can read the file
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(dir.join("waitlist.json")).unwrap().permissions().mode() & 0o077, 0);
+        }
+        // a list that cannot be read is an error, never "nobody on it", and is left as it is
+        std::fs::write(dir.join("waitlist.json"), b"{half").unwrap();
+        assert!(store.waitlist().await.is_err());
+        assert!(store.join_waitlist("d@example.com").await.is_err());
         assert!(store.invited("a@example.com", Invited::New, 103).await.is_err());
-        assert_eq!(std::fs::read(dir.join("invited.json")).unwrap(), b"{half");
+        assert_eq!(std::fs::read(dir.join("waitlist.json")).unwrap(), b"{half");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -331,7 +383,7 @@ mod tests {
         assert_eq!(store.hold("c", "d", b"four", 1).await, Ok(Held::Kept));
         // the waiting list: one that cannot be read is an error and stays as it was
         store.join_waitlist("a@example.com").await.unwrap();
-        let waitlist = dir.join("waitlist.txt");
+        let waitlist = dir.join("waitlist.json");
         std::fs::write(&waitlist, [0xff, 0xfe]).unwrap();
         assert!(store.join_waitlist("b@example.com").await.is_err());
         assert_eq!(std::fs::read(&waitlist).unwrap(), vec![0xff, 0xfe]);

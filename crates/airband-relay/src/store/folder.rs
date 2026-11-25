@@ -1,6 +1,7 @@
 //! The relay's records kept in a folder on its own disk: `channels.json`, `closed.json` (the channels their
-//! towers closed), `waitlist.txt`, `invited.json` (each address on it whose TestFlight invite went out: how, and
-//! when), and under `held/` one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
+//! towers closed), `waitlist.json` (each address given, when, and its TestFlight invite once sent), `sessions.json`
+//! (the admin page's sign-ins by their hashes), and under `held/` one folder per channel with its kept messages and
+//! their list. For a relay run on a machine with a disk.
 use super::*;
 use std::path::Path;
 
@@ -102,44 +103,73 @@ fn load(dir: &Path) -> Result<HashMap<String, Saved>, String> {
     let closed = read_closed(dir)?;
     Ok(read_channels(dir)?.into_iter().filter(|(c, _)| !closed.contains(c)).collect())
 }
+/// One address in waitlist.json.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Entry {
+    joined_at: u64,
+    invite: Option<Invite>,
+}
+type Waitlist = std::collections::BTreeMap<String, Entry>;
+/// waitlist.json: not there yet is an empty list; there and unreadable is an error, never written over as empty.
+fn read_waitlist(dir: &Path) -> Result<Waitlist, String> {
+    airband_io::kept::read(&dir.join("waitlist.json")).map(Option::unwrap_or_default)
+}
+/// Saved so only its owner can read it: it is people's email addresses.
+fn write_waitlist(dir: &Path, all: &Waitlist) -> Result<(), String> {
+    let file = dir.join("waitlist.json");
+    let bytes = serde_json::to_vec(all).map_err(|e| e.to_string())?;
+    airband_io::files::write_private(&file, bytes).map_err(|e| format!("cannot save {}: {e}", file.display()))
+}
 fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
-    let file = dir.join("waitlist.txt");
-    // not there yet is an empty list; there and unreadable is an error, never written over as empty
-    let have = airband_io::files::read_text(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?.unwrap_or_default();
-    if have.lines().any(|l| l == email) {
+    let mut all = read_waitlist(dir)?;
+    if all.contains_key(email) {
         return Ok(());
     }
-    airband_io::files::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
-}
-/// invited.json: one [`Invite`] per address whose invite went out. Unreadable is an error, never "none invited".
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Invite {
-    how: Invited,
-    at: u64,
-}
-fn read_invited(dir: &Path) -> Result<std::collections::BTreeMap<String, Invite>, String> {
-    airband_io::kept::read(&dir.join("invited.json")).map(Option::unwrap_or_default)
-}
-fn read_waitlist(dir: &Path) -> Result<Vec<String>, String> {
-    let file = dir.join("waitlist.txt");
-    let have = airband_io::files::read_text(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?.unwrap_or_default();
-    Ok(have.lines().map(str::to_string).collect())
+    all.insert(email.to_string(), Entry { joined_at: airband_core::clock::now_secs(), invite: None });
+    write_waitlist(dir, &all)
 }
 fn invited(dir: &Path, email: &str, how: Invited, at: u64) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
-    if !read_waitlist(dir)?.iter().any(|l| l == email) {
-        return Err("that address is not on the waiting list".into());
-    }
-    let mut all = read_invited(dir)?;
-    all.insert(email.to_string(), Invite { how, at });
-    let file = dir.join("invited.json");
-    airband_io::kept::save(&file, &all).map_err(|e| format!("cannot save {}: {e}", file.display()))
+    let mut all = read_waitlist(dir)?;
+    let Some(entry) = all.get_mut(email) else { return Err("that address is not on the waiting list".into()) };
+    entry.invite = Some(Invite { how, at });
+    write_waitlist(dir, &all)
 }
-fn not_yet_invited(dir: &Path) -> Result<Vec<String>, String> {
+fn waitlist(dir: &Path) -> Result<Vec<Request>, String> {
     let _one = LISTS.lock().unwrap();
-    let invited = read_invited(dir)?;
-    Ok(read_waitlist(dir)?.into_iter().filter(|e| !invited.contains_key(e)).collect())
+    Ok(read_waitlist(dir)?.into_iter().map(|(email, e)| Request { email, joined_at: e.joined_at, invite: e.invite }).collect())
+}
+/// sessions.json: each admin sign-in's hash and when it runs out. Read the same way as the lists.
+type Sessions = std::collections::BTreeMap<String, u64>;
+fn read_sessions(dir: &Path) -> Result<Sessions, String> {
+    airband_io::kept::read(&dir.join("sessions.json")).map(Option::unwrap_or_default)
+}
+fn write_sessions(dir: &Path, all: &Sessions) -> Result<(), String> {
+    let file = dir.join("sessions.json");
+    let bytes = serde_json::to_vec(all).map_err(|e| e.to_string())?;
+    airband_io::files::write_private(&file, bytes).map_err(|e| format!("cannot save {}: {e}", file.display()))
+}
+fn session_start(dir: &Path, hash: &str, expires: u64) -> Result<(), String> {
+    let _one = LISTS.lock().unwrap();
+    let mut all = read_sessions(dir)?;
+    // the ones that have run out go whenever one is added
+    let now = airband_core::clock::now_secs();
+    all.retain(|_, until| in_time(*until, now));
+    all.insert(hash.to_string(), expires);
+    write_sessions(dir, &all)
+}
+fn session_live(dir: &Path, hash: &str, now: u64) -> Result<bool, String> {
+    let _one = LISTS.lock().unwrap();
+    Ok(read_sessions(dir)?.get(hash).is_some_and(|until| in_time(*until, now)))
+}
+fn session_end(dir: &Path, hash: &str) -> Result<(), String> {
+    let _one = LISTS.lock().unwrap();
+    let mut all = read_sessions(dir)?;
+    if all.remove(hash).is_some() {
+        write_sessions(dir, &all)?;
+    }
+    Ok(())
 }
 fn remove(dir: &Path, channel: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
@@ -262,8 +292,17 @@ impl ChannelStore for Folder {
     async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String> {
         invited(&self.dir, email, how, at)
     }
-    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
-        not_yet_invited(&self.dir)
+    async fn waitlist(&self) -> Result<Vec<Request>, String> {
+        waitlist(&self.dir)
+    }
+    async fn session_start(&self, hash: &str, expires: u64) -> Result<(), String> {
+        session_start(&self.dir, hash, expires)
+    }
+    async fn session_live(&self, hash: &str, now: u64) -> Result<bool, String> {
+        session_live(&self.dir, hash, now)
+    }
+    async fn session_end(&self, hash: &str) -> Result<(), String> {
+        session_end(&self.dir, hash)
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         remove(&self.dir, channel)
