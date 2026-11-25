@@ -57,6 +57,8 @@
       "command",
       "commands"
     ],
-    "held_commands": "no-answer"
+    "data_home": ".local/share",
+    "data_env": "XDG_DATA_HOME",
+    "record": "opencode/opencode.db"
   }
 }

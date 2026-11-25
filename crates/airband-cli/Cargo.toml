@@ -33,6 +33,9 @@ qrcode = { version = "0.14", default-features = false }
 libc = "0.2"
 # Codex's own server on this computer is spoken to over a socket file, as a websocket
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# a held agent's own record of its turns is read again when its files change, not on a timer: on macOS by
+# kqueue, which says of every write to a file (FSEvents was seen to fall silent on a database written to often)
+notify = { version = "9", default-features = false, features = ["macos_kqueue"] }
 
 [target.'cfg(windows)'.dependencies]
 # whether a process is still running

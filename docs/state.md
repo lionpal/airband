@@ -40,10 +40,10 @@ and "slash greet Bea" said aloud was read by the model as that skill and ran. Th
 agent (codex-acp 2.8.0 over Codex 0.171, his login copied into a throwaway CODEX_HOME) and a real Antigravity CLI
 agent (agy 1.5.15 on a Gemini key), each in a project with a skill of its own: each listed it as the project's,
 and "/$greet Ada" (Codex) and "/greet Ada" (agy) picked from the list ran it. OpenCode 2.3.2 (throwaway XDG
-folders, a free model) lists its project's command, and a command sent to a held agent does run, but its protocol
-server ends the turn as it hands the command on and never sends what came of it (seen in its own session record:
-the answer is there, the client is told nothing), so its row says `held_commands: no-answer` and the phone says
-so instead of offering them. In the simulator, against a tower holding a Claude Code agent, both ways in were
+folders, a free model) lists its project's command, and "/greet Ada" picked from the list ran it and its answer
+came back: its protocol server ends the turn as it hands the command on and sends nothing of it after, so a held
+OpenCode agent's turn is over when OpenCode's own record of the session (its database, an `idle` row after the
+turn's start) says so, read again each time its folder changes, and what the turn wrote is read from there. In the simulator, against a tower holding a Claude Code agent, both ways in were
 seen: "/" typed in the box (the list above the keyboard, there at once, narrowed by "/gr") and the + panel's
 "Skills" entry.
 

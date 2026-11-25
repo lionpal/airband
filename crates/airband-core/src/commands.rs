@@ -50,9 +50,6 @@ pub enum Runs {
     /// His words reach the agent only from outside, as a message, which its tool reads as words (a session he
     /// opened at the computer).
     AtComputer,
-    /// Its tool runs it, but says nothing of when it ends or what came of it to what sent it, so nothing would
-    /// come back to him.
-    NoAnswer,
 }
 
 /// One he can pick.

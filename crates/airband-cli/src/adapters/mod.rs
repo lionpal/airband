@@ -69,6 +69,15 @@ pub(crate) trait Harness: Sync {
     fn acp_leave(&self, _request: &Value, _agent: &Agent) -> AcpLeave {
         AcpLeave::Protocol
     }
+    /// For a tool held through the Agent Client Protocol whose protocol server can end a turn before what it
+    /// was given is over (one that hands a command on and ends the turn as it does), and that writes down in a
+    /// record of its own when each turn is over and what it said: that record, for one of its sessions. A turn
+    /// of such a tool is over when its record says so. Nothing for a tool whose turn is over when the protocol
+    /// says it is.
+    #[cfg(unix)]
+    fn acp_record(&self, _session: &str) -> Option<Box<dyn AcpRecord>> {
+        None
+    }
     /// What the tool wants printed by a hook that has nothing to tell it; nothing for a tool that wants nothing.
     fn quiet(&self) -> Option<&'static str> {
         None
@@ -150,6 +159,27 @@ pub(crate) enum AcpLeave {
     /// By its tool's own reading: the request, or nothing when it says nothing he could answer (it is then not
     /// asked, and so not allowed).
     Own(Option<Box<PermissionAsk>>),
+}
+
+/// A held agent's tool's own record of its session's turns (`Harness::acp_record`).
+#[cfg(unix)]
+pub(crate) trait AcpRecord: Send {
+    /// The files that change as the record is written: each is watched, and the record read again when one
+    /// changes.
+    fn files(&self) -> Vec<std::path::PathBuf>;
+    /// Where the record stands now, before a turn is begun: that turn is read from after here. Nothing when the
+    /// record cannot be read.
+    fn mark(&self) -> Option<u64>;
+    /// The turn begun after `mark`, once the record says it is over: what the agent wrote in it, empty when it
+    /// wrote nothing. Nothing while the record does not say it is over.
+    fn over(&self, mark: u64) -> Option<String>;
+}
+
+/// The record a held agent's tool keeps of one of its sessions' turns, for a tool that keeps one its turns are
+/// read by.
+#[cfg(unix)]
+pub(crate) fn acp_record(harness_name: &str, session: &str) -> Option<Box<dyn AcpRecord>> {
+    harness(harness_name)?.acp_record(session)
 }
 
 /// A request for leave of a held agent, as its tool reads it.

@@ -7,7 +7,7 @@ use serde_json::json;
 
 #[test]
 fn every_row_fact_this_code_asks_for_is_there() {
-    for fact in ["home", "home_env", "service", "user", "state"] {
+    for fact in ["home", "home_env", "service", "user", "state", "data_home", "data_env", "record"] {
         assert!(!row_says(NAME, fact).is_empty(), "its row says nothing for {fact}");
     }
     // where it keeps its files, by the same rule as every tool, from its own row

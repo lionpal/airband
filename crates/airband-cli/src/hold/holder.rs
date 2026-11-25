@@ -25,6 +25,9 @@ pub(crate) enum Msg {
     Out(String),
     /// The program has ended.
     Gone,
+    /// A file in a folder the driver watches has changed: where the agent's tool keeps a record the driver
+    /// reads (`acp.rs`).
+    Changed,
 }
 
 /// What a driver is given.
@@ -33,6 +36,8 @@ pub(crate) struct Held {
     pub(crate) harness: String,
     pub(crate) cwd: String,
     pub(crate) rx: mpsc::Receiver<Msg>,
+    /// Where something the driver itself watches says it has changed ([`Msg::Changed`]).
+    pub(crate) tx: mpsc::Sender<Msg>,
     pub(crate) to_program: Arc<Mutex<Option<ChildStdin>>>,
     pub(crate) state: Arc<Mutex<State>>,
     /// The last of what the program printed as an error.
@@ -74,7 +79,7 @@ fn lines(held: &Held, line: &str, stop: Option<&str>) -> Result<(), String> {
     loop {
         match held.rx.recv() {
             Ok(Msg::Tell(tell)) => told(held, tell, line, stop),
-            Ok(Msg::Out(_)) => {}
+            Ok(Msg::Out(_) | Msg::Changed) => {}
             Ok(Msg::Gone) | Err(_) => return Ok(()),
         }
     }
@@ -144,9 +149,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let outcome = match command.spawn() {
         Err(e) => Err(NotStarted::Failed(format!("{program} did not start: {e}"))),
         Ok(mut child) => {
-            pass_output(&mut child, tx, by == By::Acp);
+            pass_output(&mut child, tx.clone(), by == By::Acp);
             keep_errors(&mut child, errors.clone());
-            let held = Held { id, harness, cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
+            let held = Held { id, harness, cwd, rx, tx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             // a line to write is what a program driven by lines has, and only that
             let done = match &line {
                 Some(line) => lines(&held, line, named.get("stop").map(String::as_str)).map_err(NotStarted::Failed),
