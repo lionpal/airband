@@ -227,7 +227,9 @@ mod tests {
         let home = std::env::temp_dir().join(format!("airband-cc-commands-{}", std::process::id()));
         std::fs::create_dir_all(home.join("plugins")).unwrap();
         copy_dir(&root.join("home/skills"), &home.join("skills"));
-        std::fs::write(home.join("plugins/installed_plugins.json"), format!(r#"{{"version":2,"plugins":{{"lint@market":[{{"scope":"user","installPath":"{}"}}]}}}}"#, root.join("plugin").display())).unwrap();
+        // written as JSON, so a Windows path's backslashes are escaped as Claude Code's own record has them
+        let record = serde_json::json!({ "version": 2, "plugins": { "lint@market": [{ "scope": "user", "installPath": root.join("plugin") }] } });
+        std::fs::write(home.join("plugins/installed_plugins.json"), record.to_string()).unwrap();
         let written = written(&root.join("project"), &home, &mut watch);
         let got = listed(&said, &written, airband_core::commands::Runs::Here);
         let by = |n: &str| got.iter().find(|c| c.name == n).unwrap().clone();

@@ -164,30 +164,36 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
 pub(super) async fn withdraw_ended(app: Arc<App>) {
     let mut changes = app.watch_changes();
     loop {
-        let ended = std::mem::take(&mut app.change().ended);
-        for ending in ended {
-            let now = {
-                let mut shown = app.push.shown.lock().unwrap();
-                let now = match shown.get_mut(&ending.id) {
-                    None => None,
-                    // its notification is still on its way: taken down once that is sent (`consider`)
-                    Some(w) if w.sending => {
-                        w.ended = Some(ending);
-                        None
-                    }
-                    Some(_) => shown.remove(&ending.id).map(|w| (w, ending)),
-                };
-                if now.is_some() {
-                    app.store.save_notified(&shown);
-                }
-                now
-            };
-            if let Some((w, ending)) = now {
-                take_down(&app, w, ending).await;
-            }
-        }
+        withdraw_now(&app).await;
         if changes.changed().await.is_err() {
             return;
+        }
+    }
+}
+
+/// The lines that stopped being news since this was last done: each one's notification taken down, every send
+/// for it done, by the time this returns.
+async fn withdraw_now(app: &Arc<App>) {
+    let ended = std::mem::take(&mut app.change().ended);
+    for ending in ended {
+        let now = {
+            let mut shown = app.push.shown.lock().unwrap();
+            let now = match shown.get_mut(&ending.id) {
+                None => None,
+                // its notification is still on its way: taken down once that is sent (`consider`)
+                Some(w) if w.sending => {
+                    w.ended = Some(ending);
+                    None
+                }
+                Some(_) => shown.remove(&ending.id).map(|w| (w, ending)),
+            };
+            if now.is_some() {
+                app.store.save_notified(&shown);
+            }
+            now
+        };
+        if let Some((w, ending)) = now {
+            take_down(app, w, ending).await;
         }
     }
 }
@@ -682,25 +688,25 @@ mod tests {
             let lines: Vec<String> = super::super::logged::take().into_iter().filter(|l| l.contains(&format!("for line {id} (no longer news)"))).collect();
             [&pt, &dt].into_iter().filter(|t| lines.iter().any(|l| l.contains(&format!("wake {t} ")))).cloned().collect::<Vec<_>>()
         };
-        tokio::spawn(withdraw_ended(app.clone()));
+        // the relay named answers nothing; how long that takes to be known differs by system (on Windows a
+        // refused connection is tried again for seconds), so each pass is awaited to its end, never timed
         super::super::logged::take();
         // shown on both, then superseded: taken down on both
         shown(&app, "a", vec![p.clone(), d.clone()], 1);
         assert!(sent(&app, "a").is_none());
         app.change().ended.push(Ending { id: "a".into(), why: Withdrawn::NotRead { reason: airband_core::radio::NotRead::Superseded }, by: None });
-        let wait = || async { for _ in 0..100 { if app.push.shown.lock().unwrap().is_empty() && app.read().ended.is_empty() { break } tokio::time::sleep(Duration::from_millis(20)).await } tokio::time::sleep(Duration::from_millis(100)).await };
-        wait().await;
+        withdraw_now(&app).await;
         assert_eq!(taken_down("a"), [pt.clone(), dt.clone()], "taken down on each phone woken for it");
         // answered from the phone: taken down on the pad alone
         shown(&app, "b", vec![p.clone(), d.clone()], 2);
         sent(&app, "b");
         app.change().ended.push(Ending { id: "b".into(), why: Withdrawn::NotRead { reason: airband_core::radio::NotRead::Answered }, by: Some(p.clone()) });
-        wait().await;
+        withdraw_now(&app).await;
         assert_eq!(taken_down("b"), std::slice::from_ref(&dt));
         // it stops being news while its notification is on its way: taken down once that is sent, not before
         shown(&app, "c", vec![p.clone()], 3);
         app.change().ended.push(Ending { id: "c".into(), why: Withdrawn::Heard, by: None });
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        withdraw_now(&app).await;
         assert!(taken_down("c").is_empty(), "nothing to take down before it is there");
         let (w, ending) = sent(&app, "c").expect("handed back to be taken down once sent");
         assert_eq!((w.radios, ending.why), (vec![p.clone()], Withdrawn::Heard));
