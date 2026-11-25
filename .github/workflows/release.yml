@@ -20,22 +20,18 @@ name: Release
 # release with a file missing. In 0.9.5 the Mac's two binaries were published by hand and its two bottles were
 # not, latest.json was written all the same, and the tap's update failed for hours without anyone seeing it.
 #
-# If GitHub has no macOS runner to give, run it with "skip macOS" ticked: it publishes the Linux files and
-# stops before latest.json, naming the Mac files that are missing. Publish those from a Mac:
+# The Mac's files are never built here: a GitHub runner has no Developer ID certificate, so they would go out
+# unsigned (0.9.6 did). The workflow publishes the Linux files and stops before latest.json, naming the Mac files
+# that are missing. Publish those from the Mac that holds the certificate:
 #   scripts/package.sh aarch64-apple-darwin x86_64-apple-darwin
 #   BUCKET=<the site's bucket> scripts/publish-mac.sh
-# (all four of the Mac's files, each checksum first, with the same cache-control as here, then each checked as
-# served), then run this again with "skip macOS": it finds every file published and names the version.
+# (it refuses a binary not signed with the Developer ID certificate; all four of the Mac's files, each checksum
+# first, then each checked as served), then run this again: it finds every file published and names the version.
 #
 # 0.1.1 was published by hand, all four systems, because Actions was not running jobs for this account that day
 # (a billing notice). The Linux binaries were built in a Debian 12 container.
 on:
   workflow_dispatch:
-    inputs:
-      skip_macos:
-        description: 'Skip the macOS builds (publish them by hand)'
-        type: boolean
-        default: false
 concurrency: { group: release, cancel-in-progress: false }
 permissions: { contents: read }
 jobs:
@@ -61,26 +57,9 @@ jobs:
           "$RUNNER_TEMP/airband" --version
       - uses: actions/upload-artifact@v4
         with: { name: 'dist-${{ matrix.target }}', path: dist/, if-no-files-found: error }
-  macos:
-    name: Build for macOS (Apple silicon and Intel)
-    if: ${{ !inputs.skip_macos }}
-    runs-on: macos-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: 'aarch64-apple-darwin,x86_64-apple-darwin' }
-      - run: scripts/package.sh aarch64-apple-darwin x86_64-apple-darwin
-      - name: Check the binary says its version
-        run: |
-          tar -xzf dist/airband-*-aarch64-apple-darwin.tar.gz -C "$RUNNER_TEMP" airband
-          "$RUNNER_TEMP/airband" --version
-      - uses: actions/upload-artifact@v4
-        with: { name: dist-macos, path: dist/, if-no-files-found: error }
   publish:
     name: Publish to airband.dev/releases
-    needs: [linux, macos]
-    if: ${{ !cancelled() && needs.linux.result == 'success' && (needs.macos.result == 'success' || needs.macos.result == 'skipped') }}
+    needs: [linux]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions: { id-token: write, contents: write }
@@ -96,11 +75,9 @@ jobs:
           version=$(scripts/version.sh)
           echo "version=$version" >> "$GITHUB_ENV"
           ls -l dist
-          built="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"
-          if [ "${{ needs.macos.result }}" = success ]; then built="$built aarch64-apple-darwin x86_64-apple-darwin"; fi
-          scripts/publish-release.sh $built
-      # latest.json names a version only once every file of it is served, the Mac's too when they were skipped
-      # here and published by hand: the tap updates from it and would fail on a file that is not there
+          scripts/publish-release.sh x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+      # latest.json names a version only once every file of it is served, the Mac's too, which are published from a
+      # Mac: the tap updates from it and would fail on a file that is not there
       - name: Check every file of the release is served and matches its checksum
         run: scripts/check-release.sh --all
       - name: Name it the latest
