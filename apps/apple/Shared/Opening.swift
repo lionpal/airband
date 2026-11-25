@@ -16,6 +16,8 @@ enum Opening {
         case .none: opening = openNotice(links: [], sealed: sealed, colours: [:])
         case .found(let links): opening = openNotice(links: links, sealed: sealed, colours: Together.teamColours())
         }
+        // the tile learns of it here too, when the app may not be running
+        Opening.tile(opening)
         let note: OpenedNotice
         switch opening {
         case .plain(let why): return hand(request.content, .plain(why: why))
@@ -48,6 +50,14 @@ enum Opening {
             if !registered { content.categoryIdentifier = NoticeButtons.reply }
             hand(fromAgent(content, note, picture) ?? content, registered ? opened : .answersNotRegistered(message: note.message))
         }
+    }
+
+    /// What an opened notification changes on the tile (the core decides), drawn again when what it shows changed.
+    static func tile(_ opening: NoticeOpening) {
+        guard let folder = Together.folder else { return }
+        let redraw = folder.tileHeard(opening: opening)
+        Board.protect(folder.tilePath())
+        if redraw { Board.redraw() }
     }
 
     /// How a notification was shown, kept for the connection record once it has been handed to the system.

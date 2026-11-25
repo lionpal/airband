@@ -6,6 +6,7 @@
   dev.airband.app          the app: push notifications, the App Group group.dev.airband
   dev.airband.app.notify   its notification extension, which opens a sealed notification on the phone: the
                            same App Group
+  dev.airband.app.widgets  its tile and banner: the same App Group, where the tile reads what it shows
 
 One thing Apple's API cannot turn on (it refuses the name): Communication Notifications, which lets a
 notification carry the agent's badge as a sender's picture. That is a tick box at developer.apple.com →
@@ -13,7 +14,8 @@ Certificates, Identifiers & Profiles → Identifiers → dev.airband.app. script
 
 The App Groups capability is turned on here, but Apple's API has no way to make the group itself or to say
 which group an identifier belongs to. Once, by hand: developer.apple.com → Identifiers → App Groups → + →
-group.dev.airband; then on dev.airband.app and on dev.airband.app.notify, App Groups → Configure → tick it.
+group.dev.airband; then on dev.airband.app, dev.airband.app.notify and dev.airband.app.widgets, App Groups →
+Configure → tick it.
 scripts/testflight.sh checks that both signing profiles carry it.
 
 Safe to run again: what is already there is left alone. Uses the App Store Connect API key named in the
@@ -33,7 +35,7 @@ API = "https://api.appstoreconnect.apple.com/v1"
 IDS = {
     "dev.airband.app": ("airband", ["PUSH_NOTIFICATIONS", "APP_GROUPS"]),
     "dev.airband.app.notify": ("airband notifications", ["APP_GROUPS"]),
-    "dev.airband.app.widgets": ("airband widgets", []),
+    "dev.airband.app.widgets": ("airband widgets", ["APP_GROUPS"]),
 }
 
 

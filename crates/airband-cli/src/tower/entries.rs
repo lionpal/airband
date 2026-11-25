@@ -326,6 +326,7 @@ impl Inner {
             open: false,
             not_read: e.aloud.not_read(),
             note: e.note,
+            news: super::push::news(e),
         }
     }
     /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every

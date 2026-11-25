@@ -105,21 +105,6 @@ enum Stored {
     }
 }
 
-/// A colour for each team, in the order the phone hands them out: blue, orange, violet, magenta, amber, green.
-enum TeamColours {
-    static let rgb: [(Double, Double, Double)] = [
-        (0.224, 0.529, 0.898), (0.851, 0.349, 0.149), (0.565, 0.522, 0.914),
-        (0.835, 0.318, 0.506), (0.788, 0.522, 0.0), (0.098, 0.620, 0.439),
-    ]
-    /// For a team the phone has not given a colour yet: a plain grey, no team's colour.
-    static let none: (Double, Double, Double) = (0.557, 0.557, 0.576)
-    static func rgb(_ place: UInt8?) -> (Double, Double, Double) { place.map { rgb[Int($0) % rgb.count] } ?? none }
-    static func ui(_ place: UInt8?) -> UIColor {
-        let c = rgb(place)
-        return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
-    }
-}
-
 /// The buttons on a notification. iOS wants each set of buttons registered ahead under a name (a category):
 /// the fixed sets are registered when the app starts, and a question's own answers by the extension just
 /// before it shows the question. A button says only which answer it is; the words are in the notification.

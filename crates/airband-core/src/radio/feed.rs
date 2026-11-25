@@ -252,6 +252,11 @@ pub struct Message {
     /// It was to be read out to him while he had reading aloud on, and was not: why. A client marks the line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_read: Option<NotRead>,
+    /// It is news: something of an agent's that deserves a notification and is still to be heard. False from
+    /// the moment it stops being news (heard, superseded, answered, let go, the request over, its agent gone):
+    /// the same moment its notification is taken down, and the line is sent again with this false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub news: bool,
     /// What airband says about the agent in its own voice, with the tool's words after it: the agent is held at
     /// its keyboard, or its turn failed. `text` already starts with it; a client may mark the line.
     #[serde(default, skip_serializing_if = "Option::is_none")]

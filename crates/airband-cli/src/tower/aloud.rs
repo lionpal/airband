@@ -84,13 +84,14 @@ impl Inner {
         let line = format!("aloud: line {id} {} → {}", e.aloud.words(), to.words());
         // it was news and is not any more: a notification it woke a phone with is taken down, whatever ended it
         let ended = if e.aloud.unheard() { to.ends_news() } else { None };
+        let was_news = e.aloud.unheard();
         e.aloud = to;
         if let Some(why) = ended {
             self.ended.push(super::push::Ending { id: id.to_string(), why, by: None });
         }
         self.unsaved.borrow_mut().insert(id.to_string());
-        // a radio showing the chat is sent the line again, to mark it
-        if e.aloud.not_read().is_some() {
+        // a radio is sent the line again, to mark it, and when it stopped or started being news, to follow that
+        if e.aloud.not_read().is_some() || e.aloud.unheard() != was_news {
             self.rev += 1;
             e.rev = self.rev;
         }

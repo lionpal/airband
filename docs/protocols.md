@@ -1,6 +1,6 @@
 # Protocols
 
-Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/6` (phone ↔ tower) and
+Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/7` (phone ↔ tower) and
 `airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
@@ -97,7 +97,7 @@ answers only.
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
-## `airband.radio/6`: radio ↔ tower
+## `airband.radio/7`: radio ↔ tower
 
 The radio always asks; the tower never calls the phone. All under `/v1/radio/`. Every route, with the types of
 its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`, and both ends use those
@@ -196,7 +196,7 @@ A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, quick, stat
 - `answers`: what came of things this radio said (see "What he says").
 
 A message is `{ seq, id, at, from, badge, his, group, team, to, to_agents, kind, text, long, options, recommended,
-read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, links, open, not_read, note }`.
+read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, links, open, not_read, note, news }`.
 
 - `agent` is the id of the agent that said it, the same as `id` in the roster; `from` is only what it is called
   now. A message with `his` set is something he said: through a radio, or typed to an agent at its own keyboard
@@ -270,6 +270,10 @@ A message of an agent's that was to be read out while he had reading aloud on, a
 (`not_read`: `superseded`, `answered`, `dismissed`, `agent_gone`, `permission_ended`). A radio marks the line
 and shows the reason when he asks.
 
+`news` is set while a message of an agent's deserves a notification and is still to be heard. It goes false the
+moment the message stops being news, for the same reasons its notification is taken down, and the message is sent
+again then (its `rev` moves on), so a radio's own copy of what is news (the phone's dashboard tile) follows it.
+
 Nothing is decided by matching his words.
 
 - A leading tag names who it is for: `@shop2`, `@shop` for the group, `@all`. Spoken names are not read by
@@ -324,7 +328,7 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/6` call with
+Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/7` call with
 the time, a random id, and where the radio stands as it makes it (`presence`: on a call or not, showing the chat
 or not). The tower answers 409 to one more than two minutes off its clock, drops one it has answered
 before, answers 426 (`other_version`) to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is

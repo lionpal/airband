@@ -277,6 +277,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         refreshChoices()
         syncBanners()
+        syncTile()
     }
 
     /// Open the microphone for him to talk, unless it is open already; with a question, about that question.
@@ -327,6 +328,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The banners up now, by the agent each is for (`RadioModel+Banners.swift`).
     var banners: [String: Activity<NeedsYouAttributes>] = [:]
+    /// What the tile was last given from the chat (`syncTile`).
+    var keptTile: TileFacts?
 
     /// The coding tools he uses, by id. The core keeps them: what can write his summaries follows from them.
     var tools: [String] {

@@ -1,6 +1,7 @@
-// The banners on the lock screen, and on a car's screen, for agents waiting on him during a call.
+// The banners on the lock screen, and on a car's screen, for agents waiting on him during a call; and the tile.
 import ActivityKit
 import Foundation
+import WidgetKit
 
 extension RadioModel {
     /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
@@ -25,5 +26,16 @@ extension RadioModel {
             // the alert is what makes it show itself, and not only sit on the lock screen
             Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
         }
+    }
+
+    /// The tile holds what the chat now says (the core decides what that is): kept in the shared folder when it
+    /// changes, and drawn again when what it shows does.
+    func syncTile() {
+        let facts = desk.tile()
+        guard facts != keptTile, let folder = Together.folder else { return }
+        keptTile = facts
+        let redraw = folder.keepTile(facts: facts)
+        Board.protect(folder.tilePath())
+        if redraw { Board.redraw() }
     }
 }

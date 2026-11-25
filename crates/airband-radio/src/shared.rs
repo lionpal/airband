@@ -1,6 +1,6 @@
 //! What the app and its notification extension both keep that is no secret, in the folder they share (an iPhone
-//! App Group's container): each team's colour, the sets of buttons a notification can carry, and what became
-//! of the latest notifications (for the connection record). Keys and
+//! App Group's container): each team's colour, the sets of buttons a notification can carry, what became
+//! of the latest notifications (for the connection record), and what the tile shows ([`crate::tile`]). Keys and
 //! pairing links stay where the host keeps secrets.
 //!
 //! Two processes write here. Each kind is changed under a lock on a file beside it, held across processes, so
@@ -27,6 +27,9 @@ impl SharedFolder {
     fn colours_file(&self) -> PathBuf {
         self.at("team-colours.json")
     }
+    fn tile_file(&self) -> PathBuf {
+        self.at("tile.json")
+    }
     fn locked(&self, name: &str) -> Option<airband_io::files::Lock> {
         airband_io::files::lock(&self.at(name)).map_err(|e| eprintln!("airband: the lock {name} in the shared folder cannot be taken: {e}")).ok()
     }
@@ -43,6 +46,24 @@ impl SharedFolder {
             eprintln!("airband: {trouble}");
         }
         (kept, keeper)
+    }
+    fn tile_now(&self) -> (crate::tile::TileKept, Keeper) {
+        let (kept, keeper, loaded) = Keeper::open::<crate::tile::TileKept>(Some(self.tile_file()));
+        if let Some(trouble) = loaded.trouble() {
+            eprintln!("airband: {trouble}");
+        }
+        (kept, keeper)
+    }
+    /// Changes what the tile holds, under its lock. Whether what it shows changed; false when it could not be
+    /// kept.
+    fn change_tile(&self, change: impl FnOnce(&crate::tile::TileKept) -> crate::tile::TileKept) -> bool {
+        let Some(_held) = self.locked("tile.lock") else { return false };
+        let (kept, keeper) = self.tile_now();
+        let now = change(&kept);
+        if now == kept {
+            return false;
+        }
+        keeper.save(&now).into_result().map_err(|why| eprintln!("airband: {why}")).is_ok() && now.shows != kept.shows
     }
     fn colours_now(&self) -> (HashMap<String, u8>, Keeper) {
         let (colours, keeper, loaded) = Keeper::open::<HashMap<String, u8>>(Some(self.colours_file()));
@@ -110,6 +131,29 @@ impl SharedFolder {
     /// The same, as lines for the connection record.
     pub fn notice_lines(&self) -> Vec<String> {
         self.notices().iter().map(NoticeShown::line).collect()
+    }
+
+    /// Keep what the app has from the chat for the tile ([`crate::Desk::tile`]), in place of what was kept, but
+    /// for lines a notification has taken down since. True when what the tile shows changed: the host asks
+    /// for it to be drawn again.
+    pub fn keep_tile(&self, facts: crate::TileFacts) -> bool {
+        self.change_tile(|kept| kept.with_chat(facts))
+    }
+
+    /// What a notification just opened ([`crate::open_notice`]) changes on the tile: a question or news put on,
+    /// or a line that stopped being news taken off. True when what the tile shows changed.
+    pub fn tile_heard(&self, opening: crate::NoticeOpening) -> bool {
+        self.change_tile(|kept| kept.heard(&opening))
+    }
+
+    /// What the tile shows, as last kept.
+    pub fn tile(&self) -> crate::TileView {
+        self.tile_now().0.shows
+    }
+
+    /// Where the tile's file is: the host gives it the protection it needs, and the tile reads it.
+    pub fn tile_path(&self) -> String {
+        self.tile_file().display().to_string()
     }
 
     /// The number of the change last kept to the answer sets. None when they cannot be read.

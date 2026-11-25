@@ -28,6 +28,7 @@ mod talk;
 mod station_host;
 mod takes;
 mod tell;
+mod tile;
 #[cfg(test)]
 mod tests;
 mod uploads;
