@@ -491,11 +491,16 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
 /// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
 /// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
 /// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
+///
+/// A recording is handed over only when that thread is free to start on it, never queued behind a reading
+/// under way: each reading starts on all he has said by then, and when he stops only the reading under way is
+/// waited for before the last one. (Measured with `tools/phonon-live.sh`: a recording queued behind another
+/// was half a second old before it was read, and the last reading waited for both.)
 fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, manual: bool) -> Result<Option<String>, crate::engines::Fault> {
     let read = |pcm: Vec<u8>| held.run(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm));
     let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
     let clip = thread::scope(|scope| {
-        let (tx, rx) = sync_channel::<Vec<u8>>(1);
+        let (tx, rx) = sync_channel::<Vec<u8>>(0);
         let read = &read;
         scope.spawn(move || {
             while let Ok(pcm) = rx.recv() {
@@ -522,6 +527,8 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, manual: bool) -> 
 
 #[cfg(test)]
 mod kept_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod phonon_live;
 
 #[cfg(test)]
 mod tests {

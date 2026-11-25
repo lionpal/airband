@@ -166,7 +166,9 @@ and loaded belongs to the desk (`Senses`), not to the process. The model is fetc
 hash. `scripts/host-model.sh` puts a model there. The voice (Gradium's Phonon, 65 MB) runs in the core and
 stays loaded while it is chosen. The listening model (Fermion Research's Phonon 2.5 English, 345 MB, iOS 18) runs on the Neural Engine
 through the host (`run_model`): the core records, has the recording so far read again about twice a second
-to show his words as he talks, and has all of it read once more when he stops.
+to show his words as he talks (each reading starts on all he has said by then, never queued behind another),
+and has all of it read once more when he stops. `tools/phonon-live.sh` measures that on a Mac's Neural Engine
+or GPU: the app's own listening file under the core's own listening, fed a recording as fast as it was spoken.
 
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).

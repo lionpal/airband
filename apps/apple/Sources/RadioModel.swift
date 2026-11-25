@@ -371,7 +371,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     private(set) var engines: [String: (String, ChoiceJob, Data) -> Data?] = [:]
 
     /// The listening model this app runs itself.
-    let ownListening = NeuralEngineListening()
+    let ownListening = NeuralEngineListening(options: NeuralEngineListening.onPhone)
 
 }
 

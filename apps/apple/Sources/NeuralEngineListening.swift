@@ -17,6 +17,27 @@ final class NeuralEngineListening: @unchecked Sendable {
         return String(cString: build)
     }()
 
+    /// How every model is run: on which of the phone's processors, with which of its encoders.
+    private let options: Transcriber.Options
+
+    /// The phone's way: on the Neural Engine, with the encoders the package gives a phone (up to 15 s each; a
+    /// longer recording is heard in windows of them). `tools/phonon-live` runs this same file on a Mac with the
+    /// phone's encoders stated, on the GPU or the Neural Engine.
+    static var onPhone: Transcriber.Options {
+        var o = Transcriber.Options()
+        o.computeUnits = .cpuAndNeuralEngine
+        // One window up to just under 15 s. The package's own rule for a phone takes up to 15.0 s in one, and
+        // a recording of 14.98 to 15 s then needs more frames than its 15 s encoder holds: it fails
+        // (PhononCoreML error 4, met by tools/phonon-live.sh as his words passed 15 s). A longer recording is
+        // cut into windows that keep inside it, by the package's rule for those: 15 s less 400 samples.
+        o.singleShotMaxSeconds = 15 - 400.0 / 16000
+        return o
+    }
+
+    init(options: Transcriber.Options) {
+        self.options = options
+    }
+
     /// One model, run one thing at a time.
     private final class Slot {
         let lock = NSLock()
@@ -57,9 +78,17 @@ final class NeuralEngineListening: @unchecked Sendable {
     }
 
     private func load(_ folder: String) throws -> Transcriber {
-        let model = try Transcriber(bundle: URL(fileURLWithPath: folder))
+        let model = try Transcriber(bundle: URL(fileURLWithPath: folder), options: options)
         // the encoders the init did not load (it loads one): a recording of any length runs on one ready now
         try model.preloadAllFunctions()
+        // An encoder's first run takes a second or two more than any after it (tools/phonon-live.sh measured
+        // 1.1 to 1.8 s on a Mac's Neural Engine, once for each: his first words, and again as he passed 5 and
+        // 10 s). Each is run once here, while the model is got ready or loaded at launch, on a quiet tone just
+        // shorter than it (silence is skipped without running anything).
+        for seconds in model.functionSeconds {
+            let tone = (0..<Int((seconds - 0.5) * 16000)).map { Float(sin(Double($0) * 0.07)) * 0.01 }
+            _ = try model.transcribe(tone)
+        }
         return model
     }
 }
