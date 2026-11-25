@@ -248,6 +248,10 @@ pub(crate) fn status(cfg: &Config) {
         return;
     };
     println!("airband is running. Phone {}{}.", if status.phone { "connected" } else { "not connected" }, if status.held { " (standing by)" } else { "" });
+    // what it is set up to run and cannot find: each fails every time it is needed
+    for p in &status.unfound {
+        println!("  cannot find {}. Install it, or add its folder to PATH in your shell's startup files, then run `airband install` again.", p.words());
+    }
     for s in &status.sessions {
         println!("  {:<26} {:<8} {}", s.callsign, word(&s.state), s.cwd.as_deref().unwrap_or("no folder"));
     }

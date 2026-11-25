@@ -30,7 +30,21 @@ fn in_lasting(installer: &airband_core::catalog::Installer, lasting: &Path, real
 }
 
 pub(crate) fn install() -> Result<(), String> {
-    config::load();
+    let cfg = config::load();
+    // the PATH the tower is started with, and every program it is set up to run found on it, before anything is
+    // put in place: a program it could not find would fail each time it is needed, for as long as it runs
+    #[cfg(target_os = "macos")]
+    let path = {
+        let shell = crate::programs::login_shell()?;
+        let path = crate::programs::login_path(&shell, &config::home())?;
+        let unfound = crate::programs::unfound(&cfg, &path);
+        if !unfound.is_empty() {
+            return Err(crate::programs::refusal(&shell, &unfound));
+        }
+        path.into_string().map_err(|_| "Your PATH has a folder whose name is not text, which airband cannot write down.".to_string())?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let _ = &cfg;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let real = airband_io::files::real_path(&me).unwrap_or_else(|_| me.clone());
     // a package manager's copy is used where it is, so its updates change what the hooks and the tower run
@@ -56,6 +70,9 @@ pub(crate) fn install() -> Result<(), String> {
     for line in crate::adapters::install(&exe)? {
         println!("{line}");
     }
+    #[cfg(target_os = "macos")]
+    return start_at_login(&exe, &path);
+    #[cfg(not(target_os = "macos"))]
     start_at_login(&exe)
 }
 
@@ -66,11 +83,10 @@ fn xml_text(text: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
+fn start_at_login(exe: &std::path::Path, path: &str) -> Result<(), String> {
     let log = config::dir().join("airband.log");
-    // the tower finds the coding tools where his terminal does: by the PATH it is installed from, never one
-    // written here
-    let path = std::env::var("PATH").map_err(|_| "PATH is not set, so airband could not find your coding tools. Run `airband install` from a terminal.".to_string())?;
+    // the tower finds the coding tools where his terminal does: by his login shell's PATH (`programs::login_path`),
+    // never the PATH of whatever ran this, which over ssh leaves out the folders his shell adds
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,7 +100,7 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
 "#,
         exe = xml_text(&exe.display().to_string()),
         log = xml_text(&log.display().to_string()),
-        path = xml_text(&path),
+        path = xml_text(path),
     );
     airband_io::files::make_folder(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
     airband_io::files::write_atomic(&plist_path(), plist).map_err(|e| e.to_string())?;
