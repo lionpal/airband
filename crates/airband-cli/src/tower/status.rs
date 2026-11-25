@@ -26,6 +26,10 @@ pub(crate) struct Status {
     pub(crate) pending: Vec<Pending>,
     /// The last changes to what is read out, each with what it was, what it became and why.
     pub(crate) aloud: VecDeque<String>,
+    /// The programs it is set up to run that its PATH does not lead to (`programs::needed`): each fails
+    /// whenever it is needed until it is found.
+    #[serde(default)]
+    pub(crate) unfound: Vec<crate::programs::Program>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,6 +75,7 @@ impl Status {
             sessions: inner.sessions.iter().map(|s| StatusAgent { callsign: s.callsign.text(), harness: s.agent.harness.clone(), cwd: s.agent.cwd.clone(), state: inner.state_of(s, &open), reachable: s.agent.deliver.is_some(), meta: s.agent.meta.clone() }).collect(),
             pending: inner.unheard().map(|e| Pending { callsign: inner.sender_name(e), kind: e.kind, say: e.short.clone(), aloud: e.aloud.clone() }).collect(),
             aloud: inner.aloud_trail.clone(),
+            unfound: crate::programs::unfound(&cfg, &crate::programs::own_path()),
         }
     }
 }

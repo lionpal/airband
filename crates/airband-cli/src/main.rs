@@ -42,6 +42,7 @@ mod commands;
 mod install;
 mod lock;
 mod platform;
+mod programs;
 mod providers;
 mod terminal;
 mod tower;

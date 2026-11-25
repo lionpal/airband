@@ -65,6 +65,8 @@ pub(crate) struct Reader {
     /// (`airband_core::catalog::BUILT_IN_ONLY`).
     pub(crate) runs: bool,
     ask: for<'a> fn(&'a Summarizer, &'a By, String, Option<Value>) -> Asked<'a>,
+    /// The program it starts by name, found on the PATH, for this setting; nothing for one that starts none so.
+    program: fn(&Summarizer, &By) -> Option<String>,
 }
 
 /// Every interface the tower reads through. A new one is a function here and a line of this table.
@@ -72,15 +74,15 @@ pub(crate) const READERS: &[Reader] = &[
     // The common chat-completions interface, which nearly every model service and every local model server accepts.
     // `cold` sends `temperature: 0`, which most services take and some refuse. `shaped`: the service can be
     // held to a JSON schema, so what comes back always parses.
-    Reader { is: Interface { name: "chat", can: &[], told: &[] }, runs: false, ask: |m, by, prompt, shape| Box::pin(chat(m, by, prompt, shape)) },
+    Reader { is: Interface { name: "chat", can: &[], told: &[] }, runs: false, ask: |m, by, prompt, shape| Box::pin(chat(m, by, prompt, shape)), program: |_, _| None },
     // A model the tower fetches and runs itself on this computer (`local.rs`), spoken to by the same chat
     // interface held to shape. `model` is named as the server takes it; `server` is the program that runs it.
-    Reader { is: Interface { name: ON_THIS_COMPUTER, can: &[], told: &["model", "server"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(on_this_computer(m, by, prompt, shape)) },
+    Reader { is: Interface { name: ON_THIS_COMPUTER, can: &[], told: &["model", "server"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(on_this_computer(m, by, prompt, shape)), program: |_, _| None },
     // A program on this computer: the prompt on standard input, the answer on standard output. `argv` is the
     // usual command; `argv` in his settings replaces it. It can hand the program a brief (`{brief}`, and a
     // folder to run in that holds one), the shape of the answer as a file (`{shape}`), and his settings
     // (`{model}` and the like).
-    Reader { is: Interface { name: "command", can: &["brief", "shape", "settings"], told: &["argv"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(command(m, by, prompt, shape)) },
+    Reader { is: Interface { name: "command", can: &["brief", "shape", "settings"], told: &["argv"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(command(m, by, prompt, shape)), program: |m, by| command_argv(m, by).into_iter().next() },
 ];
 
 pub(super) const ON_THIS_COMPUTER: &str = "on-this-computer";
@@ -147,12 +149,28 @@ fn shaped(shape: Value) -> Value {
     json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } })
 }
 
-pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
-    let program_failed = |more: String| Failed(Trouble::Program, more);
-    let argv: Vec<String> = match model.set.get("argv").and_then(|a| a.as_array()) {
+/// The command a command reader runs: `argv` in his settings, else its row's.
+fn command_argv(model: &Summarizer, by: &By) -> Vec<String> {
+    match model.set.get("argv").and_then(|a| a.as_array()) {
         Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
         None => by.list("argv"),
-    };
+    }
+}
+
+/// The program the model he chose to read starts by name on this computer, when it is one that does: the first
+/// word of a command reader's command. A service, or a model the tower runs from its own folder, has none.
+pub(crate) fn summary_program(model: &Summarizer) -> Option<String> {
+    if model.is_none() {
+        return None;
+    }
+    let (_, offer) = model.offer(Job::Summary)?;
+    let reader = READERS.iter().find(|r| r.is.fits(&offer))?;
+    (reader.program)(model, &offer.by)
+}
+
+pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
+    let program_failed = |more: String| Failed(Trouble::Program, more);
+    let argv = command_argv(model, by);
     let mut shape_file: Option<std::path::PathBuf> = None;
     // `{brief}` in an argument is the file that tells a coding tool it is only rewriting a message here
     let folder = brief_folder(by).map_err(program_failed)?;

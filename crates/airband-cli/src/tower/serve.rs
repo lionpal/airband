@@ -9,6 +9,11 @@ pub(crate) fn run(cfg: Config) -> Result<(), String> {
     stop_whole_on_failure();
     keep_catalogue_fresh();
     start_local_model(&cfg);
+    // a program it is set up to run that it cannot find fails each time it is needed: said once now, and in
+    // `airband status` for as long as it lasts
+    for p in crate::programs::unfound(&cfg, &crate::programs::own_path()) {
+        log(format!("cannot find {} on this PATH; run `airband install` again once it is installed", p.words()));
+    }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async move {
         let port = cfg.port;
