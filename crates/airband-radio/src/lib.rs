@@ -60,6 +60,7 @@ mod session;
 mod shared;
 mod store;
 mod takes;
+mod tile;
 mod voice;
 mod voices;
 
@@ -73,6 +74,7 @@ pub use mouth::VoiceSample;
 pub use services::{CodingTool, ServiceAsk, coding_tools};
 pub use shared::*;
 pub use takes::takes_folder;
+pub use tile::{TileFacts, TileItem, TileLine, TileShows, TileView, TileWork};
 pub use engines::HostDevice;
 use link::*;
 use outbox::*;

@@ -29,6 +29,7 @@ mod station_host;
 mod takes;
 pub(crate) use takes::hear_held_back;
 mod tell;
+mod tile;
 #[cfg(test)]
 mod tests;
 mod uploads;

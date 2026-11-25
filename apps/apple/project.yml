@@ -30,8 +30,9 @@ settings:
     AIRBAND_KEYCHAIN_GROUP: $(AppIdentifierPrefix)dev.airband.shared
     # The Keychain group only the app can read: his service keys. The extension never needs them.
     AIRBAND_KEYCHAIN_PRIVATE: $(AppIdentifierPrefix)dev.airband.private
-    # The App Group the app and the extension share: a folder for what both keep that is no secret (each team's
-    # colour, the sets of buttons a notification can carry). The entitlements files name it by this setting.
+    # The App Group the app and its extensions share: a folder for what they keep that is no secret (each team's
+    # colour, the sets of buttons a notification can carry), and what the tile shows, which the widgets
+    # extension reads. The entitlements files name it by this setting.
     AIRBAND_APP_GROUP: group.dev.airband
     # Communication Notifications (the agent's badge where a contact's picture goes) is a capability Apple's API
     # cannot turn on for an app. scripts/testflight.sh sets these two when the signing profile has it. Without
@@ -113,8 +114,8 @@ targets:
         AirbandAppGroup: $(AIRBAND_APP_GROUP)
         # a notification shown as a message from the agent, with its badge as the sender's picture
         NSUserActivityTypes: [INSendMessageIntent]
-  # The tile that opens into listening, and the banner for an agent that is waiting. Plain SwiftUI: none of
-  # the Rust core is in it.
+  # The tile that says what his agents are doing and opens into listening, and the banner for an agent that is
+  # waiting. Plain SwiftUI: none of the Rust core is in it. The tile reads what the core kept in the shared folder.
   Widgets:
     type: app-extension
     platform: iOS
@@ -136,6 +137,8 @@ targets:
         CFBundleDisplayName: airband
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # the tile reads what it shows from the shared folder (Live/Tile.swift)
+        AirbandAppGroup: $(AIRBAND_APP_GROUP)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   # Opens a sealed notification before iOS shows it, with the same Rust core as the app.
@@ -146,6 +149,7 @@ targets:
       - path: Notify
         excludes: ["Info.plist", "*.entitlements"]
       - Shared
+      - Live
       - Common
       - path: Generated/airband_radio.swift
       - path: Generated/airband_core.swift

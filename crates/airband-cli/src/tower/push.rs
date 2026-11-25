@@ -114,10 +114,16 @@ pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
     }
 }
 
-/// Does this line deserve a notification at all? Only while it is news: still to be heard. One that a newer
-/// line, his answer or anything else took out of the reading queue before its short version was made is not.
+/// Is this line news: an agent's, of a kind that deserves a notification, its short version made, and still to
+/// be heard? One that a newer line, his answer or anything else took out of the reading queue is not. The feed
+/// says this of each line (`Message::news`), so a radio's copy follows the notification's life.
+pub(super) fn news(e: &Entry) -> bool {
+    !e.his && e.agent.is_some() && e.short.is_some() && e.aloud.unheard() && deserves_notice(e.kind)
+}
+
+/// Does this line deserve a notification at all? Only while it is news, and not history already.
 pub(super) fn deserves(e: &Entry, now_ms: u64) -> bool {
-    !e.his && e.agent.is_some() && e.short.is_some() && e.aloud.unheard() && deserves_notice(e.kind) && now_ms.saturating_sub(e.at) < STALE_MS
+    news(e) && now_ms.saturating_sub(e.at) < STALE_MS
 }
 
 /// Why a radio is not woken for a line that deserves it, as the log says it.
@@ -589,6 +595,25 @@ mod tests {
         assert!(deserves(&r3, now_ms()));
         inner.supersede(&agent, false);
         assert!(!deserves(inner.log.iter().find(|e| e.id == "r3").unwrap(), now_ms()));
+    }
+
+    /// The chat says whether a line is news, and sends it again the moment that changes, so a phone's tile
+    /// follows the line as its notification does.
+    #[test]
+    fn the_chat_says_a_line_is_news_until_its_notification_is_taken_down() {
+        let mut inner = tower();
+        news(&mut inner, "r1", Kind::Report, "Shipped.");
+        let line = |inner: &Inner| inner.message(inner.log.iter().find(|e| e.id == "r1").unwrap());
+        let before = line(&inner);
+        assert!(before.news);
+        inner.set_aloud("r1", Aloud::Handed { radio: "car".into(), at: 1 });
+        assert!(line(&inner).news, "on its way to him is still news");
+        inner.set_aloud("r1", Aloud::Heard { radio: "car".into(), at: 2 });
+        let after = line(&inner);
+        assert!(!after.news && after.rev > before.rev, "heard: not news, and sent again");
+        // his own words and a passing note are never news
+        news(&mut inner, "f1", Kind::Fyi, "Reading files.");
+        assert!(!inner.message(inner.log.iter().find(|e| e.id == "f1").unwrap()).news);
     }
 
     /// What the relay is handed: sealed with the pairing's key, under the line's tag and never its id, for what

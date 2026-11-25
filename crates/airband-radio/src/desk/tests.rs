@@ -35,7 +35,7 @@ pub(super) fn looked(desk: &Desk, room: Option<String>, agent: Option<String>) -
     desk.view()
 }
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), computer: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, answer_apart: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), computer: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, answer_apart: false, not_read: String::new(), news: false }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Computer {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t&name=Mac");
@@ -1485,4 +1485,27 @@ fn while_listening_gets_ready_the_ring_follows_facts_and_what_he_says_is_heard_o
     assert_eq!(crate::models::steps_in(&folder), None);
     assert_eq!(desk.shared.senses.takes.all().into_iter().find(|t| t.id == id).map(|t| t.stage), Some(Stage::Unsent { text: "ship it".into() }));
     assert_eq!(card().line, "Runs on this phone");
+}
+
+#[test]
+fn the_tile_holds_who_waits_with_the_question_the_news_not_yet_read_and_who_is_working() {
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(false)));
+    let news = |id: &str, seq: u64, from: &str, is: bool| ChatMessage { news: is, text: format!("**{id}** said"), ..msg(id, seq, from, "shop", false) };
+    let mut computer = station("mini", 1, &[("shop two", "shop"), ("shop three", "shop"), ("shop four", "shop")], vec![msg("q1", 1, "shop two", "shop", true), news("r0", 2, "shop three", true), news("r1", 3, "shop three", true), news("r2", 4, "shop four", false), news("r3", 5, "shop two", true)]);
+    computer.agents[0].state = AgentState::Asking;
+    computer.agents[1].state = AgentState::Idle;
+    computer.agents[2].doing = Some("Running the tests".into());
+    let state = State { computers: vec![computer], ..State::default() };
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let tile = desk.tile();
+    // the one waiting on him, with its question in the chat's words
+    assert_eq!(tile.waiting.iter().map(|l| (l.agent.as_str(), l.message.as_str(), l.text.as_str())).collect::<Vec<_>>(), [("shop two", "q1", "q1")]);
+    // its newer line is not news on the tile while it waits; of another agent's, only the latest; and a line that
+    // stopped being news is not there
+    assert_eq!(tile.news.iter().map(|l| (l.message.as_str(), l.text.as_str())).collect::<Vec<_>>(), [("r1", "r1 said")]);
+    assert_eq!(tile.working.iter().map(|w| (w.callsign.as_str(), w.doing.as_deref())).collect::<Vec<_>>(), [("shop four", Some("Running the tests"))]);
+    // once he has had the chat in front of him, what he read is not news on the tile
+    host.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    desk.shown();
+    assert!(desk.tile().news.is_empty());
 }

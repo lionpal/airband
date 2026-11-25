@@ -278,6 +278,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         refreshChoices()
         refreshReadying()
         syncBanners()
+        syncTile()
     }
 
     /// Ask the core again how far the listening model has got. Cheap; asked a few times a second while it is
@@ -344,6 +345,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The banners up now, by the agent each is for (`RadioModel+Banners.swift`).
     var banners: [String: Activity<NeedsYouAttributes>] = [:]
+    /// What the tile was last given from the chat (`syncTile`).
+    var keptTile: TileFacts?
 
     /// The coding tools he uses, by id. The core keeps them: what can write his summaries follows from them.
     var tools: [String] {
