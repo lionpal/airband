@@ -345,10 +345,10 @@ pub fn cut(text: &str, most: usize) -> String {
     // room for the mark after it, and the space before it
     let room: String = text.chars().take(most.saturating_sub(2)).collect();
     let ends = |i: usize, c: char| text[i + c.len_utf8()..].starts_with(char::is_whitespace);
-    if let Some(end) = room.char_indices().filter(|&(i, c)| matches!(c, '.' | '?' | '!') && ends(i, c)).map(|(i, c)| i + c.len_utf8()).last() {
+    if let Some(end) = room.char_indices().filter(|&(i, c)| matches!(c, '.' | '?' | '!') && ends(i, c)).map(|(i, c)| i + c.len_utf8()).next_back() {
         return format!("{} \u{2026}", &room[..end]);
     }
-    match room.char_indices().filter(|(_, c)| c.is_whitespace()).map(|(i, _)| i).last() {
+    match room.char_indices().filter(|(_, c)| c.is_whitespace()).map(|(i, _)| i).next_back() {
         Some(space) if !room[..space].trim_end().is_empty() => format!("{}\u{2026}", room[..space].trim_end()),
         _ => format!("{}\u{2026}", room.trim_end()),
     }
