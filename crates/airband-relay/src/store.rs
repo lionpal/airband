@@ -15,7 +15,8 @@
 //!                                              its `expires` is put forward by each one kept
 //!                         k = "m#<ms>#<id>"    one per kept message, small, sorted as they arrived
 //!                         k = "i#<id>"         the sealed message itself, and `at`, the key of its place in line
-//!   <prefix>-waitlist   key `email`.
+//!   <prefix>-waitlist   key `email`; `joined_at`; once its TestFlight invite has gone out, `invited_at` and
+//!                       `invite` (an [`Invited`]). An item without `invited_at` is one still to be invited.
 //!
 //!   AWS_REGION   the region the tables are in. Who the relay is comes from the machine's role (dynamo.rs).
 //!
@@ -79,6 +80,25 @@ pub(crate) enum Added {
     Closed,
 }
 
+/// How an address on the waiting list came to have its TestFlight invite: the record kept once it has. An
+/// address with no such record has not had one, whatever the reason; `airband-relay invite-waiting` sends those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Invited {
+    /// Apple took it as a new tester in the group, and emails the invite.
+    New,
+    /// Apple already had it as a tester in the group: invited before.
+    AlreadyTester,
+}
+impl Invited {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Invited::New => "new",
+            Invited::AlreadyTester => "already_tester",
+        }
+    }
+}
+
 /// What came of keeping a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Held {
@@ -100,6 +120,11 @@ pub(crate) trait ChannelStore: Send + Sync {
     async fn load(&self) -> Result<HashMap<String, Saved>, String>;
     /// Put an address on the waiting list. Returns only once it is kept; an address already there is left as it is.
     async fn join_waitlist(&self, email: &str) -> Result<(), String>;
+    /// Record that an address on the waiting list has had its TestFlight invite, at `at` (seconds since 1970).
+    /// An address not on the list is an error. Recorded again, the later record stands.
+    async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String>;
+    /// Every address on the waiting list with no record of an invite, in no particular order.
+    async fn not_yet_invited(&self) -> Result<Vec<String>, String>;
     /// Close a channel: it and everything kept for it are forgotten, and it is remembered as closed, so a tower
     /// still running with that pairing cannot open it again.
     async fn remove(&self, channel: &str) -> Result<(), String>;
@@ -216,6 +241,37 @@ mod tests {
     async fn the_dynamo_store_does_every_job_as_every_store_must() {
         let Ok(prefix) = std::env::var("AIRBAND_TEST_DYNAMO") else { return };
         conformance(&Dyn::new(std::env::var("AWS_REGION").expect("set AWS_REGION"), &prefix)).await;
+    }
+
+    #[tokio::test]
+    async fn the_folder_keeps_who_has_had_an_invite_and_who_is_still_waiting() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-invites-{}", airband_core::encode::random_hex(6)));
+        let store = folder(dir.clone());
+        assert_eq!(store.not_yet_invited().await, Ok(vec![]));
+        for e in ["a@example.com", "b@example.com", "c@example.com", "a@example.com"] {
+            store.join_waitlist(e).await.unwrap();
+        }
+        let waiting = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        assert_eq!(waiting(store.not_yet_invited().await.unwrap()), ["a@example.com", "b@example.com", "c@example.com"]);
+        store.invited("b@example.com", Invited::New, 100).await.unwrap();
+        store.invited("c@example.com", Invited::AlreadyTester, 101).await.unwrap();
+        assert_eq!(store.not_yet_invited().await, Ok(vec!["a@example.com".to_string()]));
+        // only an address on the list is recorded
+        assert!(store.invited("nobody@example.com", Invited::New, 102).await.is_err());
+        // the record says how and when; the waiting list itself is as it was
+        let record: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("invited.json")).unwrap()).unwrap();
+        assert_eq!((record["b@example.com"]["how"].as_str(), record["b@example.com"]["at"].as_u64()), (Some("new"), Some(100)));
+        assert_eq!(record["c@example.com"]["how"].as_str(), Some("already_tester"));
+        assert_eq!(std::fs::read(dir.join("waitlist.txt")).unwrap(), b"a@example.com\nb@example.com\nc@example.com\n");
+        // a record that cannot be read is an error, never "nobody invited", and is left as it is
+        std::fs::write(dir.join("invited.json"), b"{half").unwrap();
+        assert!(store.not_yet_invited().await.is_err());
+        assert!(store.invited("a@example.com", Invited::New, 103).await.is_err());
+        assert_eq!(std::fs::read(dir.join("invited.json")).unwrap(), b"{half");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

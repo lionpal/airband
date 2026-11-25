@@ -11,6 +11,8 @@
 //!                            waitlist.txt, and held/ with the messages kept for towers that are away
 //!   DB_HOST and friends      keep all of it in Postgres instead (store.rs)
 //!   AIRBAND_RELAY_DYNAMO     keep all of it in Amazon DynamoDB instead: the tables' prefix (store.rs), with AWS_REGION
+//!   AIRBAND_TESTFLIGHT_SECRET  the App Store Connect key that TestFlight invites are sent with, by its name in
+//!                            AWS Secrets Manager (testflight.rs). Without it addresses are kept and not invited
 //!   AIRBAND_RELAY_ADMISSION  if set, a tower must present this to open a channel; without it, anyone may,
 //!                            within limits (so many new channels from one address in a day, and in all in an hour)
 //!
@@ -31,9 +33,14 @@
 //!   POST   /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
 //!   POST   /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer (Bearer radio token)
 //!   POST   /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
-//!   POST   /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
+//!   POST   /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS); kept,
+//!                                       then invited to TestFlight. The answer's `invite` says what came of that
+//!                                       (waitlist.rs)
 //!   OPTIONS /v1/waitlist                the browser's question before that sign-up (CORS)
 //!   GET    /healthz
+//!
+//! `airband-relay invite-waiting`, with the same settings, sends the invite of every address on the list that has
+//! none on record, then stops (scripts/testflight-invite-waiting.sh runs it).
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
@@ -58,6 +65,7 @@ mod limits;
 mod push;
 mod state;
 mod store;
+mod testflight;
 mod waitlist;
 use auth::*;
 use handlers::*;
@@ -68,6 +76,29 @@ use waitlist::*;
 /// A setting from the environment, trimmed. Nothing when it is not set or says nothing.
 fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+fn invites_from_env() -> testflight::Invites {
+    let invites = testflight::Invites::from_env().unwrap_or_else(|e| {
+        eprintln!("airband-relay: {e}");
+        std::process::exit(2);
+    });
+    println!("airband-relay: {}", invites.describe());
+    invites
+}
+
+/// `airband-relay invite-waiting`: the store and the key as the relay has them, and no server.
+async fn invite_waiting() {
+    let store = store::from_env().unwrap_or_else(|e| {
+        eprintln!("airband-relay: {e}");
+        std::process::exit(2);
+    });
+    println!("airband-relay: the waiting list is in {}", store.describe());
+    let relay = Relay::new(push::Push::default(), HashMap::new(), store, None, invites_from_env());
+    if let Err(e) = waitlist::invite_waiting(&relay).await {
+        eprintln!("airband-relay: {e}");
+        std::process::exit(1);
+    }
 }
 
 async fn relay_from_env() -> Arc<Relay> {
@@ -96,7 +127,8 @@ async fn relay_from_env() -> Arc<Relay> {
     println!("airband-relay: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
     let push = push::Push::from_env();
     println!("airband-relay: {}", push.describe());
-    let relay = Arc::new(Relay::new(push, channels, store, admission));
+    let invites = invites_from_env();
+    let relay = Arc::new(Relay::new(push, channels, store, admission, invites));
     // what a tower never came back for is cleared at start and then every hour, not only at start
     let purging = relay.clone();
     tokio::spawn(async move {
@@ -126,6 +158,14 @@ fn routes(relay: Arc<Relay>) -> Router {
 
 #[tokio::main]
 async fn main() {
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("invite-waiting") => return invite_waiting().await,
+        Some(other) => {
+            eprintln!("airband-relay: no command \"{other}\" (the one there is: invite-waiting)");
+            std::process::exit(1);
+        }
+    }
     let port: u16 = match var("PORT") {
         None => 7474,
         Some(p) => p.parse().unwrap_or_else(|_| {

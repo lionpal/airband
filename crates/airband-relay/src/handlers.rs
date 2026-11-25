@@ -380,7 +380,7 @@ mod tests {
     fn relay_in_a_folder(admission: Option<&str>) -> (Arc<Relay>, std::path::PathBuf) {
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
         std::fs::create_dir_all(&folder).unwrap();
-        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::folder(folder.clone()), admission.map(str::to_string))), folder)
+        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::folder(folder.clone()), admission.map(str::to_string), testflight::Invites::unnamed())), folder)
     }
     fn with(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -834,7 +834,7 @@ mod tests {
 
         // a relay started again on the same folder remembers all of it
         let saved = store::folder(folder.clone()).load().await.unwrap();
-        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::folder(folder.clone()), None));
+        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::folder(folder.clone()), None, testflight::Invites::unnamed()));
         assert_eq!(leave(&again, &mine.channel, "", "aaaaaaaa07").await, refused);
         assert_eq!(leave(&again, &mine.channel, &mine.radio_token, "aaaaaaaa07").await.0, 202);
         assert_eq!(leave(&again, &other.channel, &other.radio_token, "aaaaaaaa08").await.0, 202);
@@ -954,7 +954,7 @@ mod tests {
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
-        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::folder(folder), None));
+        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::folder(folder), None, testflight::Invites::unnamed()));
         let ask = |token: &str, provider: airband_core::relay::PushService, to: &str| {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();

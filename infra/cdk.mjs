@@ -71,6 +71,9 @@ const PORT = 7474;
 // (aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64).
 // `githubSubject` is what GitHub's token says a run on this repository's main branch is (the `sub` claim).
 const US = INFRA.us;
+// The Secrets Manager secret the relay in the United States reads its App Store Connect key from, for TestFlight
+// invites: {"keyId","issuerId","key"}. Its name is also in scripts/testflight-invite-key.sh.
+const TESTFLIGHT_SECRET = 'airband/testflight-invites';
 
 class AirbandRelay extends Stack {
   constructor(scope, id, props) {
@@ -135,7 +138,10 @@ class AirbandRelay extends Stack {
 //   1. the Apple push key, in this stack's region, as a SecureString parameter: /airband/apns-key. (The
 //      other setting the server reads, /airband/relay-env, is made by this stack from what is below: it holds
 //      no secret, and one made by hand under that name would make the deploy fail.)
-//   2. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
+//   2. for TestFlight invites from the homepage: the App Store Connect key made for them (App Manager role), in
+//      this stack's region, as the Secrets Manager secret airband/testflight-invites. scripts/testflight-invite-key.sh
+//      puts it there. Until it is there, the relay keeps the addresses and says no invite went out.
+//   3. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
 //      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
 // The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
 // it is pointed at this server's address by hand. This stack makes relay-us.<zone>, which always points here.
@@ -171,6 +177,10 @@ class AirbandRelayUs extends Stack {
     role.addToPolicy(new iam.PolicyStatement({ actions: JSON.parse(readFileSync(join(HERE, 'relay-dynamodb.json'), 'utf8')).actions, resources: tables.map((t) => t.tableArn) }));
     const settings = ['relay-env', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
+    // the App Store Connect key the relay sends TestFlight invites with (crates/airband-relay/src/testflight.rs):
+    // read only, and made by hand, never by this stack, so its value is never in a template
+    // (Secrets Manager ends a secret's ARN with six characters of its own)
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${TESTFLIGHT_SECRET}-??????`] }));
     ship.grantRead(role);
     // the two records Caddy proves the names with, and nothing else in the zone
     role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:ChangeResourceRecordSets'], resources: [zone.hostedZoneArn],
@@ -179,7 +189,7 @@ class AirbandRelayUs extends Stack {
     role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:GetChange'], resources: ['arn:aws:route53:::change/*'] }));
 
     // everything the server is told that is not a secret: read by setup.sh at each deploy
-    const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
+    const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, AIRBAND_TESTFLIGHT_SECRET: TESTFLIGHT_SECRET, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
       ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) };
     new ssm.StringParameter(this, 'Env', { parameterName: '/airband/relay-env', stringValue: Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') + '\n' });
 

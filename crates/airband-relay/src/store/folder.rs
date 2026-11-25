@@ -1,5 +1,6 @@
 //! The relay's records kept in a folder on its own disk: `channels.json`, `closed.json` (the channels their
-//! towers closed), `waitlist.txt`, and under `held/` one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
+//! towers closed), `waitlist.txt`, `invited.json` (each address on it whose TestFlight invite went out: how, and
+//! when), and under `held/` one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
 use super::*;
 use std::path::Path;
 
@@ -110,6 +111,35 @@ fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
         return Ok(());
     }
     airband_io::files::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
+}
+/// invited.json: one [`Invite`] per address whose invite went out. Unreadable is an error, never "none invited".
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Invite {
+    how: Invited,
+    at: u64,
+}
+fn read_invited(dir: &Path) -> Result<std::collections::BTreeMap<String, Invite>, String> {
+    airband_io::kept::read(&dir.join("invited.json")).map(Option::unwrap_or_default)
+}
+fn read_waitlist(dir: &Path) -> Result<Vec<String>, String> {
+    let file = dir.join("waitlist.txt");
+    let have = airband_io::files::read_text(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?.unwrap_or_default();
+    Ok(have.lines().map(str::to_string).collect())
+}
+fn invited(dir: &Path, email: &str, how: Invited, at: u64) -> Result<(), String> {
+    let _one = LISTS.lock().unwrap();
+    if !read_waitlist(dir)?.iter().any(|l| l == email) {
+        return Err("that address is not on the waiting list".into());
+    }
+    let mut all = read_invited(dir)?;
+    all.insert(email.to_string(), Invite { how, at });
+    let file = dir.join("invited.json");
+    airband_io::kept::save(&file, &all).map_err(|e| format!("cannot save {}: {e}", file.display()))
+}
+fn not_yet_invited(dir: &Path) -> Result<Vec<String>, String> {
+    let _one = LISTS.lock().unwrap();
+    let invited = read_invited(dir)?;
+    Ok(read_waitlist(dir)?.into_iter().filter(|e| !invited.contains_key(e)).collect())
 }
 fn remove(dir: &Path, channel: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
@@ -228,6 +258,12 @@ impl ChannelStore for Folder {
     }
     async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         join_waitlist(&self.dir, email)
+    }
+    async fn invited(&self, email: &str, how: Invited, at: u64) -> Result<(), String> {
+        invited(&self.dir, email, how, at)
+    }
+    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
+        not_yet_invited(&self.dir)
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         remove(&self.dir, channel)

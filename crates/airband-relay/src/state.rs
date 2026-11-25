@@ -157,6 +157,8 @@ pub(super) struct Relay {
     pub(super) push: push::Push,
     pub(super) channels: Mutex<HashMap<String, Channel>>,
     pub(super) store: store::Store,
+    /// TestFlight invites for the addresses the homepage is given.
+    pub(super) invites: testflight::Invites,
     pub(super) admission: Option<String>,
     /// How many sign-ups the waiting list has taken lately.
     pub(super) signups: Mutex<Signups>,
@@ -188,8 +190,8 @@ pub(super) fn failed_line(route: &str, channel: &str, status: u16, took: Duratio
 }
 
 impl Relay {
-    pub(super) fn new(push: push::Push, channels: HashMap<String, Channel>, store: store::Store, admission: Option<String>) -> Relay {
-        Relay { push, channels: Mutex::new(channels), store, admission, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
+    pub(super) fn new(push: push::Push, channels: HashMap<String, Channel>, store: store::Store, admission: Option<String>, invites: testflight::Invites) -> Relay {
+        Relay { push, channels: Mutex::new(channels), store, admission, invites, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
     }
 
     /// Is this request from the channel's radio, and within what a radio may ask? Every route a radio uses
