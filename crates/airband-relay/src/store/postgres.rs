@@ -99,6 +99,7 @@ impl ChannelStore for Pg {
             "create table if not exists relay_channels (channel text primary key, pull_hash text not null, radio_hash text not null, created_at timestamptz not null default now());
              create table if not exists waitlist (email text primary key, joined_at timestamptz not null default now());
              alter table waitlist add column if not exists invite text, add column if not exists invited_at timestamptz;
+             create table if not exists admin_sessions (hash text primary key, expires bigint not null);
              create table if not exists relay_closed (channel text primary key, closed_at timestamptz not null default now());
              create table if not exists relay_held (seq bigserial primary key, channel text not null, id text not null, sealed bytea not null, held_at timestamptz not null default now(), unique (channel, id))",
         )
@@ -117,10 +118,37 @@ impl ChannelStore for Pg {
         let changed = db.execute("update waitlist set invite = $2, invited_at = to_timestamp($3) where email = $1", &[&email, &how.name(), &at]).await.map_err(|e| e.to_string())?;
         if changed == 1 { Ok(()) } else { Err("that address is not on the waiting list".into()) }
     }
-    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
+    async fn waitlist(&self) -> Result<Vec<Request>, String> {
         let db = self.connect(&self.name).await?;
-        let rows = db.query("select email from waitlist where invited_at is null order by joined_at", &[]).await.map_err(|e| e.to_string())?;
-        Ok(rows.iter().map(|r| r.get(0)).collect())
+        let rows = db
+            .query("select email, extract(epoch from joined_at)::bigint, invite, extract(epoch from invited_at)::bigint from waitlist", &[])
+            .await
+            .map_err(|e| e.to_string())?;
+        rows.iter()
+            .map(|r| {
+                let invite = match (r.get::<_, Option<String>>(2), r.get::<_, Option<i64>>(3)) {
+                    (None, None) => None,
+                    (Some(how), Some(at)) => Some(Invite { how: invited_named(&how)?, at: at.max(0) as u64 }),
+                    _ => return Err("an invite on record has its kind or its time and not both".to_string()),
+                };
+                Ok(Request { email: r.get(0), joined_at: r.get::<_, i64>(1).max(0) as u64, invite })
+            })
+            .collect()
+    }
+    async fn session_start(&self, hash: &str, expires: u64) -> Result<(), String> {
+        let db = self.connect(&self.name).await?;
+        // the ones that have run out go whenever one is added
+        db.execute("delete from admin_sessions where expires <= $1", &[&(airband_core::clock::now_secs() as i64)]).await.map_err(|e| e.to_string())?;
+        db.execute("insert into admin_sessions (hash, expires) values ($1, $2)", &[&hash, &(expires as i64)]).await.map(|_| ()).map_err(|e| e.to_string())
+    }
+    async fn session_live(&self, hash: &str, now: u64) -> Result<bool, String> {
+        let db = self.connect(&self.name).await?;
+        let row = db.query_opt("select 1 from admin_sessions where hash = $1 and expires > $2", &[&hash, &(now as i64)]).await.map_err(|e| e.to_string())?;
+        Ok(row.is_some())
+    }
+    async fn session_end(&self, hash: &str) -> Result<(), String> {
+        let db = self.connect(&self.name).await?;
+        db.execute("delete from admin_sessions where hash = $1", &[&hash]).await.map(|_| ()).map_err(|e| e.to_string())
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel and what was kept for it, together or not at all

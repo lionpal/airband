@@ -417,13 +417,13 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
       <code id="cmd">brew install lionpal/airband/airband && airband start</code>
       <button type="button" id="copy">Copy</button>
     </div>
-    <p class="step"><b>2</b> On your iPhone. The app is in TestFlight. Enter your email and Apple sends you the invite.</p>
+    <p class="step"><b>2</b> On your iPhone. The app is in TestFlight. Leave your email and we'll send you an invite.</p>
     <form class="join" id="join" novalidate>
       <label class="hide" for="email">Your email</label>
       <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
       <!-- not for people: a form-filling robot fills this in, and is ignored for it -->
       <input class="hide" id="company" name="company" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
-      <button type="submit" id="joinbtn">Get the app</button>
+      <button type="submit" id="joinbtn">Ask for an invite</button>
       <p id="joinmsg" role="status" aria-live="polite"></p>
     </form>
     <p class="step"><b>3</b> Scan the code your Mac shows. Your agents appear as you start them.</p>
@@ -594,11 +594,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
       setTimeout(() => { e.target.textContent = "Copy"; }, 1600);
     });
   });
-  const INVITED = {
-    sent: "Check your email for the TestFlight invite.",
-    not_set_up: "You're on the list. Invites aren't going out yet, and yours will come by email.",
-    failed: "You're on the list. The invite didn't go out just now. We'll send it soon.",
-  };
+  const KEPT = "Thanks. We'll email you when there's a spot.";
   const form = document.getElementById("join"), input = document.getElementById("email"), button = document.getElementById("joinbtn"), msg = document.getElementById("joinmsg");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -615,10 +611,8 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
       const out = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(out.message || "");
       form.classList.add("done");
-      // what the relay says came of the invite, by its typed answer. A relay from before invites gives none: it
-      // kept the address and sent nothing, which is what "not_set_up" says. One this page does not know yet is
-      // shown in the relay's own words.
-      msg.textContent = out.invite === undefined ? INVITED.not_set_up : (INVITED[out.invite] || out.message);
+      // kept, and nothing sent: Charles chooses who gets an invite
+      msg.textContent = KEPT;
     } catch (err) {
       button.disabled = false;
       msg.textContent = err.message || "Could not sign you up just now. Try again in a minute.";

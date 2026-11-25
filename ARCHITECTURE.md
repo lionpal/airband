@@ -345,9 +345,12 @@ refresh token changes each time it is used, so airband has to be the only keeper
 
 `site/index.html` is the whole of airband.dev: one static page (`AirbandSite` in `infra/cdk.mjs`), deployed by
 its own workflow. Its waiting-list form posts an email address to the relay (`POST /v1/waitlist`), which takes
-it from the homepage's origin only and limits how many it takes, keeps it, and asks App Store Connect to add it
-as a tester to the app's external TestFlight group, so Apple emails the invite (`testflight.rs`). The answer
-says whether the invite went out; one that did not is sent later by `scripts/testflight-invite-waiting.sh`.
+it from the homepage's origin only, limits how many it takes, and keeps it with the time. Nothing is sent then.
+Charles chooses who gets an invite on the admin page the relay serves (relay.airband.dev/admin, which
+airband.dev/admin points to; `admin.rs`): it lists every request and sends the ones he picks, through App Store
+Connect, to the app's external TestFlight group, so Apple emails the invite (`testflight.rs`). Only one address
+can sign in, with its password; both live in AWS Secrets Manager (`scripts/admin-password.sh`), and a sign-in is
+a cookie whose token the relay keeps only as a hash.
 
 ## What is kept
 

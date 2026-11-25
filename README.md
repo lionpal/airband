@@ -87,7 +87,7 @@ cargo build --release -p airband-cli
 target/release/airband setup     # copies the binary to ~/.airband/bin first
 ```
 
-The iPhone app is in TestFlight. Get the invite at [airband.dev](https://airband.dev), or build it yourself
+The iPhone app is in TestFlight. Ask for an invite at [airband.dev](https://airband.dev), or build it yourself
 with `scripts/build-apple.sh` and Xcode.
 
 ## Keys

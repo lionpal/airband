@@ -157,8 +157,10 @@ pub(super) struct Relay {
     pub(super) push: push::Push,
     pub(super) channels: Mutex<HashMap<String, Channel>>,
     pub(super) store: store::Store,
-    /// TestFlight invites for the addresses the homepage is given.
+    /// TestFlight invites, sent from the admin page to the addresses Charles chooses.
     pub(super) invites: testflight::Invites,
+    /// Who may sign in to the admin page.
+    pub(super) admin: admin::Admin,
     pub(super) admission: Option<String>,
     /// How many sign-ups the waiting list has taken lately.
     pub(super) signups: Mutex<Signups>,
@@ -191,7 +193,12 @@ pub(super) fn failed_line(route: &str, channel: &str, status: u16, took: Duratio
 
 impl Relay {
     pub(super) fn new(push: push::Push, channels: HashMap<String, Channel>, store: store::Store, admission: Option<String>, invites: testflight::Invites) -> Relay {
-        Relay { push, channels: Mutex::new(channels), store, admission, invites, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
+        Relay { push, channels: Mutex::new(channels), store, admission, invites, admin: admin::Admin::unnamed(), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
+    }
+
+    /// The same relay, with this admin sign-in.
+    pub(super) fn with_admin(self, admin: admin::Admin) -> Relay {
+        Relay { admin, ..self }
     }
 
     /// Is this request from the channel's radio, and within what a radio may ask? Every route a radio uses

@@ -71,9 +71,13 @@ const PORT = 7474;
 // (aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64).
 // `githubSubject` is what GitHub's token says a run on this repository's main branch is (the `sub` claim).
 const US = INFRA.us;
-// The Secrets Manager secret the relay in the United States reads its App Store Connect key from, for TestFlight
-// invites: {"keyId","issuerId","key"}. Its name is also in scripts/testflight-invite-key.sh.
+// The Secrets Manager secret the relay in the United States reads its App Store Connect key from, for the TestFlight
+// invites Charles sends from the admin page: {"keyId","issuerId","key"}. Its name is also in scripts/testflight-invite-key.sh.
 const TESTFLIGHT_SECRET = 'airband/testflight-invites';
+// The one address allowed into the admin page (relay.airband.dev/admin) and its password, hashed:
+// {"email","password":{"iterations","salt","hash"}} (crates/airband-relay/src/admin.rs). Its name is also in
+// scripts/admin-password.sh, which puts it there.
+const ADMIN_SECRET = 'airband/admin';
 
 class AirbandRelay extends Stack {
   constructor(scope, id, props) {
@@ -127,7 +131,7 @@ class AirbandRelay extends Stack {
 // On the server: Caddy answers on 443 with a certificate it gets and renews itself, proving the names by a DNS
 // record (so the certificate can exist before the name points here), and hands requests to the relay on
 // 127.0.0.1. The relay runs as its own user under systemd. Nobody can sign in from the internet: there is no
-// SSH; `aws ssm start-session` is the way in. The server's role can read and write its three tables, read its
+// SSH; `aws ssm start-session` is the way in. The server's role can read and write its four tables, read its
 // own settings and secrets, fetch what is shipped to it, and write the two DNS records Caddy proves itself with.
 //
 // Shipping: the workflow builds the relay for arm64, puts it with the files in infra/host/ in the bucket here,
@@ -138,10 +142,12 @@ class AirbandRelay extends Stack {
 //   1. the Apple push key, in this stack's region, as a SecureString parameter: /airband/apns-key. (The
 //      other setting the server reads, /airband/relay-env, is made by this stack from what is below: it holds
 //      no secret, and one made by hand under that name would make the deploy fail.)
-//   2. for TestFlight invites from the homepage: the App Store Connect key made for them (App Manager role), in
-//      this stack's region, as the Secrets Manager secret airband/testflight-invites. scripts/testflight-invite-key.sh
-//      puts it there. Until it is there, the relay keeps the addresses and says no invite went out.
-//   3. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
+//   2. for the TestFlight invites sent from the admin page: the App Store Connect key made for them (App Manager
+//      role), in this stack's region, as the Secrets Manager secret airband/testflight-invites.
+//      scripts/testflight-invite-key.sh puts it there. Until it is there, the admin page says invites aren't set up.
+//   3. for the admin page: the address allowed in and its password, as the Secrets Manager secret airband/admin,
+//      in this stack's region. scripts/admin-password.sh puts it there. Until it is there, nobody can sign in.
+//   4. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
 //      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
 // The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
 // it is pointed at this server's address by hand. This stack makes relay-us.<zone>, which always points here.
@@ -161,6 +167,8 @@ class AirbandRelayUs extends Stack {
       table('Held', { partitionKey: text('channel'), sortKey: text('k') }, { timeToLiveAttribute: 'expires' }),
       // the one thing here that cannot be made again: it can be put back as it was at any moment of the last five weeks
       table('Waitlist', { partitionKey: text('email') }, { pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true } }),
+      // the admin page's sign-ins, by the hash of each one's token; DynamoDB drops each some time after it runs out
+      table('Sessions', { partitionKey: text('hash') }, { timeToLiveAttribute: 'expires' }),
     ];
 
     const ship = new s3.Bucket(this, 'Ship', { bucketName: `airband-relay-ship-${this.account}-${this.region}`, blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, enforceSSL: true, versioned: true,
@@ -177,10 +185,11 @@ class AirbandRelayUs extends Stack {
     role.addToPolicy(new iam.PolicyStatement({ actions: JSON.parse(readFileSync(join(HERE, 'relay-dynamodb.json'), 'utf8')).actions, resources: tables.map((t) => t.tableArn) }));
     const settings = ['relay-env', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
-    // the App Store Connect key the relay sends TestFlight invites with (crates/airband-relay/src/testflight.rs):
-    // read only, and made by hand, never by this stack, so its value is never in a template
-    // (Secrets Manager ends a secret's ARN with six characters of its own)
-    role.addToPolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${TESTFLIGHT_SECRET}-??????`] }));
+    // the App Store Connect key the relay sends TestFlight invites with (crates/airband-relay/src/testflight.rs), and
+    // the admin page's address and password (admin.rs): read only, and made by hand, never by this stack, so their
+    // values are never in a template (Secrets Manager ends a secret's ARN with six characters of its own)
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'],
+      resources: [TESTFLIGHT_SECRET, ADMIN_SECRET].map((name) => `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${name}-??????`) }));
     ship.grantRead(role);
     // the two records Caddy proves the names with, and nothing else in the zone
     role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:ChangeResourceRecordSets'], resources: [zone.hostedZoneArn],
@@ -189,7 +198,7 @@ class AirbandRelayUs extends Stack {
     role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:GetChange'], resources: ['arn:aws:route53:::change/*'] }));
 
     // everything the server is told that is not a secret: read by setup.sh at each deploy
-    const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, AIRBAND_TESTFLIGHT_SECRET: TESTFLIGHT_SECRET, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
+    const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, AIRBAND_TESTFLIGHT_SECRET: TESTFLIGHT_SECRET, AIRBAND_ADMIN_SECRET: ADMIN_SECRET, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
       ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) };
     new ssm.StringParameter(this, 'Env', { parameterName: '/airband/relay-env', stringValue: Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') + '\n' });
 
@@ -225,7 +234,8 @@ class AirbandRelayUs extends Stack {
 // airband.dev: the homepage. One static page (site/index.html) in a private bucket behind a CDN. It is its own
 // stack so that changing the page never restarts the relay: the relay's deploy drops every phone for a minute, and
 // a copy change should not. The page's waiting-list form posts to the relay (POST /v1/waitlist), which keeps the
-// addresses in its database; nothing here stores anything.
+// addresses in its database; nothing here stores anything. airband.dev/admin goes to the admin page, which the
+// relay serves (relay.airband.dev/admin), so its sign-in cookie belongs to the relay's name alone.
 //
 // In us-east-1 because a CDN certificate has to be issued there. The zone is the same one, in the same account.
 class AirbandSite extends Stack {
@@ -255,6 +265,7 @@ class AirbandSite extends Stack {
       runtime: cloudfront.FunctionRuntime.JS_2_0,
       code: cloudfront.FunctionCode.fromInline(`function handler(event) {
   var request = event.request, uri = request.uri;
+  if (uri === '/admin' || uri === '/admin/') return { statusCode: 302, headers: { location: { value: 'https://${DOMAIN}/admin' } } };
   if (uri.length > 1 && uri.endsWith('/')) return { statusCode: 301, headers: { location: { value: uri.slice(0, -1) } } };
   if (uri.endsWith('.html') && uri !== '/index.html') return { statusCode: 301, headers: { location: { value: uri.slice(0, -5) } } };
   var last = uri.slice(uri.lastIndexOf('/') + 1);

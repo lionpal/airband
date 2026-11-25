@@ -4,7 +4,7 @@ tower in order, once each, when it is back; and the relay takes nothing on a cha
 
     cargo build --release && tools/e2e-relay.py          about a minute and a half, no model calls
     AIRBAND_E2E_DYNAMO=1 tools/e2e-relay.py              the same, with the relay keeping everything in DynamoDB:
-                                                         three throwaway tables, made with the `aws` command as
+                                                         four throwaway tables, made with the `aws` command as
                                                          it is set up here (AWS_REGION, default us-east-2) and
                                                          deleted at the end
 
@@ -99,12 +99,13 @@ def leave(ident, token=None, channel=None):
 
 relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data)
 if DYNAMO:
-    print(f"Making three DynamoDB tables in {REGION}: {DYNAMO}-channels, -held, -waitlist")
+    print(f"Making four DynamoDB tables in {REGION}: {DYNAMO}-channels, -held, -waitlist, -sessions")
     one = lambda name: [{"AttributeName": name, "AttributeType": "S"}]
     aws("dynamodb", "create-table", "--table-name", DYNAMO + "-channels", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("channel")), "--key-schema", '[{"AttributeName":"channel","KeyType":"HASH"}]', "--tags", "Key=app,Value=airband")
     aws("dynamodb", "create-table", "--table-name", DYNAMO + "-waitlist", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("email")), "--key-schema", '[{"AttributeName":"email","KeyType":"HASH"}]', "--tags", "Key=app,Value=airband")
+    aws("dynamodb", "create-table", "--table-name", DYNAMO + "-sessions", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("hash")), "--key-schema", '[{"AttributeName":"hash","KeyType":"HASH"}]', "--tags", "Key=app,Value=airband")
     aws("dynamodb", "create-table", "--table-name", DYNAMO + "-held", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("channel") + one("k")), "--key-schema", '[{"AttributeName":"channel","KeyType":"HASH"},{"AttributeName":"k","KeyType":"RANGE"}]', "--tags", "Key=app,Value=airband")
-    for name in ("-channels", "-waitlist", "-held"):
+    for name in ("-channels", "-waitlist", "-sessions", "-held"):
         aws("dynamodb", "wait", "table-exists", "--table-name", DYNAMO + name)
     aws("dynamodb", "update-time-to-live", "--table-name", DYNAMO + "-held", "--time-to-live-specification", "Enabled=true,AttributeName=expires")
     # the relay signs its own requests; here it is lent this machine's identity for the length of the test
@@ -224,9 +225,9 @@ finally:
         try: p.wait(10)
         except Exception: p.kill()
     if DYNAMO:
-        for name in ("-channels", "-waitlist", "-held"):
+        for name in ("-channels", "-waitlist", "-sessions", "-held"):
             subprocess.run(["aws", "dynamodb", "delete-table", "--table-name", DYNAMO + name, "--region", REGION], capture_output=True)
-        print(f"Deleted the three tables {DYNAMO}-*")
+        print(f"Deleted the four tables {DYNAMO}-*")
 failed = [n for n, ok in results if not ok]
 print(f"\n{len(results) - len(failed)} of {len(results)} passed." + ("" if not failed else "  Failed:\n  - " + "\n  - ".join(failed) + f"\nLogs: {work}"))
 if not failed:

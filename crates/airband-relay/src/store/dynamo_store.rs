@@ -23,13 +23,14 @@ pub(crate) struct Dyn {
     pub(super) channels: String,
     pub(super) held: String,
     pub(super) waitlist: String,
+    pub(super) sessions: String,
 }
 
 
 impl Dyn {
-    /// The three tables named by `prefix`, in `region`.
+    /// The four tables named by `prefix`, in `region`.
     pub(crate) fn new(region: String, prefix: &str) -> Dyn {
-        Dyn { db: Dynamo::new(region), channels: format!("{prefix}-channels"), held: format!("{prefix}-held"), waitlist: format!("{prefix}-waitlist") }
+        Dyn { db: Dynamo::new(region), channels: format!("{prefix}-channels"), held: format!("{prefix}-held"), waitlist: format!("{prefix}-waitlist"), sessions: format!("{prefix}-sessions") }
     }
     /// Write an item unless one with its key is already there, which is left as it is.
     pub(super) async fn put_new(&self, table: &str, key: &str, item: Value) -> Result<(), String> {
@@ -117,9 +118,35 @@ impl ChannelStore for Dyn {
             Err(e) => Err(e.to_string()),
         }
     }
-    async fn not_yet_invited(&self) -> Result<Vec<String>, String> {
-        let ask = json!({ "TableName": self.waitlist, "ConsistentRead": true, "FilterExpression": "attribute_not_exists(#at)", "ProjectionExpression": "#e", "ExpressionAttributeNames": { "#at": "invited_at", "#e": "email" } });
-        Ok(self.db.all(dynamo::Op::Scan, ask).await?.iter().filter_map(|item| dynamo::text(item, "email")).collect())
+    async fn waitlist(&self) -> Result<Vec<Request>, String> {
+        let ask = json!({ "TableName": self.waitlist, "ConsistentRead": true });
+        self.db
+            .all(dynamo::Op::Scan, ask)
+            .await?
+            .iter()
+            .map(|item| {
+                let (Some(email), Some(joined_at)) = (dynamo::text(item, "email"), dynamo::number(item, "joined_at")) else {
+                    return Err("an address on the waiting list has no email or no time".to_string());
+                };
+                let invite = match (dynamo::text(item, "invite"), dynamo::number(item, "invited_at")) {
+                    (None, None) => None,
+                    (Some(how), Some(at)) => Some(Invite { how: invited_named(&how)?, at }),
+                    _ => return Err("an invite on record has its kind or its time and not both".to_string()),
+                };
+                Ok(Request { email, joined_at, invite })
+            })
+            .collect()
+    }
+    async fn session_start(&self, hash: &str, expires: u64) -> Result<(), String> {
+        // DynamoDB drops it by itself some time after `expires`; until then `session_live` passes over it
+        self.db.call(dynamo::Op::PutItem, json!({ "TableName": self.sessions, "Item": { "hash": s(hash), "expires": n(expires) } })).await.map(|_| ()).map_err(|e| e.to_string())
+    }
+    async fn session_live(&self, hash: &str, now: u64) -> Result<bool, String> {
+        let got = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.sessions, "Key": { "hash": s(hash) }, "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
+        Ok(dynamo::number(&got["Item"], "expires").is_some_and(|until| in_time(until, now)))
+    }
+    async fn session_end(&self, hash: &str) -> Result<(), String> {
+        self.db.call(dynamo::Op::DeleteItem, json!({ "TableName": self.sessions, "Key": { "hash": s(hash) } })).await.map(|_| ()).map_err(|e| e.to_string())
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel's item becomes a closed one, with nothing of its tower's in it: never opened again
