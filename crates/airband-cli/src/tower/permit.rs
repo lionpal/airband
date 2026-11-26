@@ -367,8 +367,9 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
 }
 
 /// His answer to a request, said in reply to it. `verdict` is what his words came to for a request for leave:
-/// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason.
-pub(super) fn answer(app: &App, radio: &str, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
+/// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason. `said` is the
+/// id the radio sent his answer under: his line in the chat takes it.
+pub(super) fn answer(app: &App, radio: &str, text: &str, said: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
     let say = |s: &str| Some(reply(s, false));
     let mut inner = app.change();
     let waiting = |p: &Permit| p.decided.is_none();
@@ -385,7 +386,10 @@ pub(super) fn answer(app: &App, radio: &str, text: &str, re: Option<&str>, verdi
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     log(format!("← radio: {} characters → {} is {} {}", text.chars().count(), short_id(&session.agent.id), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
-    inner.record(Entry::his(config::random_hex(8), std::slice::from_ref(&session), shown));
+    // under the id the radio sent it with, as any line of his: the radio shows it as on its way until the chat
+    // has that id, and would otherwise show his answer twice
+    let line = inner.his_line_id(said);
+    inner.record(Entry::his(line, std::slice::from_ref(&session), shown));
     inner.touch(&entry);
     // his answer was taken as he gave it, and is in the chat as his own line: the words only confirm it
     say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." }).map(|r| Reply { done: true, ..r })
@@ -517,6 +521,29 @@ mod tests {
         // once nothing is waiting on his phone, the nudge is how he learns the keyboard wants him
         super::super::intake::on_event(&app, nudge(true)).unwrap();
         assert_eq!(app.read().log.len(), lines + 1);
+    }
+
+    /// His Allow is one line in the chat, under the id his radio sent it with: the radio shows it as on its way
+    /// until the chat has that id, so a line under any other id would show his answer twice.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn his_answer_to_a_request_is_his_line_under_the_id_his_radio_sent_it_with() {
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = push::channel_of(&phone).unwrap();
+        let app = super::super::http::tests::app_with("permit-line-id", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
+        push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
+        let ask = || PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `ls`".into(), detail: String::new(), question: None, until: None, settled_in: None };
+        let card_of = |id: &str| app.read().log.iter().find(|e| e.permit.as_deref() == Some(id)).map(|e| e.id.clone()).unwrap();
+        let his = || app.read().log.iter().filter(|e| e.his).map(|e| (e.id.clone(), e.full.clone())).collect::<Vec<_>>();
+        let card = card_of(&super::ask(&app, ask()).id);
+        let reply = super::answer(&app, "radio", ALLOW, "d0af0c1603f65c0760ed2abc", Some(&card), Some(true)).expect("it answers the request");
+        assert!(reply.done);
+        assert_eq!(his(), [("d0af0c1603f65c0760ed2abc".to_string(), ALLOW.to_string())]);
+        // an id already in the chat is never taken twice: the line gets one of its own
+        let card = card_of(&super::ask(&app, ask()).id);
+        super::answer(&app, "radio", DENY, "d0af0c1603f65c0760ed2abc", Some(&card), Some(false)).expect("it answers the request");
+        let lines = his();
+        assert_eq!(lines.len(), 2);
+        assert_ne!(lines[1].0, lines[0].0);
     }
 
     /// A tool that says how long it waits on a request: the harness waits no longer than that, one past it is

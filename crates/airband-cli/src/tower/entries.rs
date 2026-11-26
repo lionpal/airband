@@ -216,6 +216,12 @@ impl Inner {
             s.told_upto = upto;
         }
     }
+    /// The id his line in the chat takes for something he said from a radio: the id the radio gave it, when it
+    /// is not in use, so the radio can tell that the message it still shows as on its way has arrived and swap
+    /// one for the other. A new one otherwise.
+    pub(super) fn his_line_id(&self, said: &str) -> String {
+        Some(said).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !self.log.iter().any(|e| e.id == *id)).map(str::to_string).unwrap_or_else(|| config::random_hex(8))
+    }
     /// Add a line to the log.
     pub(super) fn record(&mut self, e: Entry) {
         self.record_at(e, now_ms());

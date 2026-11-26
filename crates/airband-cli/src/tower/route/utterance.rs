@@ -101,7 +101,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     log(format!("← radio: {} characters for {}", to.rest.chars().count(), ids_of(&to.targets)));
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
-    let message_id = Some(said.id.as_str()).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.read().log.iter().any(|e| e.id == *id)).map(str::to_string).unwrap_or_else(|| config::random_hex(8));
+    let message_id = app.read().his_line_id(&said.id);
     let reached = send(app, &to, wordless, said.re.as_deref(), &message_id, &said.id).await;
     kept(app, radio, &to, message_id, reached, shown, shown_files)
 }
@@ -129,7 +129,7 @@ async fn leave(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::rad
             None => return Some(say("That one needs a yes or a no from you.".into())),
         },
     };
-    if let Some(reply) = permit::answer(app, radio, text, re, verdict) {
+    if let Some(reply) = permit::answer(app, radio, text, &said.id, re, verdict) {
         return Some(reply);
     }
     // a yes or a no that answers no request for leave answers nothing
